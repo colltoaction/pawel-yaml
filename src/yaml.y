@@ -115,12 +115,7 @@ root_node:
 sub_node:
     simple_node { $$ = $1; }
     | block_sequence { $$ = $1; }
-    | "INDENT" root_node "DEDENT" { 
-        /* Compose: INDENT ; root_node ; DEDENT */
-        if (!output->alphabet) output->alphabet = create_alphabet();
-        StringDiagram *inner_comp = create_sd_comp(create_sd_gen(output->alphabet->indent_gen), $2);
-        $$ = create_sd_comp(inner_comp, create_sd_gen(output->alphabet->dedent_gen));
-    }
+    | "INDENT" root_node "DEDENT" { $$ = $2; }
     | TAG sub_node {
         if ($2) {
             if ($2->tag) free($2->tag);
