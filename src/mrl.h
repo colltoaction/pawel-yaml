@@ -34,8 +34,7 @@
    Finite monoidal graph with singleton vertex set.
    Generators gamma in E_Gamma have arity and coarity. */
 typedef struct {
-    int token_id;           /* Token ID (if > 0) or -1 for named generators */
-    char *name;             /* Generator label (for non-token generators) */
+    char *name;             /* Generator label */
     int arity;              /* Domain dimension (ar(gamma)) */
     int coarity;            /* Codomain dimension (coar(gamma)) */
 } Generator;
@@ -43,8 +42,6 @@ typedef struct {
 typedef struct {
     Generator **generators;  /* Generators gamma in E_Gamma */
     int count;               /* Number of generators */
-    Generator *indent_gen;   /* Cached INDENT generator (0→1) */
-    Generator *dedent_gen;   /* Cached DEDENT generator (1→0) */
 } Alphabet;
 
 /* StateList - Definition 2.3 support structure
@@ -106,7 +103,6 @@ typedef struct StringDiagram {
 /* ===== Creation Functions ===== */
 
 Generator *create_generator(const char *name, int arity, int coarity);
-Generator *create_generator_from_token(int token_id, int arity, int coarity);
 Alphabet *create_alphabet();
 void alphabet_add(Alphabet *alphabet, Generator *gen);
 Generator *alphabet_find_full(Alphabet *alphabet, const char *name, int arity, int coarity);
@@ -117,18 +113,6 @@ void statelist_add(StateList *sl, const char *state);
 
 Grammar *create_grammar(Alphabet *alphabet);
 void grammar_add_transition(Grammar *g, Generator *gen, StateList *dom, StateList *cod);
-
-/* StringDiagram helper for common initialization */
-static inline void init_string_diagram(StringDiagram *sd, SDType type, int arity, int coarity) {
-    sd->type = type;
-    sd->arity = arity;
-    sd->coarity = coarity;
-    sd->anchor = NULL;
-    sd->tag = NULL;
-    sd->doc_marker = 0;
-    sd->doc_end_marker = 0;
-    sd->flow_style = 0;
-}
 
 StringDiagram *create_sd_gen(Generator *gen);
 StringDiagram *create_sd_comp(StringDiagram *left, StringDiagram *right);

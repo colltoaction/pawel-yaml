@@ -3,17 +3,7 @@
 
 Generator *create_generator(const char *name, int arity, int coarity) {
     Generator *g = malloc(sizeof(Generator));
-    g->token_id = -1;  /* Not a token-based generator */
     g->name = strdup(name);
-    g->arity = arity;
-    g->coarity = coarity;
-    return g;
-}
-
-Generator *create_generator_from_token(int token_id, int arity, int coarity) {
-    Generator *g = malloc(sizeof(Generator));
-    g->token_id = token_id;
-    g->name = NULL;  /* No string allocation for token-based generators */
     g->arity = arity;
     g->coarity = coarity;
     return g;
@@ -23,12 +13,6 @@ Alphabet *create_alphabet() {
     Alphabet *a = malloc(sizeof(Alphabet));
     a->generators = NULL;
     a->count = 0;
-    /* Pre-create INDENT (0→1) and DEDENT (1→0) generators using string names */
-    a->indent_gen = create_generator("INDENT", 0, 1);
-    a->dedent_gen = create_generator("DEDENT", 1, 0);
-    /* Register them in the alphabet */
-    alphabet_add(a, a->indent_gen);
-    alphabet_add(a, a->dedent_gen);
     return a;
 }
 
@@ -97,8 +81,14 @@ void grammar_add_transition(Grammar *g, Generator *gen, StateList *dom, StateLis
 StringDiagram *create_sd_gen(Generator *gen) {
     if (!gen) return NULL;
     StringDiagram *sd = malloc(sizeof(StringDiagram));
-    init_string_diagram(sd, SD_GENERATOR, gen->arity, gen->coarity);
+    sd->type = SD_GENERATOR;
+    sd->arity = gen->arity;
+    sd->coarity = gen->coarity;
     sd->data.gen = gen;
+    sd->anchor = NULL;
+    sd->tag = NULL;
+    sd->doc_marker = 0;
+    sd->doc_end_marker = 0;
     return sd;
 }
 
@@ -106,25 +96,43 @@ StringDiagram *create_sd_comp(StringDiagram *left, StringDiagram *right) {
     if (!left || !right) return NULL;
     assert(left->coarity == right->arity);
     StringDiagram *sd = malloc(sizeof(StringDiagram));
-    init_string_diagram(sd, SD_COMPOSITION, left->arity, right->coarity);
+    sd->type = SD_COMPOSITION;
+    sd->arity = left->arity;
+    sd->coarity = right->coarity;
     sd->data.op.left = left;
     sd->data.op.right = right;
+    sd->anchor = NULL;
+    sd->tag = NULL;
+    sd->doc_marker = 0;
+    sd->doc_end_marker = 0;
     return sd;
 }
 
 StringDiagram *create_sd_prod(StringDiagram *left, StringDiagram *right) {
     if (!left || !right) return NULL;
     StringDiagram *sd = malloc(sizeof(StringDiagram));
-    init_string_diagram(sd, SD_PRODUCT, left->arity + right->arity, left->coarity + right->coarity);
+    sd->type = SD_PRODUCT;
+    sd->arity = left->arity + right->arity;
+    sd->coarity = left->coarity + right->coarity;
     sd->data.op.left = left;
     sd->data.op.right = right;
+    sd->anchor = NULL;
+    sd->tag = NULL;
+    sd->doc_marker = 0;
+    sd->doc_end_marker = 0;
     return sd;
 }
 
 StringDiagram *create_sd_id(int n) {
     StringDiagram *sd = malloc(sizeof(StringDiagram));
-    init_string_diagram(sd, SD_IDENTITY, n, n);
+    sd->type = SD_IDENTITY;
+    sd->arity = n;
+    sd->coarity = n;
     sd->data.n = n;
+    sd->anchor = NULL;
+    sd->tag = NULL;
+    sd->doc_marker = 0;
+    sd->doc_end_marker = 0;
     return sd;
 }
 
@@ -134,7 +142,7 @@ StringDiagram *create_sd_id(int n) {
 
 void free_generator(Generator *gen) {
     if (!gen) return;
-    if (gen->name) free(gen->name);  /* Only free name if it was allocated */
+    free(gen->name);
     free(gen);
 }
 
