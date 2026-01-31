@@ -7,6 +7,7 @@
 
 extern int yylex();
 extern void yyerror(void *yyscanner, ParseOutput *output, const char *s);
+
 %}
 
 %define api.pure full
@@ -22,7 +23,8 @@ extern void yyerror(void *yyscanner, ParseOutput *output, const char *s);
 %destructor { free($$); } <sval>
 %destructor { free_stringdiagram($$); } <sd>
 
-%token <sval> SCALAR TAG ANCHOR ALIAS
+%token <sval> SCALAR
+%token <sval> ANCHOR ALIAS TAG
 %token BLOCK_SEQ_START "-"
 %token BLOCK_KEY "?"
 %token FLOW_SEQ_START "["
@@ -45,10 +47,10 @@ extern void yyerror(void *yyscanner, ParseOutput *output, const char *s);
 %token STYLE_ALIAS "*"
 %token STYLE_ANCHOR "&"
 
-%type <sd> stream documents document root_node sub_node
+%type <sd> stream documents document root_node sub_node flow_item
 %type <sd> block_node flow_node simple_node
 %type <sd> block_sequence block_mapping mapping_entry
-%type <sd> items flow_items mapping_items flow_mapping_items
+%type <sd> items flow_item_list mapping_items flow_mapping_list
 
 %%
 
@@ -144,29 +146,26 @@ simple_node:
     | flow_node { $$ = $1; }
     ;
 
-block_node:
-    block_sequence { $$ = $1; }
-    | block_mapping { $$ = $1; }
-    | "INDENT" root_node "DEDENT" { $$ = $2; }
-    ;
 
 block_sequence:
     items {
-        int arity = $1 ? $1->coarity : 0;
-        Generator *g = get_or_create_generator(&output->alphabet, "SEQ", arity, 1);
+        const char *name = rml_token_name(SEQ);
+        if (!name) name = "SEQ";
+        Generator *g = get_or_create_generator(&output->alphabet, name, $1->coarity, 1);
         $$ = create_sd_comp($1, create_sd_gen(g));
     }
     ;
 
 items:
-    "-" sub_node { $$ = $2; }
-    | items "-" sub_node { $$ = create_sd_prod($1, $3); }
+    "-" root_node { $$ = $2; }
+    | items "-" root_node { $$ = create_sd_prod($1, $3); }
     ;
 
 block_mapping:
     mapping_items {
-        int arity = $1 ? $1->coarity : 0;
-        Generator *g = get_or_create_generator(&output->alphabet, "MAP", arity, 1);
+        const char *name = rml_token_name(MAP);
+        if (!name) name = "MAP";
+        Generator *g = get_or_create_generator(&output->alphabet, name, $1->coarity, 1);
         $$ = create_sd_comp($1, create_sd_gen(g));
     }
     ;
@@ -179,60 +178,115 @@ mapping_items:
 mapping_entry:
     simple_node ":" sub_node { $$ = create_sd_prod($1, $3); }
     | simple_node ":" {
-        Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
+        const char *name = rml_token_name(COLON);
+        if (!name) name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
         $$ = create_sd_prod($1, create_sd_gen(g));
     }
     | "?" sub_node ":" sub_node { $$ = create_sd_prod($2, $4); }
     | "?" sub_node ":" {
-        Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
+        const char *name = rml_token_name(COLON);
+        if (!name) name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
         $$ = create_sd_prod($2, create_sd_gen(g));
     }
     | ":" sub_node {
-        Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
+        const char *name = rml_token_name(COLON);
+        if (!name) name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
         $$ = create_sd_prod(create_sd_gen(g), $2);
     }
     ;
 
 flow_node:
-    "[" flow_items "]" {
-        int arity = $2 ? $2->coarity : 0;
-        Generator *g = get_or_create_generator(&output->alphabet, "SEQ", arity, 1);
-        if ($2) {
-            $$ = create_sd_comp($2, create_sd_gen(g));
-        } else {
-            $$ = create_sd_gen(g);
-        }
+    "[" "]" {
+        const char *name = rml_token_name(SEQ);
+        if (!name) name = "SEQ";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+        $$ = create_sd_gen(g);
         $$->flow_style = 1;
     }
-    | "{" flow_mapping_items "}" {
-        int arity = $2 ? $2->coarity : 0;
-        Generator *g = get_or_create_generator(&output->alphabet, "MAP", arity, 1);
-        if ($2) {
-            $$ = create_sd_comp($2, create_sd_gen(g));
-        } else {
-            $$ = create_sd_gen(g);
-        }
+    | "[" flow_item_list "]" {
+        const char *name = rml_token_name(SEQ);
+        if (!name) name = "SEQ";
+        Generator *g = get_or_create_generator(&output->alphabet, name, $2->coarity, 1);
+        $$ = create_sd_comp($2, create_sd_gen(g));
+        $$->flow_style = 1;
+    }
+    | "{" "}" {
+        const char *name = rml_token_name(MAP);
+        if (!name) name = "MAP";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+        $$ = create_sd_gen(g);
+        $$->flow_style = 1;
+    }
+    | "{" flow_mapping_list "}" {
+        const char *name = rml_token_name(MAP);
+        if (!name) name = "MAP";
+        Generator *g = get_or_create_generator(&output->alphabet, name, $2->coarity, 1);
+        $$ = create_sd_comp($2, create_sd_gen(g));
         $$->flow_style = 1;
     }
     ;
 
-flow_items:
-    /* empty */ { $$ = NULL; }
-    | sub_node { $$ = $1; }
-    | flow_items "," sub_node {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
+flow_item_list:
+    flow_item { $$ = $1; }
+    | flow_item_list "," flow_item {
+        $$ = create_sd_prod($1, $3);
     }
     ;
 
-flow_mapping_items:
-    /* empty */ { $$ = NULL; }
-    | mapping_entry { $$ = $1; }
-    | flow_mapping_items "," mapping_entry {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
+flow_item:
+    simple_node { $$ = $1; }
+    | block_sequence { $$ = $1; }
+    | block_mapping { 
+        $$ = $1;
+        if ($$) $$->flow_style = 1;
+    }
+    | "INDENT" root_node "DEDENT" { $$ = $2; }
+    | TAG flow_item {
+        if ($2) {
+            if ($2->tag) free($2->tag);
+            $2->tag = $1;
+        } else {
+            free($1);
+        }
+        $$ = $2;
+    }
+    | ANCHOR flow_item {
+        if ($2) {
+            if ($2->anchor) free($2->anchor);
+            $2->anchor = $1;
+        } else {
+            free($1);
+        }
+        $$ = $2;
+    }
+    ;
+
+flow_mapping_list:
+    mapping_entry { $$ = $1; }
+    | simple_node {
+        /* Flow mapping entry with implicit null value (key without colon) */
+        const char *colon_name = rml_token_name(COLON);
+        if (!colon_name) colon_name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
+        $$ = create_sd_prod($1, create_sd_gen(g));
+    }
+    | flow_mapping_list "," mapping_entry {
+        $$ = create_sd_prod($1, $3);
+    }
+    | flow_mapping_list "," simple_node {
+        /* Flow mapping entry with implicit null value after comma */
+        const char *colon_name = rml_token_name(COLON);
+        if (!colon_name) colon_name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
+        StringDiagram *entry = create_sd_prod($3, create_sd_gen(g));
+        $$ = create_sd_prod($1, entry);
+    }
+    | flow_mapping_list "," {
+        /* Trailing comma in flow mapping */
+        $$ = $1;
     }
     ;
 
@@ -252,8 +306,9 @@ const char *rml_token_name(int tok) {
         static char buf[256];
         size_t len = strlen(name);
         if (len > 255) len = 255;
+        // Copy skipping first/last quote and unescaping \"
         int j = 0;
-        for (int i = 1; i < (int)len - 1; i++) {
+        for (int i = 1; i < len - 1; i++) {
             if (name[i] == '\\' && name[i+1] == '"') {
                 buf[j++] = '"';
                 i++;
