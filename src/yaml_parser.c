@@ -3,7 +3,6 @@
 #include <string.h>
 #include "yaml_parser.h"
 #include "mrl.h"
-#include "parser.tab.h"  /* Get token IDs from Bison */
 
 static int visual_depth = 0;
 
@@ -33,47 +32,47 @@ static void print_escaped(const char *s) {
 
 extern const char *rml_token_name(int tok);
 
+/* Bison token values normally start at 258 */
+#define STYLE_ALIAS 274
+#define STYLE_ANCHOR 275
+#define SEQ 267
+#define MAP 268
+#define STYLE_DQUOTE 270
+#define STYLE_SQUOTE 271
+
 static char* unescape_double_quoted(const char* s) {
-    char* res = malloc(strlen(s) + 1);
-    int i = 0, j = 0;
-    while (s[i]) {
+    size_t len = strlen(s);
+    char* res = malloc(len + 1);
+    int j = 0;
+    for (int i = 0; s[i]; i++) {
         if (s[i] == '\\' && s[i+1]) {
-            i++;
-            switch (s[i]) {
-                case '0': res[j++] = '\0'; break;
-                case 'a': res[j++] = '\a'; break;
-                case 'b': res[j++] = '\b'; break;
-                case 't': res[j++] = '\t'; break;
+            switch (s[i+1]) {
                 case 'n': res[j++] = '\n'; break;
-                case 'v': res[j++] = '\v'; break;
-                case 'f': res[j++] = '\f'; break;
                 case 'r': res[j++] = '\r'; break;
-                case 'e': res[j++] = 27; break;
-                case ' ': res[j++] = ' '; break;
-                case '"': res[j++] = '"'; break;
-                case '/': res[j++] = '/'; break;
+                case 't': res[j++] = '\t'; break;
                 case '\\': res[j++] = '\\'; break;
-                default: res[j++] = s[i]; break;
+                case '"': res[j++] = '"'; break;
+                default: res[j++] = s[i+1]; break;
             }
+            i++;
         } else {
             res[j++] = s[i];
         }
-        i++;
     }
     res[j] = '\0';
     return res;
 }
 
 static char* unescape_single_quoted(const char* s) {
-    char* res = malloc(strlen(s) + 1);
-    int i = 0, j = 0;
-    while (s[i]) {
+    size_t len = strlen(s);
+    char* res = malloc(len + 1);
+    int j = 0;
+    for (int i = 0; s[i]; i++) {
         if (s[i] == '\'' && s[i+1] == '\'') {
             res[j++] = '\'';
-            i += 2;
+            i++;
         } else {
             res[j++] = s[i];
-            i++;
         }
     }
     res[j] = '\0';
