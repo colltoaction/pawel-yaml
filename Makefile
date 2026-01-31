@@ -74,7 +74,11 @@ $(BUILD_DIR)/lex.yy.o: $(LEX_YY_C) $(PARSER_TAB_H)
 clean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all setup clean directories yaml-test-suite
+.PHONY: all setup clean directories yaml-test-suite test-mrl
+
+test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
+	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
+	$(BUILD_DIR)/bin/test-mrl
 
 yaml-test-suite: $(TARGET)
 	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
