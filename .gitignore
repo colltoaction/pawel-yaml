@@ -1,0 +1,25 @@
+*
+!.gitignore
+!./.agent/TDD.md
+!./src/
+!./src/**
+!Dockerfile.alpine
+!Makefile
+!README.md
+
+# Analysis and logs
+*.txt
+*.md
+!README.md
+!./.agent/TDD.md
+*.log
+TEST_FAILURES.yaml
+THEORY_ALIGNED_SOLUTION.md
+
+# Temporary files
+tmp_*
+build/
+yaml-play/
+yaml-reference-parser/
+yaml-runtimes/
+yaml-test-suite/
