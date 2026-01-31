@@ -69,9 +69,18 @@ documents:
     ;
 
 document:
-    "---" node { $$ = $2; }
+    "---" node { 
+        if ($2) $2->doc_marker = 1;
+        $$ = $2; 
+    }
     | node { $$ = $1; }
-    | "---" node "..." { $$ = $2; }
+    | "---" node "..." { 
+        if ($2) {
+            $2->doc_marker = 1;
+            $2->doc_end_marker = 1;
+        }
+        $$ = $2; 
+    }
     ;
 
 node:
