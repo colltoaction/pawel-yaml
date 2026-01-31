@@ -23,10 +23,6 @@ PARSER_TAB_C = $(GEN_SRC_DIR)/parser.tab.c
 PARSER_TAB_H = $(GEN_INC_DIR)/parser.tab.h
 LEX_YY_C = $(GEN_SRC_DIR)/lex.yy.c
 
-# TDD & testing artifacts (preserved across clean)
-TMP_DIR = $(BUILD_DIR)/tmp
-LOG_DIR = $(BUILD_DIR)/log
-
 OBJS = $(BUILD_DIR)/mrl.o $(BUILD_DIR)/main.o $(BUILD_DIR)/yaml_parser.o \
        $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lex.yy.o
 
@@ -35,19 +31,19 @@ TARGET = $(BIN_DIR)/pawel-yaml
 all: directories $(TARGET)
 
 directories:
-	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR) $(TMP_DIR) $(LOG_DIR)
+	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR)
 
 # Initialize submodules via cloning
 setup: directories $(RUNTIMES_DIR) $(PLAY_DIR) $(SUITE_DIR)
 
 $(RUNTIMES_DIR):
-	git clone --depth 1 https://github.com/yaml/yaml-runtimes $@
+	git clone https://github.com/yaml/yaml-runtimes $(RUNTIMES_DIR)
 
 $(PLAY_DIR):
-	git clone --depth 1 https://github.com/yaml/yaml-play $@
+	git clone https://github.com/yaml/yaml-play $(PLAY_DIR)
 
 $(SUITE_DIR):
-	git clone --depth 1 https://github.com/yaml/yaml-test-suite $@
+	git clone https://github.com/yaml/yaml-test-suite $(SUITE_DIR)
 
 # Bison parser generation
 $(PARSER_TAB_C) $(PARSER_TAB_H): $(SRC_DIR)/yaml.y $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h
@@ -75,72 +71,17 @@ $(BUILD_DIR)/parser.tab.o: $(PARSER_TAB_C) $(PARSER_TAB_H) $(SRC_DIR)/yaml_parse
 $(BUILD_DIR)/lex.yy.o: $(LEX_YY_C) $(PARSER_TAB_H)
 	$(CC) $(CFLAGS) -c $(LEX_YY_C) -o $(BUILD_DIR)/lex.yy.o
 
-clean: clean-build
-
-clean-build:
-	# Remove generated code and binaries, but preserve TDD artifacts and test suite
-	rm -rf $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR)
-	# Only remove non-test files from lib (files, not directories)
-	find $(LIB_DIR) -maxdepth 1 -type f -delete 2>/dev/null || true
-	# Clean object files
-	rm -f $(BUILD_DIR)/*.o
-	@echo "✓ Preserved: $(TMP_DIR), $(LOG_DIR), yaml-test-suite"
-
-# Deep clean: remove all build artifacts including test tracking
-deepclean:
+clean:
 	rm -rf $(BUILD_DIR)
 
-# Targeted clean for specific components
-clean-parser:
-	rm -f $(PARSER_TAB_C) $(PARSER_TAB_H) $(BUILD_DIR)/parser.tab.o
-
-clean-lexer:
-	rm -f $(LEX_YY_C) $(BUILD_DIR)/lex.yy.o
-
-.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl tdd chaos chaos-parsing chaos-lexing lexing docker-build-pawel
+.PHONY: all setup clean directories yaml-test-suite test-mrl
 
 test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
 	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
 	$(BUILD_DIR)/bin/test-mrl
 
-yaml-test-suite: $(SUITE_DIR) $(TARGET)
+yaml-test-suite: $(TARGET)
 	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
-
-# TDD and Chaos Engineering Targets
-
-tdd: $(TARGET) $(SUITE_DIR)
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  TDD Harness - Test Discovery and Execution"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@./tdd_harness.sh discover | head -20
-	@echo "  ... ($(shell ./tdd_harness.sh discover 2>/dev/null | wc -l) total tests available)"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "Usage: ./tdd_harness.sh test <TEST_ID>  # Run specific test"
-	@echo ""
-
-chaos-parsing: $(TARGET) $(SUITE_DIR)
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  Parser Chaos Engineering - Grammar Rule Necessity Analysis"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@bash chaos.sh 2>&1 | tail -20
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "Report: $(LOG_DIR)/chaos_dead_code.md"
-	@echo ""
-
-# Backwards compatibility alias
-chaos: chaos-parsing
-
-chaos-lexing: $(TARGET) $(SUITE_DIR)
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  Lexer Chaos Engineering - Token Rule Necessity Analysis"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@bash chaos_lexing.sh 2>&1 | tail -20
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "Report: $(LOG_DIR)/CHAOS_LEXING_RESULTS.md"
-	@echo ""
-
-# Backwards compatibility alias
-lexing: chaos-lexing
 
 # Build pawel-yaml Docker image
 docker-build-pawel: $(TARGET)
