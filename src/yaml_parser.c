@@ -3,44 +3,23 @@
 #include <string.h>
 #include "yaml_parser.h"
 #include "mrl.h"
-#include "parser.tab.h"
 
-#define INDENT_SPACES 1
+static int visual_depth = 0;
+
+#define OUTPUT(...) printf(__VA_ARGS__)
 
 static void print_indent(int depth) {
-    if (depth > 0) {
-        printf("%*s", depth * INDENT_SPACES, "");
-    }
+    for (int i = 0; i < depth; i++) printf(" ");
 }
 
-int visual_depth = 0;
-
-#define OUTPUT(fmt, ...) do { \
-    print_indent(visual_depth); \
-    printf(fmt, ##__VA_ARGS__); \
-} while (0)
-
-
-
-static const char* expand_tag(const char* tag) {
-    static char tag_buffer[1024];
-    
+static char *expand_tag(const char *tag) {
     if (!tag) return NULL;
-    if (tag[0] == '\0') return "<>";  /* Empty tag - just angle brackets */
-    if (strcmp(tag, "!!str") == 0) return "<tag:yaml.org,2002:str>";
-    if (strcmp(tag, "!!int") == 0) return "<tag:yaml.org,2002:int>";
-    if (strcmp(tag, "!!float") == 0) return "<tag:yaml.org,2002:float>";
-    if (strcmp(tag, "!!bool") == 0) return "<tag:yaml.org,2002:bool>";
-    if (strcmp(tag, "!!null") == 0) return "<tag:yaml.org,2002:null>";
-    if (strcmp(tag, "!!map") == 0) return "<tag:yaml.org,2002:map>";
-    if (strcmp(tag, "!!seq") == 0) return "<tag:yaml.org,2002:seq>";
-    
-    // For custom tags, wrap in < >
-    snprintf(tag_buffer, sizeof(tag_buffer), "<%s>", tag);
-    return tag_buffer;
+    if (strcmp(tag, "!") == 0) return "!";
+    if (strcmp(tag, "!!") == 0) return "tag:yaml.org,2002:";
+    return (char *)tag;
 }
 
-void print_escaped(const char *s) {
+static void print_escaped(const char *s) {
     if (!s) return;
     for (int i = 0; s[i]; i++) {
         if (s[i] == '\n') printf("\\n");
@@ -51,68 +30,68 @@ void print_escaped(const char *s) {
     }
 }
 
+extern const char *rml_token_name(int tok);
+
+/* Bison token values normally start at 258 */
+#define STYLE_ALIAS 274
+#define STYLE_ANCHOR 275
+#define SEQ 267
+#define MAP 268
+#define STYLE_DQUOTE 270
+#define STYLE_SQUOTE 271
+
 static char* unescape_double_quoted(const char* s) {
-    char* res = malloc(strlen(s) + 1);
-    int i = 0, j = 0;
-    while (s[i]) {
+    size_t len = strlen(s);
+    char* res = malloc(len + 1);
+    int j = 0;
+    for (int i = 0; s[i]; i++) {
         if (s[i] == '\\' && s[i+1]) {
-            i++;
-            switch (s[i]) {
-                case '0': res[j++] = '\0'; break;
-                case 'a': res[j++] = '\a'; break;
-                case 'b': res[j++] = '\b'; break;
-                case 't': res[j++] = '\t'; break;
+            switch (s[i+1]) {
                 case 'n': res[j++] = '\n'; break;
-                case 'v': res[j++] = '\v'; break;
-                case 'f': res[j++] = '\f'; break;
                 case 'r': res[j++] = '\r'; break;
-                case 'e': res[j++] = 27; break;
-                case ' ': res[j++] = ' '; break;
-                case '"': res[j++] = '"'; break;
-                case '/': res[j++] = '/'; break;
+                case 't': res[j++] = '\t'; break;
                 case '\\': res[j++] = '\\'; break;
-                case '\n': /* Escaped newline - ignore */ break;
-                default: res[j++] = s[i]; break;
+                case '"': res[j++] = '"'; break;
+                default: res[j++] = s[i+1]; break;
             }
+            i++;
         } else {
             res[j++] = s[i];
         }
-        i++;
     }
     res[j] = '\0';
     return res;
 }
 
 static char* unescape_single_quoted(const char* s) {
-    char* res = malloc(strlen(s) + 1);
-    int i = 0, j = 0;
-    while (s[i]) {
+    size_t len = strlen(s);
+    char* res = malloc(len + 1);
+    int j = 0;
+    for (int i = 0; s[i]; i++) {
         if (s[i] == '\'' && s[i+1] == '\'') {
             res[j++] = '\'';
-            i += 2;
+            i++;
         } else {
             res[j++] = s[i];
-            i++;
         }
     }
     res[j] = '\0';
     return res;
 }
 
-
-void print_scalar(Generator *gen, const char *anchor, const char *tag) {
+static void print_scalar(Generator *gen, const char *anchor, const char *tag) {
     if (!gen) return;
     const char *expanded_tag = expand_tag(tag);
     const char *alias_sym = rml_token_name(STYLE_ALIAS);
-
+    
     if (gen->name && alias_sym && gen->name[0] == alias_sym[0]) {
-        OUTPUT("=ALI %s\n", gen->name);
+        OUTPUT("=ALI %s\n", gen->name + 1);
     } else {
         print_indent(visual_depth);
         printf("=VAL ");
         if (anchor) {
             const char *anchor_sym = rml_token_name(STYLE_ANCHOR);
-            if (anchor[0] != anchor_sym[0]) putchar(anchor_sym[0]);
+            if (anchor_sym && anchor[0] != anchor_sym[0]) putchar(anchor_sym[0]);
             printf("%s ", anchor);
         }
         if (expanded_tag) printf("%s ", expanded_tag);
@@ -122,13 +101,11 @@ void print_scalar(Generator *gen, const char *anchor, const char *tag) {
             const char* content = gen->name + 1;
             char* unescaped = NULL;
             
-            // Check double quote style
             const char *dq_sym = rml_token_name(STYLE_DQUOTE);
             if (dq_sym && style == dq_sym[0]) {
                 unescaped = unescape_double_quoted(content);
                 content = unescaped;
             } else {
-                // Check single quote style only if double quote didn't match
                 const char *sq_sym = rml_token_name(STYLE_SQUOTE);
                 if (sq_sym && style == sq_sym[0]) {
                     unescaped = unescape_single_quoted(content);
@@ -154,10 +131,6 @@ static bool is_structural(Generator *g) {
     return false;
 }
 
-
-
-
-
 void rml_print_recursive(StringDiagram *sd) {
     if (!sd) return;
     
@@ -180,7 +153,7 @@ void rml_print_recursive(StringDiagram *sd) {
                     if (sd->anchor) {
                         const char *anchor_char = rml_token_name(STYLE_ANCHOR);
                         printf(" ");
-                        if (sd->anchor[0] != anchor_char[0]) putchar(anchor_char[0]);
+                        if (anchor_char && sd->anchor[0] != anchor_char[0]) putchar(anchor_char[0]);
                         printf("%s", sd->anchor);
                     }
                     if (t) printf(" %s", t);
@@ -200,7 +173,7 @@ void rml_print_recursive(StringDiagram *sd) {
                     if (sd->anchor) {
                         const char *anchor_char = rml_token_name(STYLE_ANCHOR);
                         printf(" ");
-                        if (sd->anchor[0] != anchor_char[0]) putchar(anchor_char[0]);
+                        if (anchor_char && sd->anchor[0] != anchor_char[0]) putchar(anchor_char[0]);
                         printf("%s", sd->anchor);
                     }
                     if (t) printf(" %s", t);
@@ -231,7 +204,6 @@ void rml_print_recursive(StringDiagram *sd) {
             break;
     }
 }
-
 
 void rml_print_events(ParseOutput *output) {
     if (!output) return;
@@ -292,4 +264,3 @@ int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **o
     
     return result;
 }
-
