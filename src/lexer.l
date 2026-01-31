@@ -175,7 +175,7 @@ static char* prefix_dup(char prefix, const char* s, int len) {
     }
     CTX->block_indent = indent;
     BEGIN(BLOCK_SCALAR_LINE);
-    yyless(1); // Keep the newline for now or handle it
+    yyless(1); 
 }
 
 <BLOCK_SCALAR_LINE>.* {
@@ -238,4 +238,3 @@ static int current_indent(void* yyscanner) {
     LexerContext* ctx = (LexerContext*)yyget_extra(yyscanner);
     return ctx->indent_stack[ctx->indent_level];
 }
-
