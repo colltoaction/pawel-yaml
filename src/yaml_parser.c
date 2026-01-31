@@ -41,38 +41,46 @@ extern const char *rml_token_name(int tok);
 #define STYLE_SQUOTE 271
 
 static char* unescape_double_quoted(const char* s) {
-    size_t len = strlen(s);
-    char* res = malloc(len + 1);
-    int j = 0;
-    for (int i = 0; s[i]; i++) {
+    char* res = malloc(strlen(s) + 1);
+    int i = 0, j = 0;
+    while (s[i]) {
         if (s[i] == '\\' && s[i+1]) {
-            switch (s[i+1]) {
-                case 'n': res[j++] = '\n'; break;
-                case 'r': res[j++] = '\r'; break;
-                case 't': res[j++] = '\t'; break;
-                case '\\': res[j++] = '\\'; break;
-                case '"': res[j++] = '"'; break;
-                default: res[j++] = s[i+1]; break;
-            }
             i++;
+            switch (s[i]) {
+                case '0': res[j++] = '\0'; break;
+                case 'a': res[j++] = '\a'; break;
+                case 'b': res[j++] = '\b'; break;
+                case 't': res[j++] = '\t'; break;
+                case 'n': res[j++] = '\n'; break;
+                case 'v': res[j++] = '\v'; break;
+                case 'f': res[j++] = '\f'; break;
+                case 'r': res[j++] = '\r'; break;
+                case 'e': res[j++] = 27; break;
+                case ' ': res[j++] = ' '; break;
+                case '"': res[j++] = '"'; break;
+                case '/': res[j++] = '/'; break;
+                case '\\': res[j++] = '\\'; break;
+                default: res[j++] = s[i]; break;
+            }
         } else {
             res[j++] = s[i];
         }
+        i++;
     }
     res[j] = '\0';
     return res;
 }
 
 static char* unescape_single_quoted(const char* s) {
-    size_t len = strlen(s);
-    char* res = malloc(len + 1);
-    int j = 0;
-    for (int i = 0; s[i]; i++) {
+    char* res = malloc(strlen(s) + 1);
+    int i = 0, j = 0;
+    while (s[i]) {
         if (s[i] == '\'' && s[i+1] == '\'') {
             res[j++] = '\'';
-            i++;
+            i += 2;
         } else {
             res[j++] = s[i];
+            i++;
         }
     }
     res[j] = '\0';

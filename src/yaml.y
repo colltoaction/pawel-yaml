@@ -45,7 +45,7 @@ extern void yyerror(void *yyscanner, ParseOutput *output, const char *s);
 %token STYLE_ALIAS "*"
 %token STYLE_ANCHOR "&"
 
-%type <sd> stream documents document node
+%type <sd> stream documents document root_node sub_node
 %type <sd> block_node flow_node simple_node
 %type <sd> block_sequence block_mapping mapping_entry
 %type <sd> items flow_items mapping_items flow_mapping_items
@@ -69,12 +69,12 @@ documents:
     ;
 
 document:
-    "---" node { 
+    "---" root_node { 
         if ($2) $2->doc_marker = 1;
         $$ = $2; 
     }
-    | node { $$ = $1; }
-    | "---" node "..." { 
+    | root_node { $$ = $1; }
+    | "---" root_node "..." { 
         if ($2) {
             $2->doc_marker = 1;
             $2->doc_end_marker = 1;
@@ -83,10 +83,10 @@ document:
     }
     ;
 
-node:
-    simple_node { $$ = $1; }
-    | block_node { $$ = $1; }
-    | TAG node {
+root_node:
+    sub_node
+    | block_mapping
+    | TAG root_node {
         if ($2) {
             if ($2->tag) free($2->tag);
             $2->tag = $1;
@@ -95,7 +95,31 @@ node:
         }
         $$ = $2;
     }
-    | ANCHOR node {
+    | ANCHOR root_node {
+        if ($2) {
+            if ($2->anchor) free($2->anchor);
+            $2->anchor = $1;
+        } else {
+            free($1);
+        }
+        $$ = $2;
+    }
+    ;
+
+sub_node:
+    simple_node
+    | block_sequence
+    | "INDENT" root_node "DEDENT" { $$ = $2; }
+    | TAG sub_node {
+        if ($2) {
+            if ($2->tag) free($2->tag);
+            $2->tag = $1;
+        } else {
+            free($1);
+        }
+        $$ = $2;
+    }
+    | ANCHOR sub_node {
         if ($2) {
             if ($2->anchor) free($2->anchor);
             $2->anchor = $1;
@@ -123,7 +147,7 @@ simple_node:
 block_node:
     block_sequence { $$ = $1; }
     | block_mapping { $$ = $1; }
-    | "INDENT" node "DEDENT" { $$ = $2; }
+    | "INDENT" root_node "DEDENT" { $$ = $2; }
     ;
 
 block_sequence:
@@ -135,8 +159,8 @@ block_sequence:
     ;
 
 items:
-    "-" node { $$ = $2; }
-    | items "-" node { $$ = create_sd_prod($1, $3); }
+    "-" sub_node { $$ = $2; }
+    | items "-" sub_node { $$ = create_sd_prod($1, $3); }
     ;
 
 block_mapping:
@@ -153,17 +177,17 @@ mapping_items:
     ;
 
 mapping_entry:
-    simple_node ":" node { $$ = create_sd_prod($1, $3); }
+    simple_node ":" sub_node { $$ = create_sd_prod($1, $3); }
     | simple_node ":" {
         Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
         $$ = create_sd_prod($1, create_sd_gen(g));
     }
-    | "?" node ":" node { $$ = create_sd_prod($2, $4); }
-    | "?" node ":" {
+    | "?" sub_node ":" sub_node { $$ = create_sd_prod($2, $4); }
+    | "?" sub_node ":" {
         Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
         $$ = create_sd_prod($2, create_sd_gen(g));
     }
-    | ":" node {
+    | ":" sub_node {
         Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
         $$ = create_sd_prod(create_sd_gen(g), $2);
     }
@@ -194,8 +218,8 @@ flow_node:
 
 flow_items:
     /* empty */ { $$ = NULL; }
-    | node { $$ = $1; }
-    | flow_items "," node {
+    | sub_node { $$ = $1; }
+    | flow_items "," sub_node {
         if ($1 && $3) $$ = create_sd_prod($1, $3);
         else if ($1) $$ = $1;
         else $$ = $3;
