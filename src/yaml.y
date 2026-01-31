@@ -1,142 +1,238 @@
 %{
-#include "yaml_parser.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include "mrl.h"
+#include "yaml_parser.h"
 
-void yyerror(ParserContext *ctx, void *scanner, const char *s);
+extern int yylex();
+extern void yyerror(void *yyscanner, ParseOutput *output, const char *s);
 %}
 
-%code requires {
-    #include "yaml_parser.h"
-    #include "mrl.h"
-}
-
 %define api.pure full
-%parse-param {ParserContext *ctx}
-%parse-param {void *scanner}
-%lex-param {void *scanner}
+%parse-param {void *yyscanner} {ParseOutput *output}
+%token-table
+%lex-param {void *yyscanner}
 
 %union {
-    char *string;
+    char *sval;
     StringDiagram *sd;
 }
 
-%token <string> SCALAR
-%token YAML_DIRECTIVE
-%token DOC_START
-%token BULLET
-%token COLON
+%destructor { free($$); } <sval>
+%destructor { free_stringdiagram($$); } <sd>
 
-%type <sd> document
-%type <sd> nodes node
-%type <sd> seq seq_entries seq_entry
-%type <sd> map map_entries map_entry
+%token <sval> SCALAR TAG ANCHOR ALIAS
+%token BLOCK_SEQ_START "-"
+%token BLOCK_KEY "?"
+%token FLOW_SEQ_START "["
+%token FLOW_SEQ_END "]"
+%token FLOW_MAP_START "{"
+%token FLOW_MAP_END "}"
+%token COMMA ","
+%token COLON ":"
+%token DOC_START "---"
+%token DOC_END "..."
+%token INDENT "INDENT"
+%token DEDENT "DEDENT"
+%token SEQ "SEQ"
+%token MAP "MAP"
+%token STYLE_PLAIN "PLAIN"
+%token STYLE_DQUOTE "\""
+%token STYLE_SQUOTE "'"
+%token STYLE_LITERAL "|"
+%token STYLE_FOLDED ">"
+%token STYLE_ALIAS "*"
+%token STYLE_ANCHOR "&"
+
+%type <sd> stream documents document node
+%type <sd> block_node flow_node simple_node
+%type <sd> block_sequence block_mapping mapping_entry
+%type <sd> items flow_items mapping_items flow_mapping_items
 
 %%
 
 stream:
-    document {
-        ctx->diagram = $1;
-    }
-    | YAML_DIRECTIVE document {
-        ctx->has_directive = 1;
-        ctx->diagram = $2;
-    }
-    ;
-
-document:
-    nodes { $$ = $1; }
-    | DOC_START nodes {
-        ctx->has_marker = 1;
-        $$ = $2;
-    }
-    | DOC_START {
-        ctx->has_marker = 1;
+    documents {
+        output->diagram = $1;
         $$ = NULL;
     }
     ;
 
-nodes:
-    node { $$ = $1; }
+documents:
+    document { $$ = $1; }
+    | documents document {
+        if ($1 && $2) $$ = create_sd_prod($1, $2);
+        else if ($1) $$ = $1;
+        else $$ = $2;
+    }
+    ;
+
+document:
+    "---" node { $$ = $2; }
+    | node { $$ = $1; }
+    | "---" node "..." { $$ = $2; }
     ;
 
 node:
+    simple_node { $$ = $1; }
+    | block_node { $$ = $1; }
+    | TAG node {
+        if ($2) {
+            if ($2->tag) free($2->tag);
+            $2->tag = $1;
+        } else {
+            free($1);
+        }
+        $$ = $2;
+    }
+    | ANCHOR node {
+        if ($2) {
+            if ($2->anchor) free($2->anchor);
+            $2->anchor = $1;
+        } else {
+            free($1);
+        }
+        $$ = $2;
+    }
+    ;
+
+simple_node:
     SCALAR {
-        alphabet_add_scalar(ctx->alphabet, $1);
-        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
-        $$ = sd_generator(g);
+        Generator *g = get_or_create_generator(&output->alphabet, $1, 0, 1);
+        $$ = create_sd_gen(g);
         free($1);
     }
-    | seq { $$ = $1; }
-    | map { $$ = $1; }
+    | ALIAS {
+        Generator *g = get_or_create_generator(&output->alphabet, $1, 0, 1);
+        $$ = create_sd_gen(g);
+        free($1);
+    }
+    | flow_node { $$ = $1; }
     ;
 
-seq:
-    seq_entries {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_SEQ_START;
-        gs->value = NULL;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_SEQ_END;
-        ge->value = NULL;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+block_node:
+    block_sequence { $$ = $1; }
+    | block_mapping { $$ = $1; }
+    | "INDENT" node "DEDENT" { $$ = $2; }
+    ;
 
-        StringDiagram *start = sd_generator(gs);
-        StringDiagram *end = sd_generator(ge);
-        
-        $$ = sd_compose(start, sd_compose($1, end));
+block_sequence:
+    items {
+        int arity = $1 ? $1->coarity : 0;
+        Generator *g = get_or_create_generator(&output->alphabet, "SEQ", arity, 1);
+        $$ = create_sd_comp($1, create_sd_gen(g));
     }
     ;
 
-seq_entries:
-    seq_entry { $$ = $1; }
-    | seq_entries seq_entry { $$ = sd_compose($1, $2); }
+items:
+    "-" node { $$ = $2; }
+    | items "-" node { $$ = create_sd_prod($1, $3); }
     ;
 
-seq_entry:
-    BULLET node { $$ = $2; }
-    ;
-
-map:
-    map_entries {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_MAP_START;
-        gs->value = NULL;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_MAP_END;
-        ge->value = NULL;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        StringDiagram *start = sd_generator(gs);
-        StringDiagram *end = sd_generator(ge);
-        
-        $$ = sd_compose(start, sd_compose($1, end));
+block_mapping:
+    mapping_items {
+        int arity = $1 ? $1->coarity : 0;
+        Generator *g = get_or_create_generator(&output->alphabet, "MAP", arity, 1);
+        $$ = create_sd_comp($1, create_sd_gen(g));
     }
     ;
 
-map_entries:
-    map_entry { $$ = $1; }
-    | map_entries map_entry { $$ = sd_compose($1, $2); }
+mapping_items:
+    mapping_entry { $$ = $1; }
+    | mapping_items mapping_entry { $$ = create_sd_prod($1, $2); }
     ;
 
-map_entry:
-    node COLON node { $$ = sd_compose($1, $3); }
+mapping_entry:
+    simple_node ":" node { $$ = create_sd_prod($1, $3); }
+    | simple_node ":" {
+        Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
+        $$ = create_sd_prod($1, create_sd_gen(g));
+    }
+    | "?" node ":" node { $$ = create_sd_prod($2, $4); }
+    | "?" node ":" {
+        Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
+        $$ = create_sd_prod($2, create_sd_gen(g));
+    }
+    | ":" node {
+        Generator *g = get_or_create_generator(&output->alphabet, ": ", 0, 1);
+        $$ = create_sd_prod(create_sd_gen(g), $2);
+    }
+    ;
+
+flow_node:
+    "[" flow_items "]" {
+        int arity = $2 ? $2->coarity : 0;
+        Generator *g = get_or_create_generator(&output->alphabet, "SEQ", arity, 1);
+        if ($2) {
+            $$ = create_sd_comp($2, create_sd_gen(g));
+        } else {
+            $$ = create_sd_gen(g);
+        }
+        $$->flow_style = 1;
+    }
+    | "{" flow_mapping_items "}" {
+        int arity = $2 ? $2->coarity : 0;
+        Generator *g = get_or_create_generator(&output->alphabet, "MAP", arity, 1);
+        if ($2) {
+            $$ = create_sd_comp($2, create_sd_gen(g));
+        } else {
+            $$ = create_sd_gen(g);
+        }
+        $$->flow_style = 1;
+    }
+    ;
+
+flow_items:
+    /* empty */ { $$ = NULL; }
+    | node { $$ = $1; }
+    | flow_items "," node {
+        if ($1 && $3) $$ = create_sd_prod($1, $3);
+        else if ($1) $$ = $1;
+        else $$ = $3;
+    }
+    ;
+
+flow_mapping_items:
+    /* empty */ { $$ = NULL; }
+    | mapping_entry { $$ = $1; }
+    | flow_mapping_items "," mapping_entry {
+        if ($1 && $3) $$ = create_sd_prod($1, $3);
+        else if ($1) $$ = $1;
+        else $$ = $3;
+    }
     ;
 
 %%
 
-void yyerror(ParserContext *ctx, void *scanner, const char *s) {
-    fprintf(stderr, "Bison error: %s\n", s);
+void yyerror(void *yyscanner, ParseOutput *output, const char *s) {
+    (void)yyscanner;
+    (void)output;
+    fprintf(stderr, "Parse error: %s\n", s);
+}
+
+const char *rml_token_name(int tok) {
+    int sym = YYTRANSLATE(tok);
+    if (sym < 0 || sym >= YYNTOKENS) return NULL;
+    const char *name = yytname[sym];
+    if (name && name[0] == '"') {
+        static char buf[256];
+        size_t len = strlen(name);
+        if (len > 255) len = 255;
+        int j = 0;
+        for (int i = 1; i < (int)len - 1; i++) {
+            if (name[i] == '\\' && name[i+1] == '"') {
+                buf[j++] = '"';
+                i++;
+            } else if (name[i] == '\\' && name[i+1] == '\\') {
+                buf[j++] = '\\';
+                i++;
+            } else {
+                buf[j++] = name[i];
+            }
+        }
+        buf[j] = '\0';
+        return buf;
+    }
+    return name;
 }
