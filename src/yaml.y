@@ -64,6 +64,7 @@ stream:
 documents:
     document { $$ = $1; }
     | documents document {
+        /* Goal: avoid if ($1 && $2) */
         if ($1 && $2) $$ = create_sd_prod($1, $2);
         else if ($1) $$ = $1;
         else $$ = $2;
@@ -86,49 +87,54 @@ document:
     ;
 
 root_node:
-    sub_node
-    | block_mapping
+    sub_node { $$ = $1; }
+    | block_mapping { $$ = $1; }
     | TAG root_node {
         if ($2) {
             if ($2->tag) free($2->tag);
             $2->tag = $1;
+            $$ = $2;
         } else {
+            /* Case where TAG is followed by nothing or error */
             free($1);
+            $$ = NULL;
         }
-        $$ = $2;
     }
     | ANCHOR root_node {
         if ($2) {
             if ($2->anchor) free($2->anchor);
             $2->anchor = $1;
+            $$ = $2;
         } else {
             free($1);
+            $$ = NULL;
         }
-        $$ = $2;
     }
     ;
 
 sub_node:
-    simple_node
-    | block_sequence
+    simple_node { $$ = $1; }
+    | block_sequence { $$ = $1; }
     | "INDENT" root_node "DEDENT" { $$ = $2; }
     | TAG sub_node {
         if ($2) {
             if ($2->tag) free($2->tag);
             $2->tag = $1;
+            $$ = $2;
         } else {
             free($1);
+            $$ = NULL;
         }
-        $$ = $2;
     }
     | ANCHOR sub_node {
         if ($2) {
             if ($2->anchor) free($2->anchor);
             $2->anchor = $1;
+            $$ = $2;
         } else {
             free($1);
+            $$ = NULL;
         }
-        $$ = $2;
     }
     ;
 
@@ -158,7 +164,11 @@ block_sequence:
 
 items:
     "-" root_node { $$ = $2; }
-    | items "-" root_node { $$ = create_sd_prod($1, $3); }
+    | items "-" root_node {
+        if ($1 && $3) $$ = create_sd_prod($1, $3);
+        else if ($1) $$ = $1;
+        else $$ = $3;
+    }
     ;
 
 block_mapping:
@@ -172,18 +182,43 @@ block_mapping:
 
 mapping_items:
     mapping_entry { $$ = $1; }
-    | mapping_items mapping_entry { $$ = create_sd_prod($1, $2); }
+    | mapping_items mapping_entry {
+        if ($1 && $2) $$ = create_sd_prod($1, $2);
+        else if ($1) $$ = $1;
+        else $$ = $2;
+    }
     ;
 
 mapping_entry:
-    simple_node ":" sub_node { $$ = create_sd_prod($1, $3); }
+    simple_node ":" sub_node {
+        if ($1 && $3) $$ = create_sd_prod($1, $3);
+        else if ($1) {
+            /* Case with colon but empty value */
+            const char *name = rml_token_name(COLON);
+            if (!name) name = ":";
+            Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+            $$ = create_sd_prod($1, create_sd_gen(g));
+        } else {
+            $$ = $3;
+        }
+    }
     | simple_node ":" {
         const char *name = rml_token_name(COLON);
         if (!name) name = ":";
         Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
         $$ = create_sd_prod($1, create_sd_gen(g));
     }
-    | "?" sub_node ":" sub_node { $$ = create_sd_prod($2, $4); }
+    | "?" sub_node ":" sub_node {
+        if ($2 && $4) $$ = create_sd_prod($2, $4);
+        else if ($2) {
+            const char *name = rml_token_name(COLON);
+            if (!name) name = ":";
+            Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+            $$ = create_sd_prod($2, create_sd_gen(g));
+        } else {
+            $$ = $4;
+        }
+    }
     | "?" sub_node ":" {
         const char *name = rml_token_name(COLON);
         if (!name) name = ":";
@@ -194,7 +229,8 @@ mapping_entry:
         const char *name = rml_token_name(COLON);
         if (!name) name = ":";
         Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_prod(create_sd_gen(g), $2);
+        if ($2) $$ = create_sd_prod(create_sd_gen(g), $2);
+        else $$ = create_sd_gen(g);
     }
     ;
 
@@ -232,7 +268,9 @@ flow_node:
 flow_item_list:
     flow_item { $$ = $1; }
     | flow_item_list "," flow_item {
-        $$ = create_sd_prod($1, $3);
+        if ($1 && $3) $$ = create_sd_prod($1, $3);
+        else if ($1) $$ = $1;
+        else $$ = $3;
     }
     ;
 
@@ -248,44 +286,47 @@ flow_item:
         if ($2) {
             if ($2->tag) free($2->tag);
             $2->tag = $1;
+            $$ = $2;
         } else {
             free($1);
+            $$ = NULL;
         }
-        $$ = $2;
     }
     | ANCHOR flow_item {
         if ($2) {
             if ($2->anchor) free($2->anchor);
             $2->anchor = $1;
+            $$ = $2;
         } else {
             free($1);
+            $$ = NULL;
         }
-        $$ = $2;
     }
     ;
 
 flow_mapping_list:
     mapping_entry { $$ = $1; }
     | simple_node {
-        /* Flow mapping entry with implicit null value (key without colon) */
         const char *colon_name = rml_token_name(COLON);
         if (!colon_name) colon_name = ":";
         Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
         $$ = create_sd_prod($1, create_sd_gen(g));
     }
     | flow_mapping_list "," mapping_entry {
-        $$ = create_sd_prod($1, $3);
+        if ($1 && $3) $$ = create_sd_prod($1, $3);
+        else if ($1) $$ = $1;
+        else $$ = $3;
     }
     | flow_mapping_list "," simple_node {
-        /* Flow mapping entry with implicit null value after comma */
         const char *colon_name = rml_token_name(COLON);
         if (!colon_name) colon_name = ":";
         Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
         StringDiagram *entry = create_sd_prod($3, create_sd_gen(g));
-        $$ = create_sd_prod($1, entry);
+        if ($1 && entry) $$ = create_sd_prod($1, entry);
+        else if ($1) $$ = $1;
+        else $$ = entry;
     }
     | flow_mapping_list "," {
-        /* Trailing comma in flow mapping */
         $$ = $1;
     }
     ;
@@ -306,7 +347,6 @@ const char *rml_token_name(int tok) {
         static char buf[256];
         size_t len = strlen(name);
         if (len > 255) len = 255;
-        // Copy skipping first/last quote and unescaping \"
         int j = 0;
         for (int i = 1; i < len - 1; i++) {
             if (name[i] == '\\' && name[i+1] == '"') {
