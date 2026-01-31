@@ -64,9 +64,3 @@ For large-scale shifts (e.g., purging history, global refactors):
 2. **Purge**: Apply macro tools (`git filter-repo`) globally.
 3. **Reset**: Update `.gitignore` to prevent re-introduction of debt.
 4. **Resync**: Verify the current HEAD remains compliant.
-
-## Definition of Done
-The project is only considered "Done" when:
-1. **100% Pass Rate**: The `TEST_FAILURES.yaml` file is **empty**.
-2. **Zero Regressions**: All tests pass without being suppressed or ignored.
-3. **Clean History**: No temporary artifacts or debt remain in the git log.

@@ -1,7 +1,6 @@
 *
 !.gitignore
-!./.agent/
-!./.agent/**
+!./.agent/TDD.md
 !./src/
 !./src/**
 !Dockerfile.alpine
@@ -13,19 +12,13 @@
 *.md
 !README.md
 !./.agent/TDD.md
-!./.agent/TEST_FAILURES_WORKFLOW.md
 *.log
-!build/tmp/
-!build/log/
 TEST_FAILURES.yaml
 THEORY_ALIGNED_SOLUTION.md
 
 # Temporary files
 tmp_*
-build/src/
-build/inc/
-build/bin/
-build/lib/
+build/
 yaml-play/
 yaml-reference-parser/
 yaml-runtimes/
