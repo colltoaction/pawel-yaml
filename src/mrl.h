@@ -37,6 +37,7 @@ typedef enum {
 typedef struct {
     GeneratorType type;
     char *value;      /* For SCALAR type, holds the string content */
+    char *tag;        /* Optional tag: e.g., !!str */
 } Generator;
 
 typedef struct {
@@ -91,6 +92,7 @@ typedef struct StringDiagram_s {
 Alphabet *alphabet_init(void);
 void alphabet_free(Alphabet *a);
 void alphabet_add_scalar(Alphabet *a, const char *value);
+void alphabet_set_tag(Alphabet *a, const char *tag);
 
 /* Grammar */
 Grammar *grammar_init(void);

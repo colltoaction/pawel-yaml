@@ -16,6 +16,7 @@
 "---"            { return DOC_START; }
 "-"[ ]+          { return BULLET; }
 ":"([ ]+|\n)     { return COLON; }
+"!!"[a-z]+       { yylval->string = strdup(yytext); return TAG; }
 [a-zA-Z0-9]+     { yylval->string = strdup(yytext); return SCALAR; }
 [ \t\n\r]+       { /* skip whitespace */ }
 .                { /* ignore other characters for now */ }

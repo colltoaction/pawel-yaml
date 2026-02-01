@@ -9,6 +9,7 @@
 #include "yaml_parser.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* Recursive function to traverse the diagram and print events */
 void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
@@ -18,8 +19,16 @@ void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
         Generator *g = sd->data.gen;
         switch (g->type) {
             case GEN_TYPE_SCALAR:
-                /* Validating against 27NA requirements: =VAL :text */
-                printf("  =VAL :%s\n", g->value);
+                /* Validating against 27NA and 2AUY requirements */
+                if (g->tag) {
+                    const char *tag_val = g->tag;
+                    if (strcmp(tag_val, "!!str") == 0) tag_val = "tag:yaml.org,2002:str";
+                    else if (strcmp(tag_val, "!!int") == 0) tag_val = "tag:yaml.org,2002:int";
+                    
+                    printf("  =VAL <%s> :%s\n", tag_val, g->value);
+                } else {
+                    printf("  =VAL :%s\n", g->value);
+                }
                 break;
             case GEN_TYPE_SEQ_START:
                 printf("  +SEQ\n");

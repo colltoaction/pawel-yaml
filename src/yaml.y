@@ -22,6 +22,7 @@ void yyerror(ParserContext *ctx, void *scanner, const char *s);
 }
 
 %token <string> SCALAR
+%token <string> TAG
 %token YAML_DIRECTIVE
 %token DOC_START
 %token BULLET
@@ -66,6 +67,13 @@ node:
         Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
         $$ = sd_generator(g);
         free($1);
+    }
+    | TAG SCALAR {
+        alphabet_add_scalar(ctx->alphabet, $2);
+        alphabet_set_tag(ctx->alphabet, $1);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
+        free($1); free($2);
     }
     | seq { $$ = $1; }
     | map { $$ = $1; }

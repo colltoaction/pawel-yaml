@@ -24,6 +24,9 @@ void alphabet_free(Alphabet *a) {
         if (a->generators[i]->value) {
             free(a->generators[i]->value);
         }
+        if (a->generators[i]->tag) {
+            free(a->generators[i]->tag);
+        }
         free(a->generators[i]);
     }
     free(a->generators);
@@ -38,7 +41,14 @@ void alphabet_add_scalar(Alphabet *a, const char *value) {
     Generator *g = malloc(sizeof(Generator));
     g->type = GEN_TYPE_SCALAR;
     g->value = strdup(value);
+    g->tag = NULL;
     a->generators[a->count++] = g;
+}
+
+void alphabet_set_tag(Alphabet *a, const char *tag) {
+    if (a->count > 0) {
+        a->generators[a->count - 1]->tag = strdup(tag);
+    }
 }
 
 /* ==================== Grammar Implementation ==================== */
