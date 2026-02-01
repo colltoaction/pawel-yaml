@@ -4,9 +4,9 @@
 set -e
 cd "$(dirname "$0")"
 
-PARSER_FILE="src/mrl.y"
+PARSER_FILE="src/parser.y"
 LOG_FILE="build/log/chaos_dead_code.md"
-BACKUP="src/mrl.y.backup"
+BACKUP="src/parser.y.backup"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -99,11 +99,12 @@ echo "" >> "$LOG_FILE"
 
 # Test specific alternatives
 echo ""
-test_removal "ALIAS in node_body" "/| ALIAS {/,/}/d"
-test_removal "ANCHOR node" "/| ANCHOR node_body {/,/}/d"
-test_removal "TAG node" "/| TAG node_body {/,/}/d"
-test_removal "QUESTION in map_entry" "/| QUESTION node COLON node/,/}/d"
-test_removal "COMMA in flow_seq" "/| flow_seq_entries COMMA flow_node/,/}/d"
+test_removal "ALIAS in simple_node" "/| ALIAS {/,/^\s*}$/d"
+test_removal "ANCHOR node" "/| ANCHOR node {/,/^\s*}$/d"
+test_removal "simple_node COLON" "/simple_node COLON {/,/^\s*}$/d"
+test_removal "BLOCK_KEY alternatives" "/| BLOCK_KEY/,/^\s*}$/d"
+test_removal "COLON node" "/| COLON node {/,/^\s*}$/d"
+test_removal "flow_sequence COMMA" "/| flow_sequence_items COMMA/,/^\s*}$/d"
 
 echo ""
 echo "Report: $LOG_FILE"
