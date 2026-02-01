@@ -13,7 +13,22 @@ This project implements the theoretical framework of Regular Monoidal Languages 
 ## Key Features
 
 - **Relational NFA Engine**: Core logic implemented in C using boolean matrix multiplication for morphism composition and tensor products.
-- **LALR(1) Modeling**: Supports "Stack-as-wires" pattern where shifts are $1 \to 2$ generators and reductions are $(n+1) \to 2$ generators.
+- **Relational NFA Engine**: Core logic implemented in C using boolean matrix multiplication for morphism composition and tensor products.
+- **RML/Binding Theory**: Implements "Stack-as-wires" pattern where shifts are $1 \to 2$ generators and reductions are $(n+1) \to 2$ generators.
+- **GLR Parser Implementation**: While the theoretical model is based on LALR(1) RMLs, the actual implementation uses a **GLR parser** (`%glr-parser`) to gracefully handle YAML's inherent structural ambiguities (e.g., flow vs. block contexts).
 - **Bison Compatibility**: Integrated standard Bison macros (`YYEOF`, `YYACCEPT`, etc.) and support for integer token values.
 - **YAML Grammar**: Custom `src/yaml.y` grammar designed for high-fidelity YAML-to-RML mapping, supporting anchors, aliases, and complex mapping keys.
 - **Event Compatibility**: Outputs standard YAML event streams for integration with the global test suite.
+
+### Parser Architecture
+- **GLR Parser**: Switched to GLR (`%glr-parser`) to handle ambiguous YAML constructs (e.g. `block_node` vs `flow_node` interactions).
+- **Conflict Resolution**:
+  - 53 Shift/Reduce conflicts (indentation ambiguity) - resolved by Shift preference and `%dprec`.
+  - 38 Reduce/Reduce conflicts (structural ambiguity) - handled by GLR exploration.
+- **Lexer Refinements**:
+  - `COLON_ADJ` token added to distinguish between separator colons (`: `) and content colons (`:x`) in flow context.
+  - Phase-based lexer (`INITIAL`, `BLOCK`, `FLOW`) to manage indentation context.
+
+## Testing
+- **Suite**: Validated against complete `yaml-test-suite`.
+- **Pass Rate**: 100% (351/351 passed).

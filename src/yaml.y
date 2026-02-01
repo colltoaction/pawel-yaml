@@ -46,8 +46,8 @@ static char *combine_scalar_parts(const char *part1, const char *part2) {
  * We explicitly declare these to prevent accidental regression.
  */
 %glr-parser
-%expect 45
-%expect-rr 36
+%expect 53
+%expect-rr 38
 
 
 %union {
@@ -204,6 +204,16 @@ simple_node:
         free(combined);
         free($1);
         free($3);
+    }
+    | COLON_ADJ SCALAR {
+        /* Plain scalar starting with colon (adjacent) */
+        size_t len = strlen($2);
+        char *combined = malloc(len + 2);
+        combined[0] = ':';
+        strcpy(combined + 1, $2);
+        Generator *g = get_or_create_generator(&output->alphabet, combined, 0, 1);
+        $$ = create_sd_gen(g);
+        free($2); free(combined);
     }
     | ALIAS {
         Generator *g = get_or_create_generator(&output->alphabet, $1, 0, 1);
@@ -461,13 +471,13 @@ mapping_entry_implicit:
             $$ = $3;
         }
     }
-    | complex_node ":" {
+    | complex_node colon_token {
         const char *name = rml_token_name(COLON);
         if (!name) name = ":";
         Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
         $$ = create_sd_prod($1, create_sd_gen(g));
     }
-    | ":" sub_node {
+    | colon_token sub_node {
         const char *name = rml_token_name(COLON);
         if (!name) name = ":";
         Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
