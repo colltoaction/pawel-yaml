@@ -97,7 +97,7 @@ clean-parser:
 clean-lexer:
 	rm -f $(LEX_YY_C) $(BUILD_DIR)/lex.yy.o
 
-.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl tdd chaos lexing docker-build-pawel
+.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl tdd chaos chaos-parsing chaos-lexing lexing docker-build-pawel
 
 test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
 	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
@@ -118,7 +118,7 @@ tdd: $(TARGET) $(SUITE_DIR)
 	@echo "Usage: ./tdd_harness.sh test <TEST_ID>  # Run specific test"
 	@echo ""
 
-chaos: $(TARGET) $(SUITE_DIR)
+chaos-parsing: $(TARGET) $(SUITE_DIR)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Parser Chaos Engineering - Grammar Rule Necessity Analysis"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -127,7 +127,10 @@ chaos: $(TARGET) $(SUITE_DIR)
 	@echo "Report: $(LOG_DIR)/chaos_dead_code.md"
 	@echo ""
 
-lexing: $(TARGET) $(SUITE_DIR)
+# Backwards compatibility alias
+chaos: chaos-parsing
+
+chaos-lexing: $(TARGET) $(SUITE_DIR)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Lexer Chaos Engineering - Token Rule Necessity Analysis"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -135,6 +138,9 @@ lexing: $(TARGET) $(SUITE_DIR)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "Report: $(LOG_DIR)/CHAOS_LEXING_RESULTS.md"
 	@echo ""
+
+# Backwards compatibility alias
+lexing: chaos-lexing
 
 # Build pawel-yaml Docker image
 docker-build-pawel: $(TARGET)
