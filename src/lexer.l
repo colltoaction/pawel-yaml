@@ -20,6 +20,17 @@ static void push_indent(void* yyscanner, int column);
 static int pop_indent(void* yyscanner);
 static int current_indent(void* yyscanner);
 
+/* Multi-line plain scalar helper:
+ * Accumulates continuation lines into a single scalar value.
+ * Called after matching initial plain scalar in BLOCK_CONTENT.
+ */
+static void init_plain_scalar_accumulator(LexerContext *ctx) {
+    ctx->plain_scalar_content = malloc(4096);
+    ctx->plain_scalar_len = 0;
+    ctx->plain_scalar_cap = 4096;
+    ctx->plain_scalar_content[0] = '\0';
+}
+
 static char* prefix_dup(char prefix, const char* s, int len) {
     char* buf = malloc(len + 2);
     if (!buf) return NULL;
