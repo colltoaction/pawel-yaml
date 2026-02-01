@@ -14,6 +14,7 @@
 
 "%YAML 1.2"      { return YAML_DIRECTIVE; }
 "---"            { return DOC_START; }
+"-"[ ]+          { return BULLET; }
 [a-zA-Z0-9]+     { yylval->string = strdup(yytext); return SCALAR; }
 [ \t\n\r]+       { /* skip whitespace */ }
 .                { /* ignore other characters for now */ }

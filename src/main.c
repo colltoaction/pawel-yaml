@@ -19,18 +19,19 @@ void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
         switch (g->type) {
             case GEN_TYPE_SCALAR:
                 /* Validating against 27NA requirements: =VAL :text */
-                printf("=VAL :%s\n", g->value);
+                printf("  =VAL :%s\n", g->value);
+                break;
+            case GEN_TYPE_SEQ_START:
+                printf("  +SEQ\n");
+                break;
+            case GEN_TYPE_SEQ_END:
+                printf("  -SEQ\n");
                 break;
             default:
                 break;
         }
-    } else if (sd->type == SD_TYPE_COMPOSITION) {
-        /* Vertical composition (sequence) */
-        traverse_diagram(sd->data.binary.first, alphabet);
-        traverse_diagram(sd->data.binary.second, alphabet);
-    } else if (sd->type == SD_TYPE_TENSOR) {
-        /* Horizontal composition (parallel) */
-        /* For now, just traverse left then right */
+    } else if (sd->type == SD_TYPE_COMPOSITION || sd->type == SD_TYPE_TENSOR) {
+        /* Traverse children */
         traverse_diagram(sd->data.binary.first, alphabet);
         traverse_diagram(sd->data.binary.second, alphabet);
     }
@@ -41,18 +42,31 @@ int main(int argc, char **argv) {
     Grammar *grammar = NULL;
     StringDiagram *diagram = NULL;
 
-    int result = yaml_parse(&alphabet, &grammar, &diagram);
+    int has_directive = 0;
+    int has_marker = 0;
+
+    int result = yaml_parse(&alphabet, &grammar, &diagram, &has_directive, &has_marker);
+
+    /* We need to access the flags, but yaml_parse doesn't return them currently. 
+       Let's assume for now we just handle based on diagram content or improve API.
+       Actually, let's just make traverse_diagram handle 1 space indentation and
+       main handle the STR/DOC wrappers.
+    */
 
     if (result == 0) {
-        /* Success - Emit the Stream Start */
         printf("+STR\n");
-        printf(" +DOC ---\n"); // Hardcoded for 27NA seed
+        if (has_directive || has_marker) {
+            printf(" +DOC ---\n");
+        } else {
+            printf(" +DOC\n");
+        }
         
         traverse_diagram(diagram, alphabet);
         
         printf(" -DOC\n");
         printf("-STR\n");
-    } else {
+    }
+ else {
         fprintf(stderr, "Parse failed\n");
         return 1;
     }

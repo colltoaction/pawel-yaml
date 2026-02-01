@@ -27,7 +27,9 @@ typedef enum {
     GEN_TYPE_LBRACE,  /* {: 1 -> I (Map start) */
     GEN_TYPE_RBRACE,  /* }: I -> 1 (Map end) */
     GEN_TYPE_COMMA,   /* ,: I -> I (Separator) */
-    GEN_TYPE_COLON    /* :: I -> I (Key-Value separator) */
+    GEN_TYPE_COLON,   /* :: I -> I (Key-Value separator) */
+    GEN_TYPE_SEQ_START,
+    GEN_TYPE_SEQ_END
 } GeneratorType;
 
 typedef struct {
