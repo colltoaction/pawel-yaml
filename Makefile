@@ -78,9 +78,13 @@ $(BUILD_DIR)/lex.yy.o: $(LEX_YY_C) $(PARSER_TAB_H)
 clean: clean-build
 
 clean-build:
-	# Remove generated code and binaries, but preserve TDD artifacts
-	rm -rf $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR)
+	# Remove generated code and binaries, but preserve TDD artifacts and test suite
+	rm -rf $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR)
+	# Only remove non-test files from lib (files, not directories)
+	find $(LIB_DIR) -maxdepth 1 -type f -delete 2>/dev/null || true
+	# Clean object files
 	rm -f $(BUILD_DIR)/*.o
+	@echo "✓ Preserved: $(TMP_DIR), $(LOG_DIR), yaml-test-suite"
 
 # Deep clean: remove all build artifacts including test tracking
 deepclean:
@@ -93,7 +97,7 @@ clean-parser:
 clean-lexer:
 	rm -f $(LEX_YY_C) $(BUILD_DIR)/lex.yy.o
 
-.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl
+.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl tdd chaos chaos-parsing chaos-lexing lexing docker-build-pawel
 
 test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
 	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
@@ -101,6 +105,42 @@ test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
 
 yaml-test-suite: $(SUITE_DIR) $(TARGET)
 	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
+
+# TDD and Chaos Engineering Targets
+
+tdd: $(TARGET) $(SUITE_DIR)
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  TDD Harness - Test Discovery and Execution"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@./tdd_harness.sh discover | head -20
+	@echo "  ... ($(shell ./tdd_harness.sh discover 2>/dev/null | wc -l) total tests available)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Usage: ./tdd_harness.sh test <TEST_ID>  # Run specific test"
+	@echo ""
+
+chaos-parsing: $(TARGET) $(SUITE_DIR)
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  Parser Chaos Engineering - Grammar Rule Necessity Analysis"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@bash chaos.sh 2>&1 | tail -20
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Report: $(LOG_DIR)/chaos_dead_code.md"
+	@echo ""
+
+# Backwards compatibility alias
+chaos: chaos-parsing
+
+chaos-lexing: $(TARGET) $(SUITE_DIR)
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  Lexer Chaos Engineering - Token Rule Necessity Analysis"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@bash chaos_lexing.sh 2>&1 | tail -20
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Report: $(LOG_DIR)/CHAOS_LEXING_RESULTS.md"
+	@echo ""
+
+# Backwards compatibility alias
+lexing: chaos-lexing
 
 # Build pawel-yaml Docker image
 docker-build-pawel: $(TARGET)

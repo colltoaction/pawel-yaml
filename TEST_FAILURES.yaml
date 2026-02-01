@@ -1,63 +1,256 @@
-meta:
-  generated_at: '2026-02-20T20:21:15Z'
-  suite_dir: build/lib/yaml-test-suite/src
-  total_tests: 351
-  total_passes: 296
-  total_failures: 55
-  scoring: fail-true-aware
-failing:
-- 5WE3
-- 6BFJ
-- 6KGN
-- 6S55
-- 735Y
-- 7BMT
-- 7ZZ5
-- 9KAX
-- A2M4
-- AB8U
-- BF9H
-- BS4K
-- BU8L
-- CFD4
-- CT4Q
-- D83L
-- DC7X
-- DFF7
-- DK3J
-- F6MC
-- FBC9
-- FH7J
-- FP8R
-- FRK4
-- G9HC
-- GDY7
-- H7J7
-- J3BT
-- JTV5
-- KK5P
-- M5C3
-- M5DY
-- M7A3
-- NKF9
-- PW8X
-- Q9WF
-- QB6E
-- QLJ7
-- RZP5
-- S3PD
-- SKE5
-- SM9W
-- TD5N
-- U3XV
-- UGM3
-- UKK6
-- UT92
-- V9D5
-- W42U
-- W4TN
-- X38W
-- XLQ9
-- XW4D
-- ZF4X
-- ZK9H
+  - 236B
+  - 2CMS
+  - 2G84
+  - 35KP
+  - 36F6
+  - 3ALJ
+  - 3HFZ
+  - 3MYT
+  - 3RLN
+  - 4CQQ
+  - 4EJS
+  - 4FJ6
+  - 4H7K
+  - 4HVU
+  - 4JVG
+  - 4Q9F
+  - 4QFQ
+  - 4RWC
+  - 4WA9
+  - 4ZYM
+  - 55WF
+  - 565N
+  - 5BVJ
+  - 5GBF
+  - 5KJE
+  - 5LLU
+  - 5MUD
+  - 5T43
+  - 5TRB
+  - 5TYM
+  - 5U3A
+  - 5WE3
+  - 62EZ
+  - 6BCT
+  - 6BFJ
+  - 6CA3
+  - 6CK3
+  - 6FWR
+  - 6HB6
+  - 6JTT
+  - 6KGN
+  - 6M2F
+  - 6PBE
+  - 6S55
+  - 6VJK
+  - 6WLZ
+  - 6WPF
+  - 6XDY
+  - 6ZKB
+  - 74H7
+  - 753E
+  - 7A4E
+  - 7FWL
+  - 7LBH
+  - 7MNF
+  - 7T8X
+  - 7Z25
+  - 7ZZ5
+  - 82AN
+  - 87E4
+  - 8CWC
+  - 8G76
+  - 8KB6
+  - 8UDB
+  - 8XDJ
+  - 8XYN
+  - 93JH
+  - 93WF
+  - 96L6
+  - 96NN
+  - 98YD
+  - 9BXH
+  - 9C9N
+  - 9CWY
+  - 9DXL
+  - 9HCY
+  - 9JBA
+  - 9KAX
+  - 9KBC
+  - 9MAG
+  - 9MMA
+  - 9MMW
+  - 9MQT
+  - 9SA2
+  - 9TFX
+  - 9WXW
+  - 9YRD
+  - A2M4
+  - A6F9
+  - A984
+  - AB8U
+  - AVM7
+  - B3HG
+  - B63P
+  - BD7L
+  - BF9H
+  - BS4K
+  - C2DT
+  - C2SP
+  - C4HZ
+  - CC74
+  - CML9
+  - CN3R
+  - CQ3W
+  - CT4Q
+  - CTN5
+  - CVW2
+  - CXX2
+  - D49Q
+  - D83L
+  - DC7X
+  - DE56
+  - DFF7
+  - DK3J
+  - DK4H
+  - DK95
+  - DMG6
+  - DWX9
+  - EB22
+  - EHF6
+  - EW3V
+  - EX5H
+  - EXG3
+  - F6MC
+  - F8F9
+  - FBC9
+  - FH7J
+  - FP8R
+  - FRK4
+  - G4RS
+  - G5U8
+  - G7JE
+  - G992
+  - G9HC
+  - GDY7
+  - GH63
+  - GT5M
+  - H2RW
+  - H3Z8
+  - H7J7
+  - H7TQ
+  - HMK4
+  - HMQ5
+  - HRE5
+  - HS5T
+  - HU3P
+  - HWV9
+  - J3BT
+  - JEF9
+  - JHB9
+  - JKF3
+  - JTV5
+  - JY7Z
+  - K3WX
+  - K527
+  - K54U
+  - K858
+  - KK5P
+  - KS4U
+  - KSS4
+  - L24T
+  - L383
+  - L94M
+  - L9U5
+  - LE5A
+  - LHL4
+  - LP6E
+  - LQZ7
+  - M29M
+  - M5C3
+  - M5DY
+  - M7A3
+  - M7NX
+  - M9B4
+  - MJS9
+  - MUS6
+  - MYW6
+  - N4JP
+  - N782
+  - NAT4
+  - NB6Z
+  - NHX8
+  - NJ66
+  - NKF9
+  - NP9H
+  - P2AD
+  - P2EQ
+  - P76L
+  - P94K
+  - PRH3
+  - PUW8
+  - PW8X
+  - Q4CL
+  - Q5MG
+  - Q8AD
+  - QB6E
+  - QLJ7
+  - QT73
+  - R4YG
+  - RHX7
+  - RR7F
+  - RTP8
+  - RXY3
+  - RZP5
+  - RZT7
+  - S3PD
+  - S4GJ
+  - S4T7
+  - S98Z
+  - S9E8
+  - SF5V
+  - SKE5
+  - SM9W
+  - SR86
+  - SU5Z
+  - SU74
+  - SY6V
+  - T26H
+  - T4YY
+  - T5N4
+  - T833
+  - TD5N
+  - TL85
+  - TS54
+  - U3C3
+  - U3XV
+  - U44R
+  - U99R
+  - U9NS
+  - UDR7
+  - UGM3
+  - UKK6
+  - UT92
+  - UV7Q
+  - V9D5
+  - VJP3
+  - W42U
+  - W4TN
+  - W5VH
+  - W9L4
+  - WZ62
+  - X38W
+  - X4QW
+  - X8DW
+  - XLQ9
+  - XV9V
+  - XW4D
+  - Y79Y
+  - YJV2
+  - Z9M4
+  - ZCZ6
+  - ZF4X
+  - ZL4Z
+  - ZVH3
+  - ZXT5
+  - ZYU8
