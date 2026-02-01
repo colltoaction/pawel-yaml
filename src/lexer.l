@@ -153,8 +153,15 @@ static char* prefix_dup(char prefix, const char* s, int len) {
     return SCALAR;
 }
 
-<BLOCK_CONTENT>[|>][0-9]?[\-+]?|[|>][\-+]?[0-9]? {
-    /* Block scalar: | or > with optional indentation indicator (0-9) and/or chomping indicator (-/+) */
+<BLOCK_CONTENT>[|>]|[|>][-+]|[|>][0-9]|[|>][0-9][-+]|[|>][-+][0-9] {
+    /* Block scalar: | or > with optional indentation indicator (0-9) and/or chomping indicator (-/+)
+     * Valid patterns: |, |-, |+, |0-9, |0-9[+-], |[+-]0-9
+     * This pattern properly restricts to single-digit indicators */
+    if (yyleng > 3) {
+        /* Should never happen with the patterns above, but just in case */
+        yyless(1);
+        return SCALAR;
+    }
     CTX->block_type = yytext[0];
     CTX->block_indent = -1;
     CTX->block_content = malloc(1024);
@@ -163,6 +170,21 @@ static char* prefix_dup(char prefix, const char* s, int len) {
     CTX->block_content_len = 0;
     CTX->block_content_cap = 1024;
     BEGIN(BLOCK_SCALAR_START);
+}
+
+<BLOCK_SCALAR_START>[ \t]*#.*\n                                        { /* Comment line */}
+<BLOCK_SCALAR_START>[ \t]*\n                                           { /* Empty line, just newline */
+    yyless(yyleng - 1); /* Put back the newline */
+}
+<BLOCK_SCALAR_START>[^#\n]                                              {
+    /* Invalid content on same line as block scalar indicator */
+    /* This means characters other than comment or newline after | or > modifiers */
+    yyless(1); /* Put back the character we just matched */
+    yylval->sval = prefix_dup(CTX->block_type, CTX->block_content, CTX->block_content_len);
+    free(CTX->block_content);
+    CTX->block_content = NULL;
+    BEGIN(INITIAL);
+    return SCALAR;  /* Return what we have, parser will handle the error */
 }
 
 <BLOCK_SCALAR_START>\n[ \t]* {
