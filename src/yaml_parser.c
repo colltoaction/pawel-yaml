@@ -13,10 +13,17 @@ static void print_indent(int depth) {
     for (int i = 0; i < depth; i++) printf(" ");
 }
 
+void rml_print_recursive(StringDiagram *sd, const char *inh_anchor, const char *inh_tag);
+
 static char *expand_tag(const char *tag) {
     if (!tag) return NULL;
     if (strcmp(tag, YAML_TAG_SHORT) == 0) return YAML_TAG_SHORT;
-    if (strcmp(tag, YAML_TAG_RESERVED) == 0) return YAML_TAG_PREFIX;
+    if (strncmp(tag, YAML_TAG_RESERVED, 2) == 0) {
+        /* Expand !!prefix to tag:yaml.org,2002:prefix */
+        static char buf[256]; /* Warning: not thread safe, static buffer */
+        snprintf(buf, sizeof(buf), "%s%s", YAML_TAG_PREFIX, tag + 2);
+        return buf;
+    }
     return (char *)tag;
 }
 
@@ -90,7 +97,9 @@ static void print_scalar(Generator *gen, const char *anchor, const char *tag) {
     const char *alias_sym = rml_token_name(STYLE_ALIAS);
     
     if (gen->name && alias_sym && gen->name[0] == alias_sym[0]) {
-        OUTPUT("=ALI %s\n", gen->name + 1);
+        /* Preserve asterisk in alias output */
+        print_indent(visual_depth);
+        OUTPUT("=ALI %s\n", gen->name);
     } else {
         print_indent(visual_depth);
         printf("=VAL ");
@@ -99,7 +108,9 @@ static void print_scalar(Generator *gen, const char *anchor, const char *tag) {
             if (anchor_sym && anchor[0] != anchor_sym[0]) putchar(anchor_sym[0]);
             printf("%s ", anchor);
         }
-        if (expanded_tag) printf("%s ", expanded_tag);
+        if (expanded_tag) {
+             printf("<%s> ", expanded_tag);
+        }
         
         if (gen->name) {
             char style = gen->name[0];
@@ -133,16 +144,86 @@ static bool is_structural(Generator *g) {
     if (seq && strcmp(g->name, seq) == 0) return true;
     const char *map = rml_token_name(MAP);
     if (map && strcmp(g->name, map) == 0) return true;
+    /* INDENT/DEDENT treated as structural to avoid print_scalar */
+    const char *indent = rml_token_name(INDENT);
+    if (indent && strcmp(g->name, indent) == 0) return true;
+    const char *dedent = rml_token_name(DEDENT);
+    if (dedent && strcmp(g->name, dedent) == 0) return true;
     return false;
 }
 
-void rml_print_recursive(StringDiagram *sd) {
+/* Print collection header and content with proper indentation */
+static void print_collection_header(StringDiagram *sd, const char *marker, const char *flow_brackets) {
+    const char *t = expand_tag(sd->tag);
+    const char *flow = sd->flow_style ? flow_brackets : "";
+    print_indent(visual_depth);
+    printf("%s", marker);
+    if (sd->anchor) {
+        const char *anchor_char = rml_token_name(STYLE_ANCHOR);
+        printf(" ");
+        if (anchor_char && sd->anchor[0] != anchor_char[0]) putchar(anchor_char[0]);
+        printf("%s", sd->anchor);
+    }
+    if (t) {
+        printf(" <%s>", t);
+    }
+    printf("%s\n", flow);
+    fflush(stdout);
+}
+
+static void print_collection_footer(const char *marker) {
+    print_indent(visual_depth);
+    OUTPUT("%s\n", marker);
+    fflush(stdout);
+}
+
+static void print_seq_collection(StringDiagram *sd, const char *eff_tag, const char *eff_anchor) {
+    char *orig_tag = sd->tag;
+    char *orig_anchor = sd->anchor;
+    if (!sd->tag) sd->tag = (char*)eff_tag; 
+    if (!sd->anchor) sd->anchor = (char*)eff_anchor;
+    
+    print_collection_header(sd, "+SEQ", " []");
+    visual_depth++;
+    rml_print_recursive(sd->data.op.left, NULL, NULL);
+    visual_depth--;
+    print_collection_footer("-SEQ");
+    
+    sd->tag = orig_tag;
+    sd->anchor = orig_anchor;
+}
+
+static void print_map_collection(StringDiagram *sd, const char *eff_tag, const char *eff_anchor) {
+    char *orig_tag = sd->tag;
+    char *orig_anchor = sd->anchor;
+    if (!sd->tag) sd->tag = (char*)eff_tag;
+    if (!sd->anchor) sd->anchor = (char*)eff_anchor;
+
+    print_collection_header(sd, "+MAP", " {}");
+    visual_depth++;
+    rml_print_recursive(sd->data.op.left, NULL, NULL);
+    visual_depth--;
+    print_collection_footer("-MAP");
+
+    sd->tag = orig_tag;
+    sd->anchor = orig_anchor;
+}
+
+void rml_print_recursive(StringDiagram *sd, const char *inh_anchor, const char *inh_tag) {
     if (!sd) return;
+    
+    const char *eff_anchor = sd->anchor ? sd->anchor : inh_anchor;
+    const char *eff_tag = sd->tag ? sd->tag : inh_tag;
     
     switch (sd->type) {
         case SD_GENERATOR:
             if (!is_structural(sd->data.gen)) {
-                print_scalar(sd->data.gen, sd->anchor, sd->tag);
+                print_scalar(sd->data.gen, eff_anchor, eff_tag);
+            } else {
+                Generator *g = sd->data.gen;
+                if (g && g->name) {
+                    /* INDENT/DEDENT are no-ops */
+                }
             }
             break;
             
@@ -151,58 +232,22 @@ void rml_print_recursive(StringDiagram *sd) {
                 Generator *wrapper = sd->data.op.right->data.gen;
                 
                 if (wrapper->name && strcmp(wrapper->name, rml_token_name(SEQ)) == 0) {
-                    const char *t = expand_tag(sd->tag);
-                    const char *flow = sd->flow_style ? " []" : "";
-                    print_indent(visual_depth);
-                    printf("+SEQ");
-                    if (sd->anchor) {
-                        const char *anchor_char = rml_token_name(STYLE_ANCHOR);
-                        printf(" ");
-                        if (anchor_char && sd->anchor[0] != anchor_char[0]) putchar(anchor_char[0]);
-                        printf("%s", sd->anchor);
-                    }
-                    if (t) printf(" %s", t);
-                    printf("%s\n", flow);
-                    fflush(stdout);
-                    
-                    visual_depth++;
-                    rml_print_recursive(sd->data.op.left);
-                    visual_depth--;
-                    OUTPUT("-SEQ\n");
-                    fflush(stdout);
+                    print_seq_collection(sd, eff_tag, eff_anchor);
                 } else if (wrapper->name && strcmp(wrapper->name, rml_token_name(MAP)) == 0) {
-                    const char *t = expand_tag(sd->tag);
-                    const char *flow = sd->flow_style ? " {}" : "";
-                    print_indent(visual_depth);
-                    printf("+MAP");
-                    if (sd->anchor) {
-                        const char *anchor_char = rml_token_name(STYLE_ANCHOR);
-                        printf(" ");
-                        if (anchor_char && sd->anchor[0] != anchor_char[0]) putchar(anchor_char[0]);
-                        printf("%s", sd->anchor);
-                    }
-                    if (t) printf(" %s", t);
-                    printf("%s\n", flow);
-                    fflush(stdout);
-                    
-                    visual_depth++;
-                    rml_print_recursive(sd->data.op.left);
-                    visual_depth--;
-                    OUTPUT("-MAP\n");
-                    fflush(stdout);
+                    print_map_collection(sd, eff_tag, eff_anchor);
                 } else {
-                    rml_print_recursive(sd->data.op.left);
-                    rml_print_recursive(sd->data.op.right);
+                    rml_print_recursive(sd->data.op.left, eff_anchor, eff_tag);
+                    rml_print_recursive(sd->data.op.right, eff_anchor, eff_tag);
                 }
             } else {
-                rml_print_recursive(sd->data.op.left);
-                rml_print_recursive(sd->data.op.right);
+                rml_print_recursive(sd->data.op.left, eff_anchor, eff_tag);
+                rml_print_recursive(sd->data.op.right, eff_anchor, eff_tag);
             }
             break;
             
         case SD_PRODUCT:
-            rml_print_recursive(sd->data.op.left);
-            rml_print_recursive(sd->data.op.right);
+            rml_print_recursive(sd->data.op.left, eff_anchor, eff_tag);
+            rml_print_recursive(sd->data.op.right, eff_anchor, eff_tag);
             break;
             
         case SD_IDENTITY:
@@ -222,7 +267,7 @@ void rml_print_events(ParseOutput *output) {
             OUTPUT(" +DOC\n");
         }
         visual_depth = DOCUMENT_INDENT_LEVEL;
-        rml_print_recursive(sd);
+        rml_print_recursive(sd, NULL, NULL);
         visual_depth = 0;
         if (sd->doc_end_marker) {
             OUTPUT(" -DOC ...\n");

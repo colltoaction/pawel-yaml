@@ -24,8 +24,8 @@ Alphabet *create_alphabet() {
     a->generators = NULL;
     a->count = 0;
     /* Pre-create INDENT (0→1) and DEDENT (1→0) generators */
-    a->indent_gen = create_generator(INDENT_NAME, 0, 1);
-    a->dedent_gen = create_generator(DEDENT_NAME, 1, 0);
+    a->indent_gen = create_generator(INDENT_NAME, 0, 0);
+    a->dedent_gen = create_generator(DEDENT_NAME, 1, 1);
     alphabet_add(a, a->indent_gen);
     alphabet_add(a, a->dedent_gen);
     return a;
