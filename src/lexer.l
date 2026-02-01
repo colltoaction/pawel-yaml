@@ -137,7 +137,40 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 <INITIAL>^[ \t]+                    {
     int indent_spaces = yyleng;
     
-    if (indent_spaces > current_indent()) {
+    /* Special case: if we just saw a BLOCK_SEQ_START at column N,
+     * and now we have indent of N+2, this is likely sequence item continuation.
+     * Suppress INDENT in this specific case to allow nested sequences to work.
+     * Example: "- - x\n  - y" → first - at col 1, next indent is 3 (col 1 + 2)
+     *
+     * BUT: Only suppress if the next non-space token will be another "-" 
+     * We check this heuristically: last_seq_column >= 0 means we just saw a "-"
+     */
+    if (last_seq_column >= 0) {
+        int expected_item_indent = last_seq_column + 2;
+        int actual_column = yylloc->first_column + indent_spaces;
+        
+        if (actual_column == expected_item_indent) {
+            /* This looks like a sequence item continuation - suppress INDENT */
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        } else if (indent_spaces > current_indent()) {
+            push_indent(indent_spaces);
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+            return INDENT;
+        } else if (indent_spaces < current_indent()) {
+            while (indent_spaces < current_indent()) {
+                pop_indent();
+                pending_dedents++;
+            }
+            if (pending_dedents > 0) {
+                pending_dedents--;
+                if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+                return DEDENT;
+            }
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        } else {
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        }
+    } else if (indent_spaces > current_indent()) {
         push_indent(indent_spaces);
         if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
         return INDENT;
@@ -181,8 +214,8 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 <BLOCK_CONTENT>"-"/(\n|\r\n|$)            { last_seq_column = yylloc->first_column; return BLOCK_SEQ_START; }
 <BLOCK_CONTENT>"? "                       { yyless(1); return BLOCK_KEY; }
 <BLOCK_CONTENT>"?"/[ \t\n\r]              { return BLOCK_KEY; }
-<BLOCK_CONTENT,FLOW_CONTENT>":"/[^ \t\n\r,\[\]\{\}#] { return COLON_ADJ; }
-<BLOCK_CONTENT,FLOW_CONTENT>":"/.*               { return COLON; }
+<BLOCK_CONTENT,FLOW_CONTENT>":"/([ \t\n\r])      { return COLON; }
+<BLOCK_CONTENT,FLOW_CONTENT>":"                  { return COLON_ADJ; }
 <BLOCK_CONTENT,FLOW_CONTENT>"["           { 
     flow_level++; 
     BEGIN(FLOW_CONTENT);
@@ -208,7 +241,7 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 <BLOCK_CONTENT,FLOW_CONTENT>([ \t]|\xe2\x80\xa3|\xe2\x90\xa3)+                     { ; }
 
 
-<BLOCK_CONTENT,FLOW_CONTENT>!([!%a-zA-Z0-9_.\-\/]*|"<"[^>]+">") {
+<BLOCK_CONTENT,FLOW_CONTENT>!([!a-zA-Z0-9_.\-\/]*|"<"[^>]+">") {
     yylval->sval = strdup(yytext);
     return TAG;
 }
