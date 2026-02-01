@@ -36,6 +36,9 @@ typedef enum {
     GEN_TYPE_FLOW_SEQ_END,
     GEN_TYPE_FLOW_MAP_START,
     GEN_TYPE_FLOW_MAP_END,
+    GEN_TYPE_DOC_START,     /* --- */
+    GEN_TYPE_DOC_END,       /* ... */
+    GEN_TYPE_QUESTION,      /* ? */
     GEN_TYPE_ALIAS,         /* *alias: I -> I (Alias reference) */
     GEN_TYPE_ERROR = 256,   /* Bison standard: YYerror */
     GEN_TYPE_UNDEF = 257    /* Bison standard: YYUNDEF */

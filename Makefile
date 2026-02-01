@@ -27,7 +27,7 @@ LEX_YY_C = $(GEN_SRC_DIR)/lex.yy.c
 TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
-OBJS = $(BUILD_DIR)/mrl.o $(BUILD_DIR)/main.o $(BUILD_DIR)/yaml_parser.o \
+OBJS = $(BUILD_DIR)/mrl.o $(BUILD_DIR)/yaml_parser.o \
        $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lex.yy.o
 
 TARGET = $(BIN_DIR)/pawel-yaml
@@ -54,17 +54,14 @@ $(PARSER_TAB_C) $(PARSER_TAB_H): $(SRC_DIR)/yaml.y $(SRC_DIR)/yaml_parser.h $(SR
 	$(BISON) -d -o $(PARSER_TAB_C) --defines=$(PARSER_TAB_H) $(SRC_DIR)/yaml.y
 
 # Flex lexer generation
-$(LEX_YY_C): $(SRC_DIR)/lexer.l $(PARSER_TAB_H)
-	$(FLEX) -o $(LEX_YY_C) $(SRC_DIR)/lexer.l
+$(LEX_YY_C): $(SRC_DIR)/yaml.l $(PARSER_TAB_H)
+	$(FLEX) -o $(LEX_YY_C) $(SRC_DIR)/yaml.l
 
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $(TARGET)
 
 $(BUILD_DIR)/mrl.o: $(SRC_DIR)/mrl.c $(SRC_DIR)/mrl.h
 	$(CC) $(CFLAGS) -c $(SRC_DIR)/mrl.c -o $(BUILD_DIR)/mrl.o
-
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(SRC_DIR)/mrl.h
-	$(CC) $(CFLAGS) -c $(SRC_DIR)/main.c -o $(BUILD_DIR)/main.o
 
 $(BUILD_DIR)/yaml_parser.o: $(SRC_DIR)/yaml_parser.c $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h $(PARSER_TAB_H)
 	$(CC) $(CFLAGS) -c $(SRC_DIR)/yaml_parser.c -o $(BUILD_DIR)/yaml_parser.o

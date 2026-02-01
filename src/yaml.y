@@ -2,6 +2,7 @@
 #include "yaml_parser.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void yyerror(ParserContext *ctx, void *scanner, const char *s);
 %}
@@ -32,8 +33,10 @@ void yyerror(ParserContext *ctx, void *scanner, const char *s);
 %token DOC_START
 %token BULLET
 %token COLON
+%token QUESTION
 %token LBRACK RBRACK LBRACE RBRACE COMMA
 
+%type <sd> document_list
 %type <sd> document
 %type <sd> nodes node node_body scalar
 %type <sd> seq seq_entries seq_entry
@@ -43,24 +46,61 @@ void yyerror(ParserContext *ctx, void *scanner, const char *s);
 %%
 
 stream:
-    document {
+    document_list {
         ctx->diagram = $1;
-    }
-    | YAML_DIRECTIVE document {
-        ctx->has_directive = 1;
-        ctx->diagram = $2;
     }
     ;
 
+document_list:
+    document { $$ = $1; }
+    | document_list document { $$ = sd_compose($1, $2); }
+    ;
+
 document:
-    nodes { $$ = $1; }
-    | DOC_START nodes {
-        ctx->has_marker = 1;
-        $$ = $2;
+    nodes {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_DOC_START; gs->value = NULL; gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
+        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        $$ = sd_compose(sd_generator(gs), sd_compose($1, sd_generator(ge)));
     }
-    | DOC_START {
-        ctx->has_marker = 1;
-        $$ = NULL;
+    | DOC_START nodes {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
+        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
+    }
+    | YAML_DIRECTIVE DOC_START nodes {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
+        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        $$ = sd_compose(sd_generator(gs), sd_compose($3, sd_generator(ge)));
     }
     ;
 
@@ -85,6 +125,16 @@ node:
         sd_set_tag($3, $2);
         $$ = $3;
         free($1); free($2);
+    }
+    | TAG seq {
+        sd_set_tag($2, $1);
+        $$ = $2;
+        free($1);
+    }
+    | TAG map {
+        sd_set_tag($2, $1);
+        $$ = $2;
+        free($1);
     }
     ;
 
@@ -193,6 +243,7 @@ map_entries:
 
 map_entry:
     node COLON node { $$ = sd_compose($1, $3); }
+    | QUESTION node COLON node { $$ = sd_compose($2, $4); }
     ;
 
 flow_seq:

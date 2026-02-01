@@ -53,16 +53,19 @@ static void append_block_line(const char *line, int len) {
 %x BLOCK_SCALAR
 %x BLOCK_CONTENT
 
+NSCAL [a-zA-Z0-9]
+
 %%
 
 "%YAML 1.2"      { return YAML_DIRECTIVE; }
 "---"            { return DOC_START; }
 "-"([ ]+|\n)     { return BULLET; }
 ":"([ ]+|\n)     { return COLON; }
-"!!"[a-z]+       { yylval->string = strdup(yytext); return TAG; }
-"!"[a-zA-Z0-9_-]+ { yylval->string = strdup(yytext); return TAG; }
-"&"[a-zA-Z0-9_:]+ { yylval->string = strdup(yytext); return ANCHOR; }
-"*"[a-zA-Z0-9_:]+ { yylval->string = strdup(yytext); return ALIAS; }
+"?"([ ]+|\n)     { return QUESTION; }
+"!!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
+"!"{NSCAL}+      { yylval->string = strdup(yytext); return TAG; }
+"&"{NSCAL}+      { yylval->string = strdup(yytext); return ANCHOR; }
+"*"{NSCAL}+      { yylval->string = strdup(yytext); return ALIAS; }
 "["              { return LBRACK; }
 "]"              { return RBRACK; }
 "{"              { return LBRACE; }
@@ -143,7 +146,24 @@ static void append_block_line(const char *line, int len) {
 }
 
 "#".*            { /* ignore comments */ }
-[a-zA-Z0-9]+     { yylval->string = strdup(yytext); return SCALAR; }
+{NSCAL}([{NSCAL} ]*{NSCAL})?(\n[ \t]+{NSCAL}([{NSCAL} ]*{NSCAL})?)* {
+    /* Multi-line plain scalar: replace newlines and following spaces with a single space */
+    char *src = yytext;
+    char *dest = malloc(strlen(yytext) + 1);
+    char *dptr = dest;
+    while (*src) {
+        if (*src == '\n') {
+            *dptr++ = ' ';
+            src++;
+            while (*src == ' ' || *src == '\t') src++;
+        } else {
+            *dptr++ = *src++;
+        }
+    }
+    *dptr = '\0';
+    yylval->string = dest;
+    return SCALAR;
+}
 [ \t\n\r]+       { /* skip whitespace */ }
 .                { /* ignore other characters for now */ }
 
