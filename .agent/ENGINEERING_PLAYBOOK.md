@@ -61,11 +61,14 @@ This document consolidates the technical wisdom, refactoring cycles, and archite
 
 ---
 
-## 5. Standard Error Codes
-- `EXIT_SUCCESS` (0): Success.
-- `EXIT_FAILURE` (1): General error.
-- `YAML_PARSE_SYNTAX_ERROR` (2): Grammar violation.
-- `YAML_PARSE_ERR_LEX_INIT` (3): Lexer initialization failure.
+## 5. Standard Errors & Tokens
+
+Including `<stdlib.h>` and the generated `"parser.tab.h"`:
+- `YYEMPTY` (-2)
+- `EXIT_SUCCESS` or `YYEOF` (0): Success.
+- `EXIT_FAILURE` (1): Failure.
+- `YYerror` (256): Syntax error.
+- `YYUNDEF` (257): Invalid/undefined.
 
 ---
 

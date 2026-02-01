@@ -35,7 +35,9 @@ typedef enum {
     GEN_TYPE_FLOW_SEQ_START,
     GEN_TYPE_FLOW_SEQ_END,
     GEN_TYPE_FLOW_MAP_START,
-    GEN_TYPE_FLOW_MAP_END
+    GEN_TYPE_FLOW_MAP_END,
+    GEN_TYPE_ERROR = 256,   /* Bison standard: YYerror */
+    GEN_TYPE_UNDEF = 257    /* Bison standard: YYUNDEF */
 } GeneratorType;
 
 typedef struct {

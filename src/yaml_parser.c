@@ -14,7 +14,7 @@ int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **o
     *out_diagram = NULL;
 
     if (!*out_alphabet || !*out_grammar) {
-        return 2; /* Memory error */
+        return 1; /* Bison standard: Memory exhaustion or abort */
     }
 
     ParserContext ctx;
