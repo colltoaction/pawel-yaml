@@ -17,6 +17,8 @@
 "-"[ ]+          { return BULLET; }
 ":"([ ]+|\n)     { return COLON; }
 "!!"[a-z]+       { yylval->string = strdup(yytext); return TAG; }
+"&"[a-zA-Z0-9_:]+ { yylval->string = strdup(yytext); return ANCHOR; }
+"*"[a-zA-Z0-9_:]+ { yylval->string = strdup(yytext); return ALIAS; }
 "["              { return LBRACK; }
 "]"              { return RBRACK; }
 "{"              { return LBRACE; }

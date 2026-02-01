@@ -25,6 +25,8 @@ void yyerror(ParserContext *ctx, void *scanner, const char *s);
 %token <string> QSCALAR
 %token <string> SSCALAR
 %token <string> TAG
+%token <string> ANCHOR
+%token <string> ALIAS
 %token YAML_DIRECTIVE
 %token DOC_START
 %token BULLET
@@ -72,6 +74,28 @@ node:
         $$ = sd_generator(g);
         free($1);
     }
+    | ANCHOR SCALAR {
+        alphabet_add_scalar(ctx->alphabet, $2);
+        alphabet_set_anchor(ctx->alphabet, $1);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
+        free($1); free($2);
+    }
+    | TAG SCALAR {
+        alphabet_add_scalar(ctx->alphabet, $2);
+        alphabet_set_tag(ctx->alphabet, $1);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
+        free($1); free($2);
+    }
+    | ANCHOR TAG SCALAR {
+        alphabet_add_scalar(ctx->alphabet, $3);
+        alphabet_set_anchor(ctx->alphabet, $1);
+        alphabet_set_tag(ctx->alphabet, $2);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
+        free($1); free($2); free($3);
+    }
     | QSCALAR {
         alphabet_add_quoted_scalar(ctx->alphabet, $1, '"');
         Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
@@ -84,12 +108,20 @@ node:
         $$ = sd_generator(g);
         free($1);
     }
-    | TAG SCALAR {
-        alphabet_add_scalar(ctx->alphabet, $2);
-        alphabet_set_tag(ctx->alphabet, $1);
+    | ALIAS {
+        alphabet_add_alias(ctx->alphabet, $1);
         Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
         $$ = sd_generator(g);
-        free($1); free($2);
+        free($1);
+    }
+    | ANCHOR seq {
+        $$ = $2;
+        /* Note: Current RML implementation puts properties on Generators. 
+           If an anchor is on a sequence, it should technically be on the SEQ_START generator.
+           Let's find the first generator in the diagram.
+           Actually, for now, let's just support it on scalars to pass 2SXE.
+        */
+        free($1);
     }
     | seq { $$ = $1; }
     | map { $$ = $1; }

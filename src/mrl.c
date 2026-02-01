@@ -27,6 +27,9 @@ void alphabet_free(Alphabet *a) {
         if (a->generators[i]->tag) {
             free(a->generators[i]->tag);
         }
+        if (a->generators[i]->anchor) {
+            free(a->generators[i]->anchor);
+        }
         free(a->generators[i]);
     }
     free(a->generators);
@@ -42,6 +45,7 @@ void alphabet_add_scalar(Alphabet *a, const char *value) {
     g->type = GEN_TYPE_SCALAR;
     g->value = strdup(value);
     g->tag = NULL;
+    g->anchor = NULL;
     g->quote = 0;
     a->generators[a->count++] = g;
 }
@@ -55,13 +59,34 @@ void alphabet_add_quoted_scalar(Alphabet *a, const char *value, char quote) {
     g->type = GEN_TYPE_SCALAR;
     g->value = strdup(value);
     g->tag = NULL;
+    g->anchor = NULL;
     g->quote = quote;
+    a->generators[a->count++] = g;
+}
+
+void alphabet_add_alias(Alphabet *a, const char *value) {
+    if (a->count >= a->capacity) {
+        a->capacity *= 2;
+        a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
+    }
+    Generator *g = malloc(sizeof(Generator));
+    g->type = GEN_TYPE_ALIAS;
+    g->value = strdup(value);
+    g->tag = NULL;
+    g->anchor = NULL;
+    g->quote = 0;
     a->generators[a->count++] = g;
 }
 
 void alphabet_set_tag(Alphabet *a, const char *tag) {
     if (a->count > 0) {
         a->generators[a->count - 1]->tag = strdup(tag);
+    }
+}
+
+void alphabet_set_anchor(Alphabet *a, const char *anchor) {
+    if (a->count > 0) {
+        a->generators[a->count - 1]->anchor = strdup(anchor);
     }
 }
 
