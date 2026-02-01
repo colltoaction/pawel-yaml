@@ -25,14 +25,7 @@ tmp_*
 build/src/
 build/inc/
 build/bin/
-# Preserve test suite for TDD and chaos engineering
-!build/lib/
-!build/lib/yaml-test-suite/
-!build/lib/yaml-test-suite/**
-!build/lib/yaml-runtimes/
-!build/lib/yaml-runtimes/**
-!build/lib/yaml-play/
-!build/lib/yaml-play/**
+build/lib/
 yaml-play/
 yaml-reference-parser/
 yaml-runtimes/
