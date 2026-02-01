@@ -1,23 +1,612 @@
 %{
-#include "parser.tab.h"
+#include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include "mrl.h"
+#include "yaml_parser.h"
+#include "parser.tab.h"
 
-/* Define YY_DECL to match our reentrant requirements if needed, 
-   but for now keep it simple. */
+/* ===== LEXER STATE MANAGEMENT =====
+ * Inlined from previous lexer_context.h for cleaner architecture.
+ * All state is now local to lexer (reentrant-safe with TLS if needed).
+ */
+
+/* Configuration constants for state limits */
+#define MAX_INDENT_LEVEL 100
+#define BLOCK_SCALAR_INITIAL_CAP 1024
+#define BLOCK_SCALAR_MAX_CAP (10 * 1024 * 1024)
+
+/* Indentation tracking for YAML block structure */
+static int indent_stack[MAX_INDENT_LEVEL];
+static int indent_level = 0;
+static int pending_dedents = 0;
+
+/* Flow context tracking ([] and {}) */
+static int flow_level = 0;
+
+/* Block sequence tracking: when we're inside a block sequence, track its starting indent
+ * This prevents emitting false INDENT tokens for continuation items at the same column.
+ * Example: "- - x\n  - y" should not emit INDENT between x and second - (both at column 0 relative to sequence)
+ */
+static int block_seq_column = -1;  /* -1 means not in block sequence, otherwise the column of the - */
+static int block_seq_depth = 0;    /* How many nested block sequences we're in */
+
+/* Block scalar accumulation (| or >) */
+static int block_indent = -1;
+static char* block_content = NULL;
+static int block_content_len = 0;
+static int block_content_cap = 0;
+static char block_type = '\0';
+
+/* Helpers for lexer state management */
+
+/* Error reporter: used for lexer-detected errors */
+static void lexer_error(const char* message) {
+    fprintf(stderr, "Lexer error: %s\n", message);
+}
+
+/* Push indent with bounds checking - returns false on overflow */
+static bool push_indent_safe(int column) {
+    if (indent_level >= MAX_INDENT_LEVEL - 1) {
+        lexer_error("Indentation nesting exceeds maximum depth");
+        return false;
+    }
+    indent_stack[++indent_level] = column;
+    return true;
+}
+
+/* Legacy wrapper for backward compatibility */
+static void push_indent(int column) {
+    push_indent_safe(column);
+}
+
+static int pop_indent(void) {
+    return (indent_level > 0) ? indent_stack[indent_level--] : 0;
+}
+
+static int current_indent(void) {
+    return indent_stack[indent_level];
+}
+
+static void init_block_scalar(char type) {
+    block_type = type;
+    block_indent = -1;
+    if (block_content) free(block_content);
+    block_content = malloc(BLOCK_SCALAR_INITIAL_CAP);
+    if (!block_content) return;
+    block_content[0] = '\0';
+    block_content_len = 0;
+    block_content_cap = BLOCK_SCALAR_INITIAL_CAP;
+}
+
+static void cleanup_block_scalar(void) {
+    if (block_content) free(block_content);
+    block_content = NULL;
+    block_content_len = 0;
+    block_content_cap = 0;
+    block_type = '\0';
+}
+
+/* Reset all lexer state for multi-document parsing or error recovery */
+static void reset_lexer_state(void) {
+    indent_level = 0;
+    indent_stack[0] = 0;
+    pending_dedents = 0;
+    flow_level = 0;
+    block_seq_column = -1;
+    block_seq_depth = 0;
+    cleanup_block_scalar();
+}
+
+static char* prefix_dup(char prefix, const char* s, int len) {
+    char* buf = malloc(len + 2);
+    if (!buf) return NULL;
+    buf[0] = prefix;
+    memcpy(buf + 1, s, len);
+    buf[len + 1] = '\0';
+    return buf;
+}
+
 %}
 
-%option noyywrap
 %option reentrant
 %option bison-bridge
+%option bison-locations
+%option noyywrap
+%option never-interactive
+
+%x BLOCK_CONTENT
+%x FLOW_CONTENT
+%x BLOCK_SCALAR_START
+%x BLOCK_SCALAR_LINE
 
 %%
 
-"%YAML 1.2"      { return YAML_DIRECTIVE; }
-"---"            { return DOC_START; }
-"-"[ ]+          { return BULLET; }
-":"([ ]+|\n)     { return COLON; }
-[a-zA-Z0-9]+     { yylval->string = strdup(yytext); return SCALAR; }
-[ \t\n\r]+       { /* skip whitespace */ }
-.                { /* ignore other characters for now */ }
+    if (indent_level == 0 && indent_stack[0] == 0) indent_stack[0] = 0;
+    if (pending_dedents > 0) {
+        pending_dedents--;
+        return DEDENT;
+    }
 
+<INITIAL,BLOCK_CONTENT,FLOW_CONTENT>^"---"/[ \t\n\r]   { BEGIN(BLOCK_CONTENT); return DOC_START; }
+<INITIAL,BLOCK_CONTENT,FLOW_CONTENT>^"---"             { BEGIN(BLOCK_CONTENT); return DOC_START; }
+<INITIAL,BLOCK_CONTENT,FLOW_CONTENT>^"..."/[ \t\n\r]   { BEGIN(INITIAL); return DOC_END; }
+<INITIAL,BLOCK_CONTENT,FLOW_CONTENT>^"..."             { BEGIN(INITIAL); return DOC_END; }
+
+<INITIAL>^"%"[^\n]*\n               { ; }
+<INITIAL,BLOCK_CONTENT,FLOW_CONTENT>^[ \t]*(\n|\r\n)   { ; }
+<INITIAL>^[ \t]*#.*(\n|\r\n)           { ; }
+
+<INITIAL>^[ \t]+                    {
+    int indent_spaces = yyleng;  /* Number of spaces at start of line */
+    int post_indent_column = yylloc->first_column + yyleng;  /* Column position AFTER the indent */
+    
+    /* Special handling when inside a block sequence:
+     * Block sequences have items marked by "- " at some column.
+     * Continuation items on the next line are indented by 2 spaces relative to the "-".
+     * This indentation is NOT a semantic level change - it's just item positioning.
+     *
+     * Example: "- - x\n  - y"
+     *   Line 1: First - is at 1-indexed column 1, second - is at column 1  
+     *   Line 2: 2 spaces at start → post_indent_column = 1 + 2 = 3
+     *   If block_seq_column = 1, then seq_item_indent = 1 + 2 = 3
+     *   Since post_indent_column (3) == seq_item_indent (3), suppress INDENT
+     */
+    
+    if (block_seq_depth > 0 && block_seq_column >= 0) {
+        int seq_item_indent = block_seq_column + 2;  /* Items are typically indented 2 spaces */
+        if (post_indent_column == seq_item_indent) {
+            /* This is sequence item indentation, not a structural level change */
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        } else if (indent_spaces > current_indent()) {
+            push_indent(indent_spaces);
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+            return INDENT;
+        } else if (indent_spaces < current_indent()) {
+            while (indent_spaces < current_indent()) {
+                pop_indent();
+                pending_dedents++;
+            }
+            if (pending_dedents > 0) {
+                pending_dedents--;
+                if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+                return DEDENT;
+            }
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        } else {
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        }
+    } else if (indent_spaces > current_indent()) {
+        push_indent(indent_spaces);
+        if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        return INDENT;
+    } else if (indent_spaces < current_indent()) {
+        while (indent_spaces < current_indent()) {
+            pop_indent();
+            pending_dedents++;
+        }
+        if (pending_dedents > 0) {
+            pending_dedents--;
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+            return DEDENT;
+        }
+        if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+    } else {
+        if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+    }
+}
+<INITIAL>^[^ \t\n\r%]               {
+    yyless(0);
+    int column = 0;
+    if (column < current_indent()) {
+        while (column < current_indent()) {
+            pop_indent();
+            pending_dedents++;
+        }
+        if (pending_dedents > 0) {
+            pending_dedents--;
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+            return DEDENT;
+        }
+    }
+    if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+}
+
+<BLOCK_CONTENT,FLOW_CONTENT>#.*                        { ; }
+<BLOCK_CONTENT>"- "/[ \t\n\r]             { 
+    block_seq_column = yylloc->first_column;
+    block_seq_depth++;
+    return BLOCK_SEQ_START; 
+}
+<BLOCK_CONTENT>"- "                       { 
+    block_seq_column = yylloc->first_column;
+    block_seq_depth++;
+    return BLOCK_SEQ_START; 
+}
+<BLOCK_CONTENT>"-"/(\n|\r\n|$)            { 
+    block_seq_column = yylloc->first_column;
+    block_seq_depth++;
+    return BLOCK_SEQ_START; 
+}
+<BLOCK_CONTENT>"? "                       { yyless(1); return BLOCK_KEY; }
+<BLOCK_CONTENT>"?"/[ \t\n\r]              { return BLOCK_KEY; }
+<BLOCK_CONTENT,FLOW_CONTENT>":"                      { return COLON; }
+<BLOCK_CONTENT,FLOW_CONTENT>"["           { 
+    flow_level++; 
+    BEGIN(FLOW_CONTENT);
+    return FLOW_SEQ_START; 
+}
+<BLOCK_CONTENT,FLOW_CONTENT>"]"           { 
+    if (flow_level > 0) flow_level--; 
+    if (flow_level == 0) BEGIN(BLOCK_CONTENT);
+    return FLOW_SEQ_END; 
+}
+<BLOCK_CONTENT,FLOW_CONTENT>"{"           { 
+    flow_level++; 
+    BEGIN(FLOW_CONTENT);
+    return FLOW_MAP_START; 
+}
+<BLOCK_CONTENT,FLOW_CONTENT>"}"           { 
+    if (flow_level > 0) flow_level--; 
+    if (flow_level == 0) BEGIN(BLOCK_CONTENT);
+    return FLOW_MAP_END; 
+}
+<BLOCK_CONTENT,FLOW_CONTENT>","                        { return COMMA; }
+<BLOCK_CONTENT,FLOW_CONTENT>\n                         { BEGIN(INITIAL); }
+<BLOCK_CONTENT,FLOW_CONTENT>([ \t]|\xe2\x80\xa3|\xe2\x90\xa3)+                     { ; }
+
+
+<BLOCK_CONTENT,FLOW_CONTENT>!([!a-zA-Z0-9_.\-\/]*|"<"[^>]+">") {
+    yylval->sval = strdup(yytext);
+    return TAG;
+}
+
+<BLOCK_CONTENT>(([?:-]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;\,\[\]\{\}]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;\,\[\]\{\}])+)|([a-zA-Z0-9_\/\\\$\(\)\+\=\<\^\~\;\.]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;\,\[\]\{\}]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;\,\[\]\{\}])*))([ \t]+[\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;\,\[\]\{\}]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;\,\[\]\{\}]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;\,\[\]\{\}])*)* {
+    yylval->sval = prefix_dup(':', yytext, yyleng);
+    return SCALAR;
+}
+
+<FLOW_CONTENT>(([?:-]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])+)|([a-zA-Z0-9_\/\\\$\(\)\+\=\<\^\~\;\.]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])*))([ \t]+[\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])*)* {
+    yylval->sval = prefix_dup(':', yytext, yyleng);
+    return SCALAR;
+}
+
+
+<BLOCK_CONTENT,FLOW_CONTENT>\"([^"\\]|\\.)*\" {
+    yylval->sval = prefix_dup('"', yytext + 1, yyleng - 2);
+    return SCALAR;
+}
+
+<BLOCK_CONTENT,FLOW_CONTENT>'([^']|'')*' {
+    yylval->sval = prefix_dup('\'', yytext + 1, yyleng - 2);
+    return SCALAR;
+}
+
+<BLOCK_CONTENT>[|>]|[|>][-+]|[|>][0-9]|[|>][0-9][-+]|[|>][-+][0-9] {
+    /* Block scalar: | or > with optional indentation indicator (0-9) and/or chomping indicator (-/+)
+     * Valid patterns: |, |-, |+, |0-9, |0-9[+-], |[+-]0-9
+     * This pattern properly restricts to single-digit indicators */
+    if (yyleng > 3) {
+        /* Should never happen with the patterns above, but just in case */
+        yyless(1);
+        return SCALAR;
+    }
+    block_type = yytext[0];
+    block_indent = -1;
+    block_content = malloc(1024);
+    if (!block_content) { return 0; } // out of mem
+    block_content[0] = '\0';
+    block_content_len = 0;
+    block_content_cap = 1024;
+    BEGIN(BLOCK_SCALAR_START);
+}
+
+<BLOCK_SCALAR_START>[^#\n]                                              {
+    /* Invalid content on same line as block scalar indicator */
+    /* This means characters other than comment or newline after | or > modifiers */
+    yyless(1); /* Put back the character we just matched */
+    yylval->sval = prefix_dup(block_type, block_content, block_content_len);
+    free(block_content);
+    block_content = NULL;
+    BEGIN(INITIAL);
+    return SCALAR;  /* Return what we have, parser will handle the error */
+}
+
+<BLOCK_SCALAR_START>\n[ \t]* {
+    int indent = yyleng - 1;
+    if (indent <= current_indent()) {
+        // End of block
+        yyless(0); 
+        yylval->sval = prefix_dup(block_type, block_content, block_content_len);
+        free(block_content);
+        block_content = NULL;
+        BEGIN(INITIAL);
+        return SCALAR;
+    }
+    block_indent = indent;
+    BEGIN(BLOCK_SCALAR_LINE);
+    yyless(1); 
+}
+
+<BLOCK_SCALAR_LINE>.* {
+    // Strip block_indent spaces if possible
+    int strip = block_indent;
+    int len = yyleng;
+    char *ptr = yytext;
+    while (strip > 0 && len > 0 && (*ptr == ' ' || *ptr == '\t')) {
+        ptr++;
+        len--;
+        strip--;
+    }
+    
+    if (block_content_len + len + 2 > block_content_cap) {
+        block_content_cap *= 2;
+        block_content = realloc(block_content, block_content_cap);
+    }
+    memcpy(block_content + block_content_len, ptr, len);
+    block_content_len += len;
+    block_content[block_content_len++] = '\n';
+    block_content[block_content_len] = '\0';
+    BEGIN(BLOCK_SCALAR_START);
+}
+
+
+<BLOCK_CONTENT,FLOW_CONTENT>\&[a-zA-Z0-9_.\-:]+ {
+    yylval->sval = strdup(yytext);
+    return ANCHOR;
+}
+
+<BLOCK_CONTENT,FLOW_CONTENT>\*[a-zA-Z0-9_.\-:]+ {
+    yylval->sval = strdup(yytext);
+    return ALIAS;
+}
+
+<BLOCK_CONTENT,FLOW_CONTENT>.                           { 
+    fprintf(stderr, "Unexpected char in CONTENT: '%c' (0x%02x)\n", yytext[0], (unsigned char)yytext[0]); 
+}
+
+<*><<EOF>> {
+    if (indent_level > 0) {
+        indent_level--;
+        return DEDENT;
+    }
+    yyterminate();
+}
 %%
+
+/* Lexer helper functions are now inlined above with static variables */
+
+/* ===== Grammar-Based String Diagram Acceptance Test =====
+ * 
+ * PHASE 1: Extract Generator Sequences
+ * ====================================
+ * Recognizes string diagrams against regular monoidal grammar by:
+ * 1. Extracting generator sequence from diagram tree (diagram_to_generators)
+ * 2. Matching generators to grammar transitions (grammar_transition_match)
+ * 3. Simulating state machine to determine acceptance (mrl_accepts)
+ * 
+ * Conceptually this is a state machine that Flex could optimize, but we keep
+ * it in C for direct struct field access which Flex patterns lack.
+ * 
+ * Reference: FLEX_PATTERNS_ANALYSIS.md § Recommended Refactoring Strategy
+ *
+ * ===== Phase 1 Implementation Notes =====
+ * This implementation favors clarity and maintainability while keeping the
+ * performance-critical path in C. Future optimization may involve:
+ * - Flex rules for input normalization
+ * - C helpers for acceptance verdicts
+ * - Start condition stack for nested generators (yy_push/pop_state)
+ */
+
+/* PHASE 1.1: Extract Generator Sequence
+ * 
+ * PURPOSE:
+ *   Flatten recursive string diagram tree into linear generator sequence.
+ *   Handles composition (sequential) and product (parallel) operations.
+ * 
+ * INPUT:
+ *   sd - StringDiagram to flatten (tree structure)
+ * OUTPUT:
+ *   gens - Array to populate with extracted generators
+ *   count - Running count (incremented for each generator found)
+ * 
+ * PATTERN EQUIVALENCE:
+ *   This implements what Flex start conditions could orchestrate:
+ *   - Each switch case corresponds to a potential Flex rule
+ *   - Recursion simulates depth-first traversal (could use stack/conditions)
+ * 
+ * COMPLEXITY: O(n) where n = number of nodes in diagram tree
+ */
+static void diagram_to_generators(StringDiagram *sd, Generator **gens, int *count) {
+    if (!sd || *count >= 256) return;
+    
+    switch (sd->type) {
+        case SD_GENERATOR:
+            /* Leaf: emit generator if non-null */
+            if (sd->data.gen) {
+                gens[*count] = sd->data.gen;
+                (*count)++;
+            }
+            break;
+            
+        case SD_COMPOSITION:
+            /* Sequential: left then right */
+            diagram_to_generators(sd->data.op.left, gens, count);
+            diagram_to_generators(sd->data.op.right, gens, count);
+            break;
+            
+        case SD_PRODUCT:
+            /* Parallel: left then right (flattened order) */
+            diagram_to_generators(sd->data.op.left, gens, count);
+            diagram_to_generators(sd->data.op.right, gens, count);
+            break;
+            
+        case SD_IDENTITY:
+            /* Identity: contributes no generators */
+            break;
+    }
+}
+
+/* PHASE 1.2: State Vector Cloning Helper
+ * 
+ * PURPOSE:
+ *   Create independent copy of state list for transition codomain.
+ *   Avoids mutation of shared grammar transition structures.
+ * 
+ * SAFETY:
+ *   Caller owns returned StateList and must call free_statelist()
+ * 
+ * NOTE:
+ *   Flex wouldn't need this (no shared state mutation), but C requires
+ *   careful memory management for the state vector.
+ */
+static StateList* clone_state_vector(StateList *src) {
+    if (!src) return NULL;
+    
+    StateList *clone = create_statelist();
+    if (!clone) return NULL;
+    
+    for (int i = 0; i < src->count; i++) {
+        if (src->names[i]) {
+            statelist_add(clone, src->names[i]);
+        }
+    }
+    return clone;
+}
+
+/* PHASE 2: Match Generator to Grammar Transitions
+ * 
+ * PURPOSE:
+ *   Find grammar transition matching (generator, current_state_vector).
+ *   Returns transition with updated state vector if match found.
+ * 
+ * ALGORITHM:
+ *   1. Linear search through all grammar transitions
+ *   2. Check generator match
+ *   3. Check arity match (domain state count = current_states count)
+ *   4. Check state vector pairwise equality
+ * 
+ * RETURN:
+ *   Pointer to matching Transition, or NULL if no match
+ * 
+ * COMPLEXITY: O(m*n) where m=transitions, n=state_count
+ *             (could optimize to hash lookup with state composition)
+ * 
+ * PATTERN EQUIVALENCE:
+ *   This corresponds to Flex REJECT action:
+ *   ```flex
+ *   <MATCH_TRANS>GRAM[A-Z_]+/VALID_TARGET { advance_state(); }
+ *   <MATCH_TRANS>GRAM[A-Z_]+/INVALID_TARGET { REJECT; }
+ *   ```
+ *   We inline the search loop for direct struct access.
+ */
+static Transition* grammar_transition_match(Grammar *g, Generator *gen,
+                                            StateList *current_states) {
+    if (!g || !gen || !current_states) return NULL;
+    
+    for (int i = 0; i < g->transition_count; i++) {
+        Transition *t = g->transitions[i];
+        if (!t) continue;
+        
+        /* Check: generator matches */
+        if (t->gen != gen) continue;
+        
+        /* Check: arity matches (state vector length = domain length) */
+        if (t->dom->count != current_states->count) continue;
+        
+        /* Check: state vector pairwise equality */
+        bool state_match = true;
+        for (int j = 0; j < current_states->count; j++) {
+            if (!current_states->names[j] || !t->dom->names[j] ||
+                strcmp(current_states->names[j], t->dom->names[j]) != 0) {
+                state_match = false;
+                break;
+            }
+        }
+        
+        if (state_match) return t;
+    }
+    return NULL;
+}
+
+/* PHASE 3: Unified State Machine Acceptance Test
+ * 
+ * PURPOSE:
+ *   Determine if string diagram is accepted by regular monoidal grammar.
+ *   Simulates the NMA (Non-deterministic Monoidal Automaton) on the diagram.
+ * 
+ * ALGORITHM:
+ *   1. Extract generator sequence from diagram
+ *   2. Initialize empty state vector (base case)
+ *   3. For each generator:
+ *      - Find matching grammar transition
+ *      - Update state vector to transition codomain
+ *   4. Accept iff final state vector arity/coarity match
+ * 
+ * ACCEPTANCE CRITERIA:
+ *   - All generators matched to transitions
+ *   - Final state vector coarity == input diagram coarity
+ * 
+ * RETURN:
+ *   true if accepted, false if rejected
+ * 
+ * PATTERN EQUIVALENCE:
+ *   This is the core DFA loop that Flex would orchestrate via states:
+ *   ```flex
+ *   <INITIAL>BEGIN_TEST { BEGIN(GENERATOR_EXTRACT); }
+ *   <GENERATOR_EXTRACT>...
+ *   <TRANSITION_MATCH>...
+ *   <ACCEPT_STATE><<EOF>> { return accepted_state; }
+ *   ```
+ *   
+ *   Reference: FLEX_PATTERNS_ANALYSIS.md § Recommended Refactoring Strategy
+ *   Keeping in C for now due to struct field access limitations in Flex.
+ */
+bool mrl_accepts(Grammar *g, StringDiagram *sd) {
+    if (!g || !sd) return false;
+    if (!g->alphabet) return false;
+    
+    /* PHASE 3.1: Extract generator sequence */
+    Generator *gens[256];
+    int gen_count = 0;
+    diagram_to_generators(sd, gens, &gen_count);
+    
+    /* PHASE 3.2: Initialize state machine */
+    StateList *current_states = create_statelist();
+    if (!current_states) return false;
+    
+    /* Edge case: empty generator sequence */
+    if (gen_count == 0) {
+        bool result = (sd->arity == 0 && sd->coarity == 0);
+        free_statelist(current_states);
+        return result;
+    }
+    
+    /* PHASE 3.3: Simulate transitions for each generator */
+    for (int i = 0; i < gen_count; i++) {
+        Generator *current_gen = gens[i];
+        if (!current_gen) {
+            free_statelist(current_states);
+            return false;
+        }
+        
+        /* Find matching grammar transition */
+        Transition *trans = grammar_transition_match(g, current_gen, current_states);
+        if (!trans) {
+            free_statelist(current_states);
+            return false;
+        }
+        
+        /* Update state vector to transition codomain */
+        free_statelist(current_states);
+        current_states = clone_state_vector(trans->cod);
+        if (!current_states) return false;
+    }
+    
+    /* PHASE 3.4: Check acceptance criteria */
+    bool accepted = (sd->arity == gen_count &&
+                     sd->coarity == current_states->count);
+    
+    free_statelist(current_states);
+    return accepted;
+}
