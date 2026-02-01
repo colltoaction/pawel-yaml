@@ -342,6 +342,7 @@ int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **o
     extern int yylex_destroy(void* scanner);
     extern void yyset_in(FILE* in_str, void* yyscanner);
     extern int yyparse(void* scanner, ParseOutput *output);
+    /* Note: reset_lexer_state() is defined in lex.yy.c, called indirectly */
     
     if (!out_alphabet || !out_grammar || !out_diagram) return EXIT_FAILURE;
     
@@ -353,6 +354,9 @@ int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **o
     
     void* scanner;
     if (yylex_init(&scanner)) return EXIT_FAILURE;
+    
+    /* State is auto-initialized by Flex, no explicit reset needed for first parse */
+    /* reset_lexer_state() would be needed for multi-document parsing */
     
     yyset_in(stdin, scanner);
     
