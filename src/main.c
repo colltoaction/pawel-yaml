@@ -27,6 +27,12 @@ void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
             case GEN_TYPE_SEQ_END:
                 printf("  -SEQ\n");
                 break;
+            case GEN_TYPE_MAP_START:
+                printf("  +MAP\n");
+                break;
+            case GEN_TYPE_MAP_END:
+                printf("  -MAP\n");
+                break;
             default:
                 break;
         }

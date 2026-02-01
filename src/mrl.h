@@ -29,7 +29,9 @@ typedef enum {
     GEN_TYPE_COMMA,   /* ,: I -> I (Separator) */
     GEN_TYPE_COLON,   /* :: I -> I (Key-Value separator) */
     GEN_TYPE_SEQ_START,
-    GEN_TYPE_SEQ_END
+    GEN_TYPE_SEQ_END,
+    GEN_TYPE_MAP_START,
+    GEN_TYPE_MAP_END
 } GeneratorType;
 
 typedef struct {

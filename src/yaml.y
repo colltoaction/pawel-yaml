@@ -25,10 +25,12 @@ void yyerror(ParserContext *ctx, void *scanner, const char *s);
 %token YAML_DIRECTIVE
 %token DOC_START
 %token BULLET
+%token COLON
 
 %type <sd> document
 %type <sd> nodes node
 %type <sd> seq seq_entries seq_entry
+%type <sd> map map_entries map_entry
 
 %%
 
@@ -48,6 +50,10 @@ document:
         ctx->has_marker = 1;
         $$ = $2;
     }
+    | DOC_START {
+        ctx->has_marker = 1;
+        $$ = NULL;
+    }
     ;
 
 nodes:
@@ -62,6 +68,7 @@ node:
         free($1);
     }
     | seq { $$ = $1; }
+    | map { $$ = $1; }
     ;
 
 seq:
@@ -73,8 +80,6 @@ seq:
         ge->type = GEN_TYPE_SEQ_END;
         ge->value = NULL;
         
-        /* Note: Alphabet should own these, but for Green phase let's just use them */
-        /* Actually, let's add them to alphabet properly */
         if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
             ctx->alphabet->capacity *= 2;
             ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
@@ -85,17 +90,49 @@ seq:
         StringDiagram *start = sd_generator(gs);
         StringDiagram *end = sd_generator(ge);
         
-        /* Diagram: [Start] ; [Entries] ; [End] */
         $$ = sd_compose(start, sd_compose($1, end));
     }
     ;
 
 seq_entries:
     seq_entry { $$ = $1; }
+    | seq_entries seq_entry { $$ = sd_compose($1, $2); }
     ;
 
 seq_entry:
     BULLET node { $$ = $2; }
+    ;
+
+map:
+    map_entries {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_MAP_START;
+        gs->value = NULL;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_MAP_END;
+        ge->value = NULL;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
+        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        StringDiagram *start = sd_generator(gs);
+        StringDiagram *end = sd_generator(ge);
+        
+        $$ = sd_compose(start, sd_compose($1, end));
+    }
+    ;
+
+map_entries:
+    map_entry { $$ = $1; }
+    | map_entries map_entry { $$ = sd_compose($1, $2); }
+    ;
+
+map_entry:
+    node COLON node { $$ = sd_compose($1, $3); }
     ;
 
 %%
