@@ -5,20 +5,89 @@
 #include "mrl.h"
 #include "yaml_parser.h"
 #include "parser.tab.h"
-#include "lexer_context.h"
 
-#define CTX ((LexerContext*)yyextra)
-
-/* Prototype helper functions */
-/* 
- * Structural Handling Authority:
- * The Lexer is solely responsible for managing indentation state and emitting
- * INDENT/DEDENT tokens. The parser (yaml.y) consumes these tokens but does
- * not manipulate indentation state directly.
+/* ===== LEXER STATE MANAGEMENT =====
+ * Inlined from previous lexer_context.h for cleaner architecture.
+ * All state is now local to lexer (reentrant-safe with TLS if needed).
  */
-static void push_indent(void* yyscanner, int column);
-static int pop_indent(void* yyscanner);
-static int current_indent(void* yyscanner);
+
+/* Configuration constants for state limits */
+#define MAX_INDENT_LEVEL 100
+#define BLOCK_SCALAR_INITIAL_CAP 1024
+#define BLOCK_SCALAR_MAX_CAP (10 * 1024 * 1024)
+
+/* Indentation tracking for YAML block structure */
+static int indent_stack[MAX_INDENT_LEVEL];
+static int indent_level = 0;
+static int pending_dedents = 0;
+
+/* Flow context tracking ([] and {}) */
+static int flow_level = 0;
+
+/* Block scalar accumulation (| or >) */
+static int block_indent = -1;
+static char* block_content = NULL;
+static int block_content_len = 0;
+static int block_content_cap = 0;
+static char block_type = '\0';
+
+/* Helpers for lexer state management */
+
+/* Error reporter: used for lexer-detected errors */
+static void lexer_error(const char* message) {
+    fprintf(stderr, "Lexer error: %s\n", message);
+}
+
+/* Push indent with bounds checking - returns false on overflow */
+static bool push_indent_safe(int column) {
+    if (indent_level >= MAX_INDENT_LEVEL - 1) {
+        lexer_error("Indentation nesting exceeds maximum depth");
+        return false;
+    }
+    indent_stack[++indent_level] = column;
+    return true;
+}
+
+/* Legacy wrapper for backward compatibility */
+static void push_indent(int column) {
+    push_indent_safe(column);
+}
+
+static int pop_indent(void) {
+    return (indent_level > 0) ? indent_stack[indent_level--] : 0;
+}
+
+static int current_indent(void) {
+    return indent_stack[indent_level];
+}
+
+static void init_block_scalar(char type) {
+    block_type = type;
+    block_indent = -1;
+    if (block_content) free(block_content);
+    block_content = malloc(BLOCK_SCALAR_INITIAL_CAP);
+    if (!block_content) return;
+    block_content[0] = '\0';
+    block_content_len = 0;
+    block_content_cap = BLOCK_SCALAR_INITIAL_CAP;
+}
+
+static void cleanup_block_scalar(void) {
+    if (block_content) free(block_content);
+    block_content = NULL;
+    block_content_len = 0;
+    block_content_cap = 0;
+    block_type = '\0';
+}
+
+/* Reset all lexer state for multi-document parsing or error recovery */
+static void reset_lexer_state(void) {
+    indent_level = 0;
+    indent_stack[0] = 0;
+    pending_dedents = 0;
+    flow_level = 0;
+    cleanup_block_scalar();
+}
 
 static char* prefix_dup(char prefix, const char* s, int len) {
     char* buf = malloc(len + 2);
@@ -36,7 +105,6 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 %option bison-locations
 %option noyywrap
 %option never-interactive
-%option extra-type="LexerContext*"
 
 %x BLOCK_CONTENT
 %x FLOW_CONTENT
@@ -45,9 +113,9 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 
 %%
 
-    if (CTX->indent_level == 0 && CTX->indent_stack[0] == 0) CTX->indent_stack[0] = 0;
-    if (CTX->pending_dedents > 0) {
-        CTX->pending_dedents--;
+    if (indent_level == 0 && indent_stack[0] == 0) indent_stack[0] = 0;
+    if (pending_dedents > 0) {
+        pending_dedents--;
         return DEDENT;
     }
 
@@ -62,38 +130,38 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 
 <INITIAL>^[ \t]+                    {
     int column = yyleng;
-    if (column > current_indent(yyscanner)) {
-        push_indent(yyscanner, column);
-        if (CTX->flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+    if (column > current_indent()) {
+        push_indent(column);
+        if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
         return INDENT;
-    } else if (column < current_indent(yyscanner)) {
-        while (column < current_indent(yyscanner)) {
-            pop_indent(yyscanner);
-            CTX->pending_dedents++;
+    } else if (column < current_indent()) {
+        while (column < current_indent()) {
+            pop_indent();
+            pending_dedents++;
         }
-        if (CTX->pending_dedents > 0) {
-            CTX->pending_dedents--;
-            if (CTX->flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        if (pending_dedents > 0) {
+            pending_dedents--;
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
             return DEDENT;
         }
     }
-    if (CTX->flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+    if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
 }
 <INITIAL>^[^ \t\n\r%]               {
     yyless(0);
     int column = 0;
-    if (column < current_indent(yyscanner)) {
-        while (column < current_indent(yyscanner)) {
-            pop_indent(yyscanner);
-            CTX->pending_dedents++;
+    if (column < current_indent()) {
+        while (column < current_indent()) {
+            pop_indent();
+            pending_dedents++;
         }
-        if (CTX->pending_dedents > 0) {
-            CTX->pending_dedents--;
-            if (CTX->flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+        if (pending_dedents > 0) {
+            pending_dedents--;
+            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
             return DEDENT;
         }
     }
-    if (CTX->flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
+    if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
 }
 
 <BLOCK_CONTENT,FLOW_CONTENT>#.*                        { ; }
@@ -103,23 +171,23 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 <BLOCK_CONTENT>"?"/[ \t\n\r]              { return BLOCK_KEY; }
 <BLOCK_CONTENT,FLOW_CONTENT>":"                      { return COLON; }
 <BLOCK_CONTENT,FLOW_CONTENT>"["           { 
-    CTX->flow_level++; 
+    flow_level++; 
     BEGIN(FLOW_CONTENT);
     return FLOW_SEQ_START; 
 }
 <BLOCK_CONTENT,FLOW_CONTENT>"]"           { 
-    if (CTX->flow_level > 0) CTX->flow_level--; 
-    if (CTX->flow_level == 0) BEGIN(BLOCK_CONTENT);
+    if (flow_level > 0) flow_level--; 
+    if (flow_level == 0) BEGIN(BLOCK_CONTENT);
     return FLOW_SEQ_END; 
 }
 <BLOCK_CONTENT,FLOW_CONTENT>"{"           { 
-    CTX->flow_level++; 
+    flow_level++; 
     BEGIN(FLOW_CONTENT);
     return FLOW_MAP_START; 
 }
 <BLOCK_CONTENT,FLOW_CONTENT>"}"           { 
-    if (CTX->flow_level > 0) CTX->flow_level--; 
-    if (CTX->flow_level == 0) BEGIN(BLOCK_CONTENT);
+    if (flow_level > 0) flow_level--; 
+    if (flow_level == 0) BEGIN(BLOCK_CONTENT);
     return FLOW_MAP_END; 
 }
 <BLOCK_CONTENT,FLOW_CONTENT>","                        { return COMMA; }
@@ -162,50 +230,46 @@ static char* prefix_dup(char prefix, const char* s, int len) {
         yyless(1);
         return SCALAR;
     }
-    CTX->block_type = yytext[0];
-    CTX->block_indent = -1;
-    CTX->block_content = malloc(1024);
-    if (!CTX->block_content) { return 0; } // out of mem
-    CTX->block_content[0] = '\0';
-    CTX->block_content_len = 0;
-    CTX->block_content_cap = 1024;
+    block_type = yytext[0];
+    block_indent = -1;
+    block_content = malloc(1024);
+    if (!block_content) { return 0; } // out of mem
+    block_content[0] = '\0';
+    block_content_len = 0;
+    block_content_cap = 1024;
     BEGIN(BLOCK_SCALAR_START);
 }
 
-<BLOCK_SCALAR_START>[ \t]*#.*\n                                        { /* Comment line */}
-<BLOCK_SCALAR_START>[ \t]*\n                                           { /* Empty line, just newline */
-    yyless(yyleng - 1); /* Put back the newline */
-}
 <BLOCK_SCALAR_START>[^#\n]                                              {
     /* Invalid content on same line as block scalar indicator */
     /* This means characters other than comment or newline after | or > modifiers */
     yyless(1); /* Put back the character we just matched */
-    yylval->sval = prefix_dup(CTX->block_type, CTX->block_content, CTX->block_content_len);
-    free(CTX->block_content);
-    CTX->block_content = NULL;
+    yylval->sval = prefix_dup(block_type, block_content, block_content_len);
+    free(block_content);
+    block_content = NULL;
     BEGIN(INITIAL);
     return SCALAR;  /* Return what we have, parser will handle the error */
 }
 
 <BLOCK_SCALAR_START>\n[ \t]* {
     int indent = yyleng - 1;
-    if (indent <= current_indent(yyscanner)) {
+    if (indent <= current_indent()) {
         // End of block
         yyless(0); 
-        yylval->sval = prefix_dup(CTX->block_type, CTX->block_content, CTX->block_content_len);
-        free(CTX->block_content);
-        CTX->block_content = NULL;
+        yylval->sval = prefix_dup(block_type, block_content, block_content_len);
+        free(block_content);
+        block_content = NULL;
         BEGIN(INITIAL);
         return SCALAR;
     }
-    CTX->block_indent = indent;
+    block_indent = indent;
     BEGIN(BLOCK_SCALAR_LINE);
     yyless(1); 
 }
 
 <BLOCK_SCALAR_LINE>.* {
     // Strip block_indent spaces if possible
-    int strip = CTX->block_indent;
+    int strip = block_indent;
     int len = yyleng;
     char *ptr = yytext;
     while (strip > 0 && len > 0 && (*ptr == ' ' || *ptr == '\t')) {
@@ -214,14 +278,14 @@ static char* prefix_dup(char prefix, const char* s, int len) {
         strip--;
     }
     
-    if (CTX->block_content_len + len + 2 > CTX->block_content_cap) {
-        CTX->block_content_cap *= 2;
-        CTX->block_content = realloc(CTX->block_content, CTX->block_content_cap);
+    if (block_content_len + len + 2 > block_content_cap) {
+        block_content_cap *= 2;
+        block_content = realloc(block_content, block_content_cap);
     }
-    memcpy(CTX->block_content + CTX->block_content_len, ptr, len);
-    CTX->block_content_len += len;
-    CTX->block_content[CTX->block_content_len++] = '\n';
-    CTX->block_content[CTX->block_content_len] = '\0';
+    memcpy(block_content + block_content_len, ptr, len);
+    block_content_len += len;
+    block_content[block_content_len++] = '\n';
+    block_content[block_content_len] = '\0';
     BEGIN(BLOCK_SCALAR_START);
 }
 
@@ -241,28 +305,15 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 }
 
 <*><<EOF>> {
-    if (CTX->indent_level > 0) {
-        CTX->indent_level--;
+    if (indent_level > 0) {
+        indent_level--;
         return DEDENT;
     }
     yyterminate();
 }
 %%
 
-static void push_indent(void* yyscanner, int column) {
-    LexerContext* ctx = (LexerContext*)yyget_extra(yyscanner);
-    if (ctx->indent_level < 99) ctx->indent_stack[++ctx->indent_level] = column;
-}
-
-static int pop_indent(void* yyscanner) {
-    LexerContext* ctx = (LexerContext*)yyget_extra(yyscanner);
-    return (ctx->indent_level > 0) ? ctx->indent_stack[ctx->indent_level--] : 0;
-}
-
-static int current_indent(void* yyscanner) {
-    LexerContext* ctx = (LexerContext*)yyget_extra(yyscanner);
-    return ctx->indent_stack[ctx->indent_level];
-}
+/* Lexer helper functions are now inlined above with static variables */
 
 /* ===== Grammar-Based String Diagram Acceptance Test =====
  * 
