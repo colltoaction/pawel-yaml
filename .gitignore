@@ -1,9 +1,9 @@
 *
 !.gitignore
-!./.agent/
-!./.agent/**
-!./src/
-!./src/**
+!.agent/
+!.agent/**
+!src/
+!src/**
 !Dockerfile.alpine
 !Makefile
 !README.md
