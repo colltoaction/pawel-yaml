@@ -11,13 +11,8 @@
  * All state is now local to lexer (reentrant-safe with TLS if needed).
  */
 
-/* Configuration constants for state limits */
-#define MAX_INDENT_LEVEL 100
-#define BLOCK_SCALAR_INITIAL_CAP 1024
-#define BLOCK_SCALAR_MAX_CAP (10 * 1024 * 1024)
-
 /* Indentation tracking for YAML block structure */
-static int indent_stack[MAX_INDENT_LEVEL];
+static int indent_stack[100];
 static int indent_level = 0;
 static int pending_dedents = 0;
 
@@ -32,25 +27,8 @@ static int block_content_cap = 0;
 static char block_type = '\0';
 
 /* Helpers for lexer state management */
-
-/* Error reporter: used for lexer-detected errors */
-static void lexer_error(const char* message) {
-    fprintf(stderr, "Lexer error: %s\n", message);
-}
-
-/* Push indent with bounds checking - returns false on overflow */
-static bool push_indent_safe(int column) {
-    if (indent_level >= MAX_INDENT_LEVEL - 1) {
-        lexer_error("Indentation nesting exceeds maximum depth");
-        return false;
-    }
-    indent_stack[++indent_level] = column;
-    return true;
-}
-
-/* Legacy wrapper for backward compatibility */
 static void push_indent(int column) {
-    push_indent_safe(column);
+    if (indent_level < 99) indent_stack[++indent_level] = column;
 }
 
 static int pop_indent(void) {
@@ -65,11 +43,11 @@ static void init_block_scalar(char type) {
     block_type = type;
     block_indent = -1;
     if (block_content) free(block_content);
-    block_content = malloc(BLOCK_SCALAR_INITIAL_CAP);
+    block_content = malloc(1024);
     if (!block_content) return;
     block_content[0] = '\0';
     block_content_len = 0;
-    block_content_cap = BLOCK_SCALAR_INITIAL_CAP;
+    block_content_cap = 1024;
 }
 
 static void cleanup_block_scalar(void) {
@@ -78,15 +56,6 @@ static void cleanup_block_scalar(void) {
     block_content_len = 0;
     block_content_cap = 0;
     block_type = '\0';
-}
-
-/* Reset all lexer state for multi-document parsing or error recovery */
-static void reset_lexer_state(void) {
-    indent_level = 0;
-    indent_stack[0] = 0;
-    pending_dedents = 0;
-    flow_level = 0;
-    cleanup_block_scalar();
 }
 
 static char* prefix_dup(char prefix, const char* s, int len) {
