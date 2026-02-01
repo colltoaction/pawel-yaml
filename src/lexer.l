@@ -33,6 +33,7 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 
 %option reentrant
 %option bison-bridge
+%option bison-locations
 %option noyywrap
 %option never-interactive
 %option extra-type="LexerContext*"
