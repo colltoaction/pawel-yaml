@@ -78,9 +78,13 @@ $(BUILD_DIR)/lex.yy.o: $(LEX_YY_C) $(PARSER_TAB_H)
 clean: clean-build
 
 clean-build:
-	# Remove generated code and binaries, but preserve TDD artifacts
-	rm -rf $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR)
+	# Remove generated code and binaries, but preserve TDD artifacts and test suite
+	rm -rf $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR)
+	# Only remove non-test files from lib (files, not directories)
+	find $(LIB_DIR) -maxdepth 1 -type f -delete 2>/dev/null || true
+	# Clean object files
 	rm -f $(BUILD_DIR)/*.o
+	@echo "✓ Preserved: $(TMP_DIR), $(LOG_DIR), yaml-test-suite"
 
 # Deep clean: remove all build artifacts including test tracking
 deepclean:
