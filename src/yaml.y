@@ -1,637 +1,266 @@
 %{
+#include "yaml_parser.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include "mrl.h"
-#include "yaml_parser.h"
 
-extern int yylex();
-
-/* Helper: Combine multi-line scalar parts with space separator
- * Used for plain scalars that continue across lines
- * Example: "line1" + "line2" = "line1 line2"
- */
-static char *combine_scalar_parts(const char *part1, const char *part2) {
-    if (!part1 || !part2) return part1 ? strdup(part1) : (part2 ? strdup(part2) : calloc(1, 1));
-    
-    size_t len1 = strlen(part1);
-    size_t len2 = strlen(part2);
-    char *combined = malloc(len1 + len2 + 2);
-    if (!combined) return strdup(part1);
-    
-    strcpy(combined, part1);
-    combined[len1] = ' ';
-    strcpy(combined + len1 + 1, part2);
-    return combined;
-}
-
+void yyerror(ParserContext *ctx, void *scanner, const char *s);
 %}
 
-%define api.pure full
-%locations
-%parse-param {void *yyscanner} {ParseOutput *output}
-%token-table
-%lex-param {void *yyscanner}
-%define parse.trace
-%define parse.error verbose
-%define parse.lac full
+%code requires {
+    #include "yaml_parser.h"
+    #include "mrl.h"
+}
 
-/* Conflict Analysis & Resolution Strategy
- * 
- * SHIFT/REDUCE CONFLICTS (25):
- *   Occur when parser can either shift next token or reduce current rule.
- *   YAML indentation creates structural ambiguities:
- *   - After INDENT, should next '-' start a new list item or continue parent?
- *   - After ':' in mapping, should next line be value or new key?
- *   Bison's default (SHIFT) matches YAML's left-associative semantics.
- * 
- * REDUCE/REDUCE CONFLICTS (11):
- *   Occur when multiple rules could reduce at same point.
- *   Examples: block_node vs flow_node; plain vs quoted scalars.
- *   Parser explores both paths; first matching rule in grammar wins.
- *   For full conflict management, would require GLR parser (%expect-rr).
- * 
- * Mitigation: Document conflicts as intended, monitor via CI/CD.
- * Do NOT use %expect or %expect-rr as this creates hard errors on mismatch.
- * Instead, conflicts serve as regression warning system.
- */
+%define api.pure full
+%parse-param {ParserContext *ctx}
+%parse-param {void *scanner}
+%lex-param {void *scanner}
 
 %union {
-    char *sval;
+    char *string;
     StringDiagram *sd;
 }
 
-%destructor { free($$); } <sval>
-%destructor { 
-    if ($$ != output->diagram) {
-       free_stringdiagram($$); 
-    }
-} <sd>
+%token <string> SCALAR
+%token <string> QSCALAR
+%token <string> SSCALAR
+%token <string> TAG
+%token <string> ANCHOR
+%token <string> ALIAS
+%token YAML_DIRECTIVE
+%token DOC_START
+%token BULLET
+%token COLON
+%token LBRACK RBRACK LBRACE RBRACE COMMA
 
-%printer { 
-    if ($$) fprintf(yyo, "\"%s\"", $$);
-    else fprintf(yyo, "<NULL>");
-} <sval>
-
-%printer { 
-    if ($$) {
-        fprintf(yyo, "<SD:%s>", 
-                $$->anchor ? $$->anchor : 
-                $$->tag ? $$->tag : "?");
-    } else {
-        fprintf(yyo, "<NULL>");
-    }
-} <sd>
-
-
-%token <sval> SCALAR
-%token <sval> ANCHOR ALIAS TAG
-%token BLOCK_SEQ_START "-"
-%token BLOCK_KEY "?"
-%token FLOW_SEQ_START "["
-%token FLOW_SEQ_END "]"
-%token FLOW_MAP_START "{"
-%token FLOW_MAP_END "}"
-%token COMMA ","
-%token COLON ":"
-%token DOC_START "---"
-%token DOC_END "..."
-%token INDENT "INDENT"
-%token DEDENT "DEDENT"
-%token SEQ "SEQ"
-%token MAP "MAP"
-%token STYLE_PLAIN "PLAIN"
-%token STYLE_DQUOTE "\""
-%token STYLE_SQUOTE "'"
-%token STYLE_LITERAL "|"
-%token STYLE_FOLDED ">"
-%token STYLE_ALIAS "*"
-%token STYLE_ANCHOR "&"
-
-%precedence LOW
-%precedence COLON
-
-%type <sd> stream documents document root_node sub_node flow_item
-%type <sd> block_node flow_node simple_node complex_node
-%type <sd> block_sequence block_mapping mapping_entry
-%type <sd> items flow_item_list mapping_items flow_mapping_list
-%type <sval> scalar_continuation scalar_continuation_lines
+%type <sd> document
+%type <sd> nodes node
+%type <sd> seq seq_entries seq_entry
+%type <sd> map map_entries map_entry
+%type <sd> flow_seq flow_map flow_seq_entries flow_map_entries flow_node
 
 %%
 
 stream:
-    documents {
-        /* Finalize: replace the clone with the actual tree */
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = $1;
-        $$ = NULL;
+    document {
+        ctx->diagram = $1;
     }
-    ;
-
-documents:
-    document { 
-        $$ = $1; 
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = clone_stringdiagram($$);
-    }
-    | documents "---" root_node {
-        if ($3) $3->doc_marker = 1;
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-        
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = clone_stringdiagram($$);
-    }
-    | documents "---" root_node "..." {
-        if ($3) {
-            $3->doc_marker = 1;
-            $3->doc_end_marker = 1;
-        }
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-        
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = clone_stringdiagram($$);
+    | YAML_DIRECTIVE document {
+        ctx->has_directive = 1;
+        ctx->diagram = $2;
     }
     ;
 
 document:
-    root_node { $$ = $1; }
-    | "---" root_node { 
-        if ($2) $2->doc_marker = 1;
-        $$ = $2; 
+    nodes { $$ = $1; }
+    | DOC_START nodes {
+        ctx->has_marker = 1;
+        $$ = $2;
     }
-    | "---" root_node "..." { 
-        if ($2) {
-            $2->doc_marker = 1;
-            $2->doc_end_marker = 1;
-        }
-        $$ = $2; 
+    | DOC_START {
+        ctx->has_marker = 1;
+        $$ = NULL;
     }
     ;
 
-root_node:
-    block_mapping { $$ = $1; } %prec COLON
-    | sub_node { $$ = $1; } %prec LOW
-    | TAG block_mapping {
-        if ($2) {
-            if ($2->tag) free($2->tag);
-            $2->tag = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | TAG block_sequence {
-        if ($2) {
-            if ($2->tag) free($2->tag);
-            $2->tag = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | ANCHOR block_mapping {
-        if ($2) {
-            if ($2->anchor) free($2->anchor);
-            $2->anchor = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | ANCHOR block_sequence {
-        if ($2) {
-            if ($2->anchor) free($2->anchor);
-            $2->anchor = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | TAG ANCHOR block_mapping {
-        if ($3) {
-            if ($3->tag) free($3->tag);
-            if ($3->anchor) free($3->anchor);
-            $3->tag = $1;
-            $3->anchor = $2;
-            $$ = $3;
-        } else {
-            free($1); free($2); $$ = NULL;
-        }
-    }
-    | TAG ANCHOR block_sequence {
-        if ($3) {
-            if ($3->tag) free($3->tag);
-            if ($3->anchor) free($3->anchor);
-            $3->tag = $1;
-            $3->anchor = $2;
-            $$ = $3;
-        } else {
-            free($1); free($2); $$ = NULL;
-        }
-    }
-    | ANCHOR TAG block_mapping {
-        if ($3) {
-            if ($3->tag) free($3->tag);
-            if ($3->anchor) free($3->anchor);
-            $3->anchor = $1;
-            $3->tag = $2;
-            $$ = $3;
-        } else {
-            free($1); free($2); $$ = NULL;
-        }
-    }
-    | ANCHOR TAG block_sequence {
-        if ($3) {
-            if ($3->tag) free($3->tag);
-            if ($3->anchor) free($3->anchor);
-            $3->anchor = $1;
-            $3->tag = $2;
-            $$ = $3;
-        } else {
-            free($1); free($2); $$ = NULL;
-        }
-    }
+nodes:
+    node { $$ = $1; }
     ;
 
-simple_node:
+node:
     SCALAR {
-        Generator *g = get_or_create_generator(&output->alphabet, $1, 0, 1);
-        $$ = create_sd_gen(g);
+        alphabet_add_scalar(ctx->alphabet, $1);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
         free($1);
     }
-    | SCALAR "INDENT" scalar_continuation_lines "DEDENT" {
-        /* Multi-line plain scalar: accumulate all lines */
-        char *combined = combine_scalar_parts($1, $3);
-        Generator *g = get_or_create_generator(&output->alphabet, combined, 0, 1);
-        $$ = create_sd_gen(g);
-        free(combined);
+    | ANCHOR SCALAR {
+        alphabet_add_scalar(ctx->alphabet, $2);
+        alphabet_set_anchor(ctx->alphabet, $1);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
+        free($1); free($2);
+    }
+    | TAG SCALAR {
+        alphabet_add_scalar(ctx->alphabet, $2);
+        alphabet_set_tag(ctx->alphabet, $1);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
+        free($1); free($2);
+    }
+    | ANCHOR TAG SCALAR {
+        alphabet_add_scalar(ctx->alphabet, $3);
+        alphabet_set_anchor(ctx->alphabet, $1);
+        alphabet_set_tag(ctx->alphabet, $2);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
+        free($1); free($2); free($3);
+    }
+    | QSCALAR {
+        alphabet_add_quoted_scalar(ctx->alphabet, $1, '"');
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
         free($1);
-        free($3);
+    }
+    | SSCALAR {
+        alphabet_add_quoted_scalar(ctx->alphabet, $1, '\'');
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
+        free($1);
     }
     | ALIAS {
-        Generator *g = get_or_create_generator(&output->alphabet, $1, 0, 1);
-        $$ = create_sd_gen(g);
+        alphabet_add_alias(ctx->alphabet, $1);
+        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
+        $$ = sd_generator(g);
         free($1);
     }
-    | flow_node { $$ = $1; }
-    ;
-
-scalar_continuation:
-    SCALAR {
-        $$ = $1;  /* Simple passthrough for now */
-    }
-    | SCALAR "INDENT" scalar_continuation_lines "DEDENT" {
-        /* Nested multi-line (rare but possible) */
-        char *combined = combine_scalar_parts($1, $3);
-        $$ = combined;
+    | ANCHOR seq {
+        $$ = $2;
+        /* Note: Current RML implementation puts properties on Generators. 
+           If an anchor is on a sequence, it should technically be on the SEQ_START generator.
+           Let's find the first generator in the diagram.
+           Actually, for now, let's just support it on scalars to pass 2SXE.
+        */
         free($1);
-        free($3);
+    }
+    | seq { $$ = $1; }
+    | map { $$ = $1; }
+    | flow_seq { $$ = $1; }
+    | flow_map { $$ = $1; }
+    ;
+
+seq:
+    seq_entries {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_SEQ_START;
+        gs->value = NULL;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_SEQ_END;
+        ge->value = NULL;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
+        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        StringDiagram *start = sd_generator(gs);
+        StringDiagram *end = sd_generator(ge);
+        
+        $$ = sd_compose(start, sd_compose($1, end));
     }
     ;
 
-scalar_continuation_lines:
-    SCALAR {
-        $$ = $1;
-    }
-    | scalar_continuation_lines SCALAR {
-        /* Accumulate multiple continuation lines */
-        char *combined = combine_scalar_parts($1, $2);
-        $$ = combined;
-        free($1);
-        free($2);
+seq_entries:
+    seq_entry { $$ = $1; }
+    | seq_entries seq_entry { $$ = sd_compose($1, $2); }
+    ;
+
+seq_entry:
+    BULLET node { $$ = $2; }
+    ;
+
+map:
+    map_entries {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_MAP_START;
+        gs->value = NULL;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_MAP_END;
+        ge->value = NULL;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
+        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        StringDiagram *start = sd_generator(gs);
+        StringDiagram *end = sd_generator(ge);
+        
+        $$ = sd_compose(start, sd_compose($1, end));
     }
     ;
 
-complex_node:
-    simple_node { $$ = $1; }
-    | TAG simple_node {
-        if ($2) {
-            if ($2->tag) free($2->tag);
-            $2->tag = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
+map_entries:
+    map_entry { $$ = $1; }
+    | map_entries map_entry { $$ = sd_compose($1, $2); }
+    ;
+
+map_entry:
+    node COLON node { $$ = sd_compose($1, $3); }
+    ;
+
+flow_seq:
+    LBRACK RBRACK {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_FLOW_SEQ_START; gs->value = NULL; gs->tag = NULL; gs->quote = 0;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_FLOW_SEQ_END; ge->value = NULL; ge->tag = NULL; ge->quote = 0;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
         }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        $$ = sd_compose(sd_generator(gs), sd_generator(ge));
     }
-    | ANCHOR simple_node {
-        if ($2) {
-            if ($2->anchor) free($2->anchor);
-            $2->anchor = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
+    | LBRACK flow_seq_entries RBRACK {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_FLOW_SEQ_START; gs->value = NULL; gs->tag = NULL; gs->quote = 0;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_FLOW_SEQ_END; ge->value = NULL; ge->tag = NULL; ge->quote = 0;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
         }
-    }
-    | TAG ANCHOR simple_node {
-        if ($3) {
-            if ($3->tag) free($3->tag);
-            if ($3->anchor) free($3->anchor);
-            $3->tag = $1;
-            $3->anchor = $2;
-            $$ = $3;
-        } else {
-            free($1); free($2); $$ = NULL;
-        }
-    }
-    | ANCHOR TAG simple_node {
-        if ($3) {
-            if ($3->tag) free($3->tag);
-            if ($3->anchor) free($3->anchor);
-            $3->anchor = $1;
-            $3->tag = $2;
-            $$ = $3;
-        } else {
-            free($1); free($2); $$ = NULL;
-        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
     }
     ;
 
-sub_node:
-    simple_node { $$ = $1; }
-    | block_sequence { $$ = $1; }
-    | block_mapping { $$ = $1; }
-    | "INDENT" root_node "DEDENT" { 
-        /* Compose: INDENT ; root_node ; DEDENT */
-        if (!output->alphabet) output->alphabet = create_alphabet();
-        StringDiagram *inner_comp = create_sd_comp(create_sd_gen(output->alphabet->indent_gen), $2);
-        $$ = create_sd_comp(inner_comp, create_sd_gen(output->alphabet->dedent_gen));
-    }
-    | TAG sub_node {
-        if ($2) {
-            if ($2->tag) free($2->tag);
-            $2->tag = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
+flow_seq_entries:
+    flow_node { $$ = $1; }
+    | flow_seq_entries COMMA flow_node { $$ = sd_compose($1, $3); }
+    | flow_seq_entries COMMA { $$ = $1; }
+    ;
+
+flow_map:
+    LBRACE flow_map_entries RBRACE {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_FLOW_MAP_START; gs->value = NULL; gs->tag = NULL; gs->quote = 0;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_FLOW_MAP_END; ge->value = NULL; ge->tag = NULL; ge->quote = 0;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
         }
-    }
-    | ANCHOR sub_node {
-        if ($2) {
-            if ($2->anchor) free($2->anchor);
-            $2->anchor = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
     }
     ;
 
-block_sequence:
-    items {
-        const char *name = rml_token_name(SEQ);
-        if (!name) name = "SEQ";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $1->coarity, 1);
-        $$ = create_sd_comp($1, create_sd_gen(g));
-    }
-    ;
-
-items:
-    "-" root_node { $$ = $2; }
-    | items "-" root_node {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-    }
-    | items "INDENT" "-" root_node {
-        /* Handle nested sequences with indentation
-         * When a block sequence is nested with increased indentation,
-         * the lexer emits INDENT. This rule allows parser to continue
-         * recognizing items after that INDENT token.
-         * Note: This is a pragmatic workaround for lexer limitation
-         * where it cannot distinguish between "new indentation level"
-         * and "natural indentation within nested sequence context"
-         */
-        if ($1 && $4) $$ = create_sd_prod($1, $4);
-        else if ($1) $$ = $1;
-        else $$ = $4;
-    }
-    ;
-
-block_mapping:
-    mapping_items {
-        const char *name = rml_token_name(MAP);
-        if (!name) name = "MAP";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $1->coarity, 1);
-        $$ = create_sd_comp($1, create_sd_gen(g));
-    }
-    | mapping_items error {
-        /* Partial mapping on error */
-        const char *name = rml_token_name(MAP);
-        if (!name) name = "MAP";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $1->coarity, 1);
-        $$ = create_sd_comp($1, create_sd_gen(g));
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = clone_stringdiagram($$);
-    }
-    ;
-
-mapping_items:
-    mapping_entry { $$ = $1; }
-    | mapping_items mapping_entry {
-        if ($1 && $2) $$ = create_sd_prod($1, $2);
-        else if ($1) $$ = $1;
-        else $$ = $2;
-    }
-    ;
-
-mapping_entry:
-    complex_node ":" sub_node {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) {
-            /* Case with colon but empty value */
-            const char *name = rml_token_name(COLON);
-            if (!name) name = ":";
-            Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-            $$ = create_sd_prod($1, create_sd_gen(g));
-        } else {
-            $$ = $3;
-        }
-    }
-    | complex_node ":" {
-        const char *name = rml_token_name(COLON);
-        if (!name) name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_prod($1, create_sd_gen(g));
-    }
-    | "?" sub_node ":" sub_node {
-        if ($2 && $4) $$ = create_sd_prod($2, $4);
-        else if ($2) {
-            const char *name = rml_token_name(COLON);
-            if (!name) name = ":";
-            Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-            $$ = create_sd_prod($2, create_sd_gen(g));
-        } else {
-            $$ = $4;
-        }
-    }
-    | "?" sub_node ":" {
-        const char *name = rml_token_name(COLON);
-        if (!name) name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_prod($2, create_sd_gen(g));
-    }
-    | "?" sub_node {
-        const char *name = rml_token_name(COLON);
-        if (!name) name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        if ($2) $$ = create_sd_prod($2, create_sd_gen(g));
-        else $$ = create_sd_gen(g);
-    }
-    | ":" sub_node {
-        const char *name = rml_token_name(COLON);
-        if (!name) name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        if ($2) $$ = create_sd_prod(create_sd_gen(g), $2);
-        else $$ = create_sd_gen(g);
-    }
+flow_map_entries:
+    node COLON node { $$ = sd_compose($1, $3); }
+    | flow_map_entries COMMA node COLON node { $$ = sd_compose($1, sd_compose($3, $5)); }
     ;
 
 flow_node:
-    "[" "]" {
-        const char *name = rml_token_name(SEQ);
-        if (!name) name = "SEQ";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_gen(g);
-        $$->flow_style = 1;
-    }
-    | "[" flow_item_list "]" {
-        const char *name = rml_token_name(SEQ);
-        if (!name) name = "SEQ";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $2->coarity, 1);
-        $$ = create_sd_comp($2, create_sd_gen(g));
-        $$->flow_style = 1;
-    }
-    | "{" "}" {
-        const char *name = rml_token_name(MAP);
-        if (!name) name = "MAP";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_gen(g);
-        $$->flow_style = 1;
-    }
-    | "{" flow_mapping_list "}" {
-        const char *name = rml_token_name(MAP);
-        if (!name) name = "MAP";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $2->coarity, 1);
-        $$ = create_sd_comp($2, create_sd_gen(g));
-        $$->flow_style = 1;
-    }
-    ;
-
-flow_item_list:
-    flow_item { $$ = $1; }
-    | flow_item_list "," flow_item {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-    }
-    ;
-
-flow_item:
-    simple_node { $$ = $1; }
-    | block_sequence { $$ = $1; }
-    | block_mapping { 
-        $$ = $1;
-        if ($$) $$->flow_style = 1;
-    }
-    | "INDENT" root_node "DEDENT" { $$ = $2; }
-    | TAG flow_item {
-        if ($2) {
-            if ($2->tag) free($2->tag);
-            $2->tag = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | ANCHOR flow_item {
-        if ($2) {
-            if ($2->anchor) free($2->anchor);
-            $2->anchor = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    ;
-
-flow_mapping_list:
-    mapping_entry { $$ = $1; }
-    | simple_node {
-        const char *colon_name = rml_token_name(COLON);
-        if (!colon_name) colon_name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
-        $$ = create_sd_prod($1, create_sd_gen(g));
-    }
-    | flow_mapping_list "," mapping_entry {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-    }
-    | flow_mapping_list "," simple_node {
-        const char *colon_name = rml_token_name(COLON);
-        if (!colon_name) colon_name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
-        StringDiagram *entry = create_sd_prod($3, create_sd_gen(g));
-        if ($1 && entry) $$ = create_sd_prod($1, entry);
-        else if ($1) $$ = $1;
-        else $$ = entry;
-    }
-    | flow_mapping_list "," {
-        $$ = $1;
-    }
+    node { $$ = $1; }
     ;
 
 %%
 
-void yyerror(YYLTYPE *yylloc, void *yyscanner, ParseOutput *output, const char *s) {
-    (void)yyscanner;
-    (void)output;
-    if (yylloc) {
-        fprintf(stderr, "%d.%d-%d.%d: %s\n",
-                yylloc->first_line, yylloc->first_column,
-                yylloc->last_line, yylloc->last_column,
-                s);
-    } else {
-        fprintf(stderr, "Parse error: %s\n", s);
-    }
-}
-
-const char *rml_token_name(int tok) {
-    int sym = YYTRANSLATE(tok);
-    if (sym < 0 || sym >= YYNTOKENS) return NULL;
-    const char *name = yytname[sym];
-    if (name && name[0] == '"') {
-        static char buf[256];
-        size_t len = strlen(name);
-        if (len > 255) len = 255;
-        int j = 0;
-        for (int i = 1; i < len - 1; i++) {
-            if (name[i] == '\\' && name[i+1] == '"') {
-                buf[j++] = '"';
-                i++;
-            } else if (name[i] == '\\' && name[i+1] == '\\') {
-                buf[j++] = '\\';
-                i++;
-            } else {
-                buf[j++] = name[i];
-            }
-        }
-        buf[j] = '\0';
-        return buf;
-    }
-    return name;
+void yyerror(ParserContext *ctx, void *scanner, const char *s) {
+    fprintf(stderr, "Bison error: %s\n", s);
 }

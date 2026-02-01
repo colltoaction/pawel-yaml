@@ -1,140 +1,119 @@
 #ifndef MRL_H
 #define MRL_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
-/* =====================================================
-   Regular Monoidal Language (RML) Core Structures
-   
-   Reference: main.tex (RML Textbook)
-   
-   Implementation of the three fundamental objects of RML:
-   1. Monoidal Alphabet Gamma (Definition 2.1)
-   2. Regular Monoidal Grammar Psi : M -> Gamma (Definition 2.2)
-   3. Non-deterministic Monoidal Automaton (Definition 2.3)
-   ===================================================== */
+/*
+ * ============================================================================
+ * Regular Monoidal Language (RML) Definitions
+ * ============================================================================
+ * 
+ * Maps directly to the definitions in the RML textbook (main.tex).
+ * 
+ * Definition 2.1: Monoidal Alphabet (Gamma)
+ * Definition 2.2: Regular Monoidal Grammar (Psi)
+ * Definition 2.3: String Diagram (Morphism)
+ */
 
-#define GEN_SEQ    "SEQ"
-#define GEN_MAP    "MAP"
-#define GEN_COLON  ":"
+/* ==================== Definition 2.1: Alphabet ==================== */
 
-#define STYLE_CHAR_PLAIN   ':'
-#define STYLE_CHAR_DQUOTE  '"'
-#define STYLE_CHAR_SQUOTE  '\''
-#define STYLE_CHAR_LITERAL '|'
-#define STYLE_CHAR_FOLDED  '>'
-#define STYLE_CHAR_ALIAS   '*'
-#define STYLE_CHAR_ANCHOR  '&'
+typedef enum {
+    GEN_TYPE_SCALAR,  /* s: I -> I (Atomic generator) */
+    GEN_TYPE_MERGE,   /* mu: I x I -> I (Monoid multiplication) */
+    GEN_TYPE_UNIT,    /* eta: 1 -> I (Monoid unit) */
+    GEN_TYPE_LBRACK,  /* [: 1 -> I (Sequence start) */
+    GEN_TYPE_RBRACK,  /* ]: I -> 1 (Sequence end) */
+    GEN_TYPE_LBRACE,  /* {: 1 -> I (Map start) */
+    GEN_TYPE_RBRACE,  /* }: I -> 1 (Map end) */
+    GEN_TYPE_COMMA,   /* ,: I -> I (Separator) */
+    GEN_TYPE_COLON,   /* :: I -> I (Key-Value separator) */
+    GEN_TYPE_SEQ_START,
+    GEN_TYPE_SEQ_END,
+    GEN_TYPE_MAP_START,
+    GEN_TYPE_MAP_END,
+    GEN_TYPE_FLOW_SEQ_START,
+    GEN_TYPE_FLOW_SEQ_END,
+    GEN_TYPE_FLOW_MAP_START,
+    GEN_TYPE_FLOW_MAP_END,
+    GEN_TYPE_ALIAS,         /* *alias: I -> I (Alias reference) */
+    GEN_TYPE_ERROR = 256,   /* Bison standard: YYerror */
+    GEN_TYPE_UNDEF = 257    /* Bison standard: YYUNDEF */
+} GeneratorType;
 
-
-/* Monoidal Alphabet Gamma - Definition 2.1
-   Finite monoidal graph with singleton vertex set.
-   Generators gamma in E_Gamma have arity and coarity. */
 typedef struct {
-    char *name;             /* Generator label */
-    int arity;              /* Domain dimension (ar(gamma)) */
-    int coarity;            /* Codomain dimension (coar(gamma)) */
+    GeneratorType type;
+    char *value;      /* For SCALAR type, holds the string content */
+    char *tag;        /* Optional tag: e.g., !!str */
+    char *anchor;     /* Optional anchor: e.g., &anchor */
+    char quote;       /* '"', '\'', or 0 */
 } Generator;
 
 typedef struct {
-    Generator **generators;  /* Generators gamma in E_Gamma */
-    int count;               /* Number of generators */
+    Generator **generators;
+    size_t count;
+    size_t capacity;
 } Alphabet;
 
-/* StateList - Definition 2.3 support structure
-   States Q as strings, mapped to integers internally for evaluation.
-   Used in transitions of the Monoidal Automaton. */
-typedef struct {
-    char **names;            /* State labels */
-    int count;               /* Number of states */
-} StateList;
+/* ==================== Definition 2.2: Grammar ==================== */
 
-/* Transition - Definition 2.3 Monoidal Automaton transition
-   Transition labeled by generator gamma from state vector w to w'.
-   dom: domain states (length = gen->arity)
-   cod: codomain states (length = gen->coarity) */
 typedef struct {
-    Generator *gen;          /* Generator label */
-    StateList *dom;          /* Domain state vector (ar(gamma) states) */
-    StateList *cod;          /* Codomain state vector (coar(gamma) states) */
+    int start_state;
+    int end_state;
+    Generator symbol;
 } Transition;
 
-/* Regular Monoidal Grammar Psi : M -> Gamma - Definition 2.2
-   Morphism of monoidal graphs from M (state space automaton)
-   to Gamma (generator alphabet). Specifies all transitions. */
 typedef struct {
-    Alphabet *alphabet;      /* Target alphabet Gamma */
-    Transition **transitions;/* Transition rules Delta_gamma */
-    int transition_count;    /* Number of transition rules */
+    Transition **transitions;
+    size_t count;
+    size_t capacity;
 } Grammar;
 
-/* String Diagram - morphism in free pro F(Gamma)
-   Recursively defined composition/product of generators.
-   Input to be recognized by the Monoidal Automaton. */
-typedef enum {
-    SD_GENERATOR,     /* Single generator gamma */
-    SD_COMPOSITION,   /* Sequential composition (;) */
-    SD_PRODUCT,       /* Parallel product (tensor) */
-    SD_IDENTITY       /* Identity morphism id_n */
-} SDType;
+/* ==================== Definition 2.3: String Diagram ==================== */
 
-typedef struct StringDiagram {
-    SDType type;      /* Diagram type */
-    int arity;        /* Input dimension (ar(d)) */
-    int coarity;      /* Output dimension (coar(d)) */
+/* 
+ * A String Diagram represents a morphism in the free monoidal category.
+ * In our implementation, it is a tree where leaves are Generators.
+ */
+
+typedef enum {
+    SD_TYPE_GENERATOR,
+    SD_TYPE_COMPOSITION, /* f ; g (Vertical composition) */
+    SD_TYPE_TENSOR       /* f (x) g (Horizontal composition) */
+} StringDiagramType;
+
+struct StringDiagram_s;
+
+typedef struct StringDiagram_s {
+    StringDiagramType type;
     union {
-        Generator *gen;  /* For SD_GENERATOR: generator gamma */
+        Generator *gen; /* For SD_TYPE_GENERATOR */
         struct {
-            struct StringDiagram *left;   /* Left operand */
-            struct StringDiagram *right;  /* Right operand */
-        } op;            /* For SD_COMPOSITION, SD_PRODUCT */
-        int n;           /* For SD_IDENTITY: dimension */
+            struct StringDiagram_s *first;
+            struct StringDiagram_s *second;
+        } binary; /* For COMPOSITION and TENSOR */
     } data;
-    char *anchor; /* YAML anchor or alias name */
-    char *tag;    /* YAML tag */
-    int doc_marker; /* Non-zero if document has explicit --- marker */
-    int doc_end_marker; /* Non-zero if document has explicit ... marker */
-    int flow_style; /* Non-zero if this is a flow-style collection ({} or []) */
 } StringDiagram;
 
-/* ===== Creation Functions ===== */
+/* ==================== API ==================== */
 
-Generator *create_generator(const char *name, int arity, int coarity);
-Alphabet *create_alphabet();
-void alphabet_add(Alphabet *alphabet, Generator *gen);
-Generator *alphabet_find_full(Alphabet *alphabet, const char *name, int arity, int coarity);
-Generator *get_or_create_generator(Alphabet **alphabet, const char *name, int arity, int coarity);
+/* Alphabet */
+Alphabet *alphabet_init(void);
+void alphabet_free(Alphabet *a);
+void alphabet_add_scalar(Alphabet *a, const char *value);
+void alphabet_add_quoted_scalar(Alphabet *a, const char *value, char quote);
+void alphabet_add_alias(Alphabet *a, const char *value);
+void alphabet_set_tag(Alphabet *a, const char *tag);
+void alphabet_set_anchor(Alphabet *a, const char *anchor);
 
-StateList *create_statelist();
-void statelist_add(StateList *sl, const char *state);
+/* Grammar */
+Grammar *grammar_init(void);
+void grammar_free(Grammar *g);
 
-Grammar *create_grammar(Alphabet *alphabet);
-void grammar_add_transition(Grammar *g, Generator *gen, StateList *dom, StateList *cod);
+/* StringDiagram */
+StringDiagram *sd_generator(Generator *g);
+StringDiagram *sd_compose(StringDiagram *f, StringDiagram *g);
+StringDiagram *sd_tensor(StringDiagram *f, StringDiagram *g);
+void sd_free(StringDiagram *sd);
 
-StringDiagram *create_sd_gen(Generator *gen);
-StringDiagram *create_sd_comp(StringDiagram *left, StringDiagram *right);
-StringDiagram *create_sd_prod(StringDiagram *left, StringDiagram *right);
-StringDiagram *create_sd_id(int n);
-
-/* ===== Cleanup Functions ===== */
-
-void free_generator(Generator *gen);
-void free_statelist(StateList *sl);
-void free_alphabet(Alphabet *alphabet);
-void free_grammar(Grammar *g);
-void free_stringdiagram(StringDiagram *sd);
-
-/* Recognition logic */
-typedef struct {
-    int q_n; /* arity */
-    int q_m; /* coarity */
-    bool *matrix; /* (Q^arity) x (Q^coarity) boolean matrix */
-} Relation;
-
-Relation *mrl_evaluate_relation(Grammar *g, StringDiagram *sd, int num_states);
-bool mrl_accepts(Grammar *g, StringDiagram *sd);
-
-#endif
+#endif /* MRL_H */

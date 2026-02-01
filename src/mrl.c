@@ -1,215 +1,155 @@
 #include "mrl.h"
-#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 
-Generator *create_generator(const char *name, int arity, int coarity) {
-    Generator *g = malloc(sizeof(Generator));
-    g->name = strdup(name);
-    g->arity = arity;
-    g->coarity = coarity;
-    return g;
-}
+/* ==================== Alphabet Implementation ==================== */
 
-Alphabet *create_alphabet() {
+Alphabet *alphabet_init(void) {
     Alphabet *a = malloc(sizeof(Alphabet));
-    a->generators = NULL;
+    if (!a) return NULL;
     a->count = 0;
+    a->capacity = 16;
+    a->generators = malloc(sizeof(Generator*) * a->capacity);
+    if (!a->generators) {
+        free(a);
+        return NULL;
+    }
     return a;
 }
 
-void alphabet_add(Alphabet *alphabet, Generator *gen) {
-    if (!alphabet) return;
-    alphabet->generators = realloc(alphabet->generators, sizeof(Generator *) * (alphabet->count + 1));
-    alphabet->generators[alphabet->count++] = gen;
-}
-
-Generator *alphabet_find_full(Alphabet *alphabet, const char *name, int arity, int coarity) {
-    if (!alphabet || !name) return NULL;
-    for (int i = 0; i < alphabet->count; i++) {
-        if (strcmp(alphabet->generators[i]->name, name) == 0) {
-            if ((arity == -1 || alphabet->generators[i]->arity == arity) &&
-                (coarity == -1 || alphabet->generators[i]->coarity == coarity)) {
-                return alphabet->generators[i];
-            }
+void alphabet_free(Alphabet *a) {
+    if (!a) return;
+    for (size_t i = 0; i < a->count; i++) {
+        if (a->generators[i]->value) {
+            free(a->generators[i]->value);
         }
+        if (a->generators[i]->tag) {
+            free(a->generators[i]->tag);
+        }
+        if (a->generators[i]->anchor) {
+            free(a->generators[i]->anchor);
+        }
+        free(a->generators[i]);
     }
-    return NULL;
+    free(a->generators);
+    free(a);
 }
 
-Generator *get_or_create_generator(Alphabet **alphabet, const char *name, int arity, int coarity) {
-    if (!alphabet) return NULL;
-    
-    Generator *g = alphabet_find_full(*alphabet, name, arity, coarity);
-    if (!g) {
-        if (!*alphabet) *alphabet = create_alphabet();
-        g = create_generator(name, arity, coarity);
-        alphabet_add(*alphabet, g);
+void alphabet_add_scalar(Alphabet *a, const char *value) {
+    if (a->count >= a->capacity) {
+        a->capacity *= 2;
+        a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
     }
-    return g;
+    Generator *g = malloc(sizeof(Generator));
+    g->type = GEN_TYPE_SCALAR;
+    g->value = strdup(value);
+    g->tag = NULL;
+    g->anchor = NULL;
+    g->quote = 0;
+    a->generators[a->count++] = g;
 }
 
-StateList *create_statelist() {
-    StateList *sl = malloc(sizeof(StateList));
-    sl->names = NULL;
-    sl->count = 0;
-    return sl;
+void alphabet_add_quoted_scalar(Alphabet *a, const char *value, char quote) {
+    if (a->count >= a->capacity) {
+        a->capacity *= 2;
+        a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
+    }
+    Generator *g = malloc(sizeof(Generator));
+    g->type = GEN_TYPE_SCALAR;
+    g->value = strdup(value);
+    g->tag = NULL;
+    g->anchor = NULL;
+    g->quote = quote;
+    a->generators[a->count++] = g;
 }
 
-void statelist_add(StateList *sl, const char *state) {
-    sl->names = realloc(sl->names, sizeof(char *) * (sl->count + 1));
-    sl->names[sl->count++] = strdup(state);
+void alphabet_add_alias(Alphabet *a, const char *value) {
+    if (a->count >= a->capacity) {
+        a->capacity *= 2;
+        a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
+    }
+    Generator *g = malloc(sizeof(Generator));
+    g->type = GEN_TYPE_ALIAS;
+    g->value = strdup(value);
+    g->tag = NULL;
+    g->anchor = NULL;
+    g->quote = 0;
+    a->generators[a->count++] = g;
 }
 
-Grammar *create_grammar(Alphabet *alphabet) {
+void alphabet_set_tag(Alphabet *a, const char *tag) {
+    if (a->count > 0) {
+        a->generators[a->count - 1]->tag = strdup(tag);
+    }
+}
+
+void alphabet_set_anchor(Alphabet *a, const char *anchor) {
+    if (a->count > 0) {
+        a->generators[a->count - 1]->anchor = strdup(anchor);
+    }
+}
+
+/* ==================== Grammar Implementation ==================== */
+
+Grammar *grammar_init(void) {
     Grammar *g = malloc(sizeof(Grammar));
-    g->alphabet = alphabet;
-    g->transitions = NULL;
-    g->transition_count = 0;
+    if (!g) return NULL;
+    g->count = 0;
+    g->capacity = 16;
+    g->transitions = malloc(sizeof(Transition*) * g->capacity);
     return g;
 }
 
-void grammar_add_transition(Grammar *g, Generator *gen, StateList *dom, StateList *cod) {
-    assert(dom->count == gen->arity);
-    assert(cod->count == gen->coarity);
-    Transition *t = malloc(sizeof(Transition));
-    t->gen = gen;
-    t->dom = dom;
-    t->cod = cod;
-    g->transitions = realloc(g->transitions, sizeof(Transition *) * (g->transition_count + 1));
-    g->transitions[g->transition_count++] = t;
-}
-
-StringDiagram *create_sd_gen(Generator *gen) {
-    if (!gen) return NULL;
-    StringDiagram *sd = malloc(sizeof(StringDiagram));
-    sd->type = SD_GENERATOR;
-    sd->arity = gen->arity;
-    sd->coarity = gen->coarity;
-    sd->data.gen = gen;
-    sd->anchor = NULL;
-    sd->tag = NULL;
-    sd->doc_marker = 0;
-    sd->doc_end_marker = 0;
-    return sd;
-}
-
-StringDiagram *create_sd_comp(StringDiagram *left, StringDiagram *right) {
-    if (!left || !right) return NULL;
-    assert(left->coarity == right->arity);
-    StringDiagram *sd = malloc(sizeof(StringDiagram));
-    sd->type = SD_COMPOSITION;
-    sd->arity = left->arity;
-    sd->coarity = right->coarity;
-    sd->data.op.left = left;
-    sd->data.op.right = right;
-    sd->anchor = NULL;
-    sd->tag = NULL;
-    sd->doc_marker = 0;
-    sd->doc_end_marker = 0;
-    return sd;
-}
-
-StringDiagram *create_sd_prod(StringDiagram *left, StringDiagram *right) {
-    if (!left || !right) return NULL;
-    StringDiagram *sd = malloc(sizeof(StringDiagram));
-    sd->type = SD_PRODUCT;
-    sd->arity = left->arity + right->arity;
-    sd->coarity = left->coarity + right->coarity;
-    sd->data.op.left = left;
-    sd->data.op.right = right;
-    sd->anchor = NULL;
-    sd->tag = NULL;
-    sd->doc_marker = 0;
-    sd->doc_end_marker = 0;
-    return sd;
-}
-
-StringDiagram *create_sd_id(int n) {
-    StringDiagram *sd = malloc(sizeof(StringDiagram));
-    sd->type = SD_IDENTITY;
-    sd->arity = n;
-    sd->coarity = n;
-    sd->data.n = n;
-    sd->anchor = NULL;
-    sd->tag = NULL;
-    sd->doc_marker = 0;
-    sd->doc_end_marker = 0;
-    return sd;
-}
-
-/* 
- * Cleanup Functions for RML Structures
- */
-
-void free_generator(Generator *gen) {
-    if (!gen) return;
-    free(gen->name);
-    free(gen);
-}
-
-void free_statelist(StateList *sl) {
-    if (!sl) return;
-    for (int i = 0; i < sl->count; i++) {
-        free(sl->names[i]);
-    }
-    free(sl->names);
-    free(sl);
-}
-
-void free_alphabet(Alphabet *alphabet) {
-    if (!alphabet) return;
-    for (int i = 0; i < alphabet->count; i++) {
-        free_generator(alphabet->generators[i]);
-    }
-    free(alphabet->generators);
-    free(alphabet);
-}
-
-void free_grammar(Grammar *g) {
+void grammar_free(Grammar *g) {
     if (!g) return;
-    for (int i = 0; i < g->transition_count; i++) {
-        Transition *t = g->transitions[i];
-        if (t) {
-            free_statelist(t->dom);
-            free_statelist(t->cod);
-            free(t);
-        }
+    for (size_t i = 0; i < g->count; i++) {
+        /* Value is owned by Alphabet generators usually, but if independent copy needed handle here */
+        /* For now assuming Grammar references Alphabet or static Generators */
+        free(g->transitions[i]);
     }
     free(g->transitions);
     free(g);
 }
 
-void free_stringdiagram(StringDiagram *sd) {
+/* ==================== StringDiagram Implementation ==================== */
+
+StringDiagram *sd_generator(Generator *g) {
+    StringDiagram *sd = malloc(sizeof(StringDiagram));
+    if (!sd) return NULL;
+    sd->type = SD_TYPE_GENERATOR;
+    sd->data.gen = g;
+    return sd;
+}
+
+StringDiagram *sd_compose(StringDiagram *f, StringDiagram *g) {
+    if (!f) return g;
+    if (!g) return f;
+    StringDiagram *sd = malloc(sizeof(StringDiagram));
+    if (!sd) return NULL;
+    sd->type = SD_TYPE_COMPOSITION;
+    sd->data.binary.first = f;
+    sd->data.binary.second = g;
+    return sd;
+}
+
+StringDiagram *sd_tensor(StringDiagram *f, StringDiagram *g) {
+    if (!f) return g;
+    if (!g) return f;
+    StringDiagram *sd = malloc(sizeof(StringDiagram));
+    if (!sd) return NULL;
+    sd->type = SD_TYPE_TENSOR;
+    sd->data.binary.first = f;
+    sd->data.binary.second = g;
+    return sd;
+}
+
+void sd_free(StringDiagram *sd) {
     if (!sd) return;
-    if (sd->anchor) free(sd->anchor);
-    if (sd->tag) free(sd->tag);
-    switch (sd->type) {
-        case SD_GENERATOR:
-            break;
-        case SD_COMPOSITION:
-            free_stringdiagram(sd->data.op.left);
-            free_stringdiagram(sd->data.op.right);
-            break;
-        case SD_PRODUCT:
-            free_stringdiagram(sd->data.op.left);
-            free_stringdiagram(sd->data.op.right);
-            break;
-        case SD_IDENTITY:
-            break;
+    if (sd->type == SD_TYPE_COMPOSITION || sd->type == SD_TYPE_TENSOR) {
+        sd_free(sd->data.binary.first);
+        sd_free(sd->data.binary.second);
     }
+    /* Generators are owned by Alphabet, do not free sd->data.gen here */
     free(sd);
-}
-
-Relation *create_relation(int arity, int coarity, int num_states) {
-    Relation *r = malloc(sizeof(Relation));
-    r->q_n = arity;
-    r->q_m = coarity;
-    long size = 1;
-    for (int i=0; i<arity; i++) size *= num_states;
-    for (int i=0; i<coarity; i++) size *= num_states;
-    r->matrix = calloc(size, sizeof(bool));
-    return r;
-}
-
-bool mrl_accepts(Grammar *g, StringDiagram *sd) {
-    return false; // Stub
 }
