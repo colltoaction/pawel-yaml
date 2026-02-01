@@ -25,9 +25,9 @@ void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
                     if (strcmp(tag_val, "!!str") == 0) tag_val = "tag:yaml.org,2002:str";
                     else if (strcmp(tag_val, "!!int") == 0) tag_val = "tag:yaml.org,2002:int";
                     
-                    printf("  =VAL <%s> :%s\n", tag_val, g->value);
+                    printf("  =VAL <%s> %c%s\n", tag_val, g->quote ? g->quote : ':', g->value);
                 } else {
-                    printf("  =VAL :%s\n", g->value);
+                    printf("  =VAL %c%s\n", g->quote ? g->quote : ':', g->value);
                 }
                 break;
             case GEN_TYPE_SEQ_START:
@@ -40,6 +40,18 @@ void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
                 printf("  +MAP\n");
                 break;
             case GEN_TYPE_MAP_END:
+                printf("  -MAP\n");
+                break;
+            case GEN_TYPE_FLOW_SEQ_START:
+                printf("  +SEQ []\n");
+                break;
+            case GEN_TYPE_FLOW_SEQ_END:
+                printf("  -SEQ\n");
+                break;
+            case GEN_TYPE_FLOW_MAP_START:
+                printf("  +MAP {}\n");
+                break;
+            case GEN_TYPE_FLOW_MAP_END:
                 printf("  -MAP\n");
                 break;
             default:

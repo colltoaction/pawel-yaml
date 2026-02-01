@@ -42,6 +42,20 @@ void alphabet_add_scalar(Alphabet *a, const char *value) {
     g->type = GEN_TYPE_SCALAR;
     g->value = strdup(value);
     g->tag = NULL;
+    g->quote = 0;
+    a->generators[a->count++] = g;
+}
+
+void alphabet_add_quoted_scalar(Alphabet *a, const char *value, char quote) {
+    if (a->count >= a->capacity) {
+        a->capacity *= 2;
+        a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
+    }
+    Generator *g = malloc(sizeof(Generator));
+    g->type = GEN_TYPE_SCALAR;
+    g->value = strdup(value);
+    g->tag = NULL;
+    g->quote = quote;
     a->generators[a->count++] = g;
 }
 

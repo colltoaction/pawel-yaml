@@ -17,6 +17,13 @@
 "-"[ ]+          { return BULLET; }
 ":"([ ]+|\n)     { return COLON; }
 "!!"[a-z]+       { yylval->string = strdup(yytext); return TAG; }
+"["              { return LBRACK; }
+"]"              { return RBRACK; }
+"{"              { return LBRACE; }
+"}"              { return RBRACE; }
+","              { return COMMA; }
+\"[^\"]*\"       { yylval->string = strndup(yytext+1, strlen(yytext)-2); return QSCALAR; }
+\'[^\']*\'       { yylval->string = strndup(yytext+1, strlen(yytext)-2); return SSCALAR; }
 [a-zA-Z0-9]+     { yylval->string = strdup(yytext); return SCALAR; }
 [ \t\n\r]+       { /* skip whitespace */ }
 .                { /* ignore other characters for now */ }
