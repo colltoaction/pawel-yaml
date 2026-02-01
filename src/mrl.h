@@ -36,10 +36,6 @@ typedef enum {
     GEN_TYPE_FLOW_SEQ_END,
     GEN_TYPE_FLOW_MAP_START,
     GEN_TYPE_FLOW_MAP_END,
-    GEN_TYPE_DOC_START,     /* --- */
-    GEN_TYPE_DOC_END,       /* ... */
-    GEN_TYPE_QUESTION,      /* ? */
-    GEN_TYPE_ALIAS,         /* *alias: I -> I (Alias reference) */
     GEN_TYPE_ERROR = 256,   /* Bison standard: YYerror */
     GEN_TYPE_UNDEF = 257    /* Bison standard: YYUNDEF */
 } GeneratorType;
@@ -48,7 +44,6 @@ typedef struct {
     GeneratorType type;
     char *value;      /* For SCALAR type, holds the string content */
     char *tag;        /* Optional tag: e.g., !!str */
-    char *anchor;     /* Optional anchor: e.g., &anchor */
     char quote;       /* '"', '\'', or 0 */
 } Generator;
 
@@ -105,9 +100,7 @@ Alphabet *alphabet_init(void);
 void alphabet_free(Alphabet *a);
 void alphabet_add_scalar(Alphabet *a, const char *value);
 void alphabet_add_quoted_scalar(Alphabet *a, const char *value, char quote);
-void alphabet_add_alias(Alphabet *a, const char *value);
 void alphabet_set_tag(Alphabet *a, const char *tag);
-void alphabet_set_anchor(Alphabet *a, const char *anchor);
 
 /* Grammar */
 Grammar *grammar_init(void);
@@ -118,7 +111,5 @@ StringDiagram *sd_generator(Generator *g);
 StringDiagram *sd_compose(StringDiagram *f, StringDiagram *g);
 StringDiagram *sd_tensor(StringDiagram *f, StringDiagram *g);
 void sd_free(StringDiagram *sd);
-void sd_set_tag(StringDiagram *sd, const char *tag);
-void sd_set_anchor(StringDiagram *sd, const char *anchor);
 
 #endif /* MRL_H */
