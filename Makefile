@@ -1,110 +1,90 @@
-# YAML Compilation Pipeline
-SHELL = /bin/sh
+# Regular Monoidal Languages (RML) Driver
 
-# Installation
-BUILD = ./build
-BINDIR = $(BUILD)/bin
-BUILDSRCDIR = $(BUILD)/src
-BUILDINCDIR = $(BUILD)/inc
-BUILD_OBJDIR = $(BUILD)/obj
-VPATH = src:$(BUILDSRCDIR):$(BUILDINCDIR)
-
-# Build
 CC = gcc
-LEX = flex
-YACC = bison
-CFLAGS = -Wall -pedantic -g -I$(BUILDINCDIR) -Isrc
-YFLAGS = -d
-LFLAGS = -w
+CFLAGS = -I./src -I$(GEN_INC_DIR) -Wall -g -Wno-unused-function
+BISON = bison
+FLEX = flex
 
-# Generated files
-# TODO $(wildcard BUILD_OBJDIR/*.o)
-OBJECTS = $(BUILD_OBJDIR)/main.o $(BUILD_OBJDIR)/composition.o $(BUILD_OBJDIR)/scanning.lex.o $(BUILD_OBJDIR)/parsing.tab.o $(BUILD_OBJDIR)/event.lex.o $(BUILD_OBJDIR)/event.tab.o
-BINTARGET = $(BUILD)/bin/pawel-yaml
+SRC_DIR = src
+BUILD_DIR = build
+GEN_SRC_DIR = $(BUILD_DIR)/src
+GEN_INC_DIR = $(BUILD_DIR)/inc
+BIN_DIR = $(BUILD_DIR)/bin
+LIB_DIR = $(BUILD_DIR)/lib
+AGENT_DIR = .agent
 
-# Rules
-all: $(BINTARGET)
+# External Dependencies (YAML Test Suite)
+RUNTIMES_DIR = $(LIB_DIR)/yaml-runtimes
+PLAY_DIR = $(LIB_DIR)/yaml-play
+SUITE_DIR = $(LIB_DIR)/yaml-test-suite
+
+# Generated parser files
+PARSER_TAB_C = $(GEN_SRC_DIR)/parser.tab.c
+PARSER_TAB_H = $(GEN_INC_DIR)/parser.tab.h
+LEX_YY_C = $(GEN_SRC_DIR)/lex.yy.c
+
+OBJS = $(BUILD_DIR)/mrl.o $(BUILD_DIR)/main.o $(BUILD_DIR)/yaml_parser.o \
+       $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lex.yy.o
+
+TARGET = $(BIN_DIR)/pawel-yaml
+
+all: directories $(TARGET)
 
 directories:
-	@mkdir -p $(BUILD) $(BUILD)/bin $(BUILDSRCDIR) $(BUILDINCDIR) $(BUILD_OBJDIR)
+	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR)
 
-# Grammar gen tabs
-$(BUILDSRCDIR)/%.tab.c $(BUILDINCDIR)/%.tab.h: src/%.y directories
-	$(YACC) $(YFLAGS) -o $(BUILDSRCDIR)/$*.tab.c $<
-	@if [ -f $(BUILDSRCDIR)/$*.tab.h ]; then mv $(BUILDSRCDIR)/$*.tab.h $(BUILDINCDIR)/$*.tab.h; fi
+# Initialize submodules via cloning
+setup: directories $(RUNTIMES_DIR) $(PLAY_DIR) $(SUITE_DIR)
 
-# Grammar gen lex
-LEXTARGETS = $(patsubst src/%.l, $(BUILDSRCDIR)/%.lex.c, $(wildcard src/*.l))
-lex: $(LEXTARGETS)
+$(RUNTIMES_DIR):
+	git clone --depth 1 https://github.com/yaml/yaml-runtimes $@
 
-$(BUILDSRCDIR)/%.lex.c: src/%.l directories
-	$(LEX) $(LFLAGS) -o $@ $<
+$(PLAY_DIR):
+	git clone --depth 1 https://github.com/yaml/yaml-play $@
 
-$(BUILDSRCDIR)/scanning.lex.c: $(BUILDINCDIR)/parsing.tab.h
-$(BUILDSRCDIR)/event.lex.c: $(BUILDINCDIR)/event.tab.h
-$(BUILD_OBJDIR)/composition.o: $(BUILDINCDIR)/event.tab.h
+$(SUITE_DIR):
+	git clone --depth 1 https://github.com/yaml/yaml-test-suite $@
 
-# Rule for compiling src/*.c to .o
-$(BUILD_OBJDIR)/%.o: src/%.c directories
-	$(CC) $(CFLAGS) -c $< -o $@
+# Bison parser generation
+$(PARSER_TAB_C) $(PARSER_TAB_H): $(SRC_DIR)/yaml.y $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h
+	$(BISON) -d -o $(PARSER_TAB_C) --defines=$(PARSER_TAB_H) $(SRC_DIR)/yaml.y
 
-# Rule for compiling generated *.c to .o
-$(BUILD_OBJDIR)/%.o: $(BUILDSRCDIR)/%.c directories
-	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-variable -Wno-error=cpp -c $< -o $@
+# Flex lexer generation
+$(LEX_YY_C): $(SRC_DIR)/lexer.l $(PARSER_TAB_H)
+	$(FLEX) -o $(LEX_YY_C) $(SRC_DIR)/lexer.l
 
-$(BINTARGET): $(OBJECTS) directories
-	$(CC) $(OBJECTS) -o $@
+$(TARGET): $(OBJS)
+	$(CC) $(OBJS) -o $(TARGET)
 
-# Testing
-check: $(BINTARGET)
-	./$< < test.yaml > /dev/null
-	@echo "✓ Basic sanity check passed"
+$(BUILD_DIR)/mrl.o: $(SRC_DIR)/mrl.c $(SRC_DIR)/mrl.h
+	$(CC) $(CFLAGS) -c $(SRC_DIR)/mrl.c -o $(BUILD_DIR)/mrl.o
 
-setup: ensure-test-failures yaml-test-suite
-	@echo "✓ Setup complete (harness prerequisites ready)"
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(SRC_DIR)/mrl.h
+	$(CC) $(CFLAGS) -c $(SRC_DIR)/main.c -o $(BUILD_DIR)/main.o
 
-ensure-test-failures:
-	@test -f TEST_FAILURES.yaml || { \
-		echo "ERROR: TEST_FAILURES.yaml is missing"; \
-		exit 1; \
-	}
+$(BUILD_DIR)/yaml_parser.o: $(SRC_DIR)/yaml_parser.c $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h $(PARSER_TAB_H)
+	$(CC) $(CFLAGS) -c $(SRC_DIR)/yaml_parser.c -o $(BUILD_DIR)/yaml_parser.o
 
-yaml-test-suite:
-	@mkdir -p build/lib
-	@if [ ! -d build/lib/yaml-test-suite/src ]; then \
-		echo "Installing yaml-test-suite into build/lib/yaml-test-suite"; \
-		if [ -d build/lib/yaml-test-suite/.git ]; then \
-			git -C build/lib/yaml-test-suite pull --ff-only; \
-		else \
-			git clone --depth 1 https://github.com/yaml/yaml-test-suite.git build/lib/yaml-test-suite; \
-		fi; \
-	fi
-	@test -d build/lib/yaml-test-suite/src || { \
-		echo "ERROR: yaml-test-suite not available at build/lib/yaml-test-suite/src"; \
-		echo "Run: git clone https://github.com/yaml/yaml-test-suite.git build/lib/yaml-test-suite"; \
-		exit 1; \
-	}
-	@ls build/lib/yaml-test-suite/src/*.yaml >/dev/null 2>&1 || { \
-		echo "ERROR: yaml-test-suite source directory exists but contains no *.yaml test files"; \
-		exit 1; \
-	}
+$(BUILD_DIR)/parser.tab.o: $(PARSER_TAB_C) $(PARSER_TAB_H) $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h
+	$(CC) $(CFLAGS) -c $(PARSER_TAB_C) -o $(BUILD_DIR)/parser.tab.o
 
-fuzz-lexer: $(BINTARGET)
-	ITERATIONS=$${ITERATIONS:-300} TIMEOUT_SEC=$${TIMEOUT_SEC:-2} ./lexer_fuzz_chaos.sh $${SEED:-1337}
+$(BUILD_DIR)/lex.yy.o: $(LEX_YY_C) $(PARSER_TAB_H)
+	$(CC) $(CFLAGS) -c $(LEX_YY_C) -o $(BUILD_DIR)/lex.yy.o
 
-fuzz-lexer-strict: $(BINTARGET)
-	ITERATIONS=$${ITERATIONS:-300} TIMEOUT_SEC=$${TIMEOUT_SEC:-2} FAIL_ON_TIMEOUT=1 ./lexer_fuzz_chaos.sh $${SEED:-1337}
-
-fuzz-lexer-replay: $(BINTARGET)
-	TIMEOUT_SEC=$${TIMEOUT_SEC:-2} MODE=replay REPLAY_PATH=$${REPLAY_PATH:-build/log/lexer_fuzz_cases} ./lexer_fuzz_chaos.sh replay
-
-fuzz-lexer-replay-strict: $(BINTARGET)
-	TIMEOUT_SEC=$${TIMEOUT_SEC:-2} FAIL_ON_TIMEOUT=1 FAIL_ON_AMBIGUOUS=1 MODE=replay REPLAY_PATH=$${REPLAY_PATH:-build/log/lexer_fuzz_cases} ./lexer_fuzz_chaos.sh replay
-
-# Cleanup
 clean:
-	@mkdir -p $(BUILD)
-	rm -rf $(BINDIR) $(BUILDSRCDIR) $(BUILDINCDIR) $(BUILD_OBJDIR) $(BUILD)/log $(BUILD)/tmp
+	rm -rf $(BUILD_DIR)
 
-.PHONY: all directories check clean lex fuzz-lexer fuzz-lexer-strict fuzz-lexer-replay fuzz-lexer-replay-strict
-.PHONY: setup ensure-test-failures yaml-test-suite
+.PHONY: all setup clean directories yaml-test-suite test-mrl
+
+test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
+	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
+	$(BUILD_DIR)/bin/test-mrl
+
+yaml-test-suite: $(SUITE_DIR) $(TARGET)
+	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
+
+# Build pawel-yaml Docker image
+docker-build-pawel: $(TARGET)
+	docker build -t pawel-yaml:latest \
+	  --build-arg BINARY=$(TARGET) \
+	  -f Dockerfile.alpine .
