@@ -144,6 +144,7 @@ StringDiagram *create_sd_gen(Generator *gen);
 StringDiagram *create_sd_comp(StringDiagram *left, StringDiagram *right);
 StringDiagram *create_sd_prod(StringDiagram *left, StringDiagram *right);
 StringDiagram *create_sd_id(int n);
+StringDiagram *clone_stringdiagram(StringDiagram *sd);
 
 /* ===== Cleanup Functions ===== */
 

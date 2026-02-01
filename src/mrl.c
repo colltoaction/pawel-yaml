@@ -129,6 +129,39 @@ StringDiagram *create_sd_id(int n) {
     return sd;
 }
 
+StringDiagram *clone_stringdiagram(StringDiagram *sd) {
+    if (!sd) return NULL;
+    StringDiagram *clone = malloc(sizeof(StringDiagram));
+    if (!clone) return NULL;
+    
+    clone->type = sd->type;
+    clone->arity = sd->arity;
+    clone->coarity = sd->coarity;
+    clone->anchor = sd->anchor ? strdup(sd->anchor) : NULL;
+    clone->tag = sd->tag ? strdup(sd->tag) : NULL;
+    clone->doc_marker = sd->doc_marker;
+    clone->doc_end_marker = sd->doc_end_marker;
+    clone->flow_style = sd->flow_style;
+    
+    switch (sd->type) {
+        case SD_GENERATOR:
+            clone->data.gen = sd->data.gen; // Generators are shared/reference counted? No, they are owned by Alphabet.
+            break;
+        case SD_COMPOSITION:
+            clone->data.op.left = clone_stringdiagram(sd->data.op.left);
+            clone->data.op.right = clone_stringdiagram(sd->data.op.right);
+            break;
+        case SD_PRODUCT:
+            clone->data.op.left = clone_stringdiagram(sd->data.op.left);
+            clone->data.op.right = clone_stringdiagram(sd->data.op.right);
+            break;
+        case SD_IDENTITY:
+            clone->data.n = sd->data.n;
+            break;
+    }
+    return clone;
+}
+
 // Cleanup Functions for RML Structures
 
 void free_generator(Generator *gen) {

@@ -57,6 +57,7 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 
 <INITIAL>^"%"[^\n]*\n               { ; }
 <INITIAL,BLOCK_CONTENT,FLOW_CONTENT>^[ \t]*(\n|\r\n)   { ; }
+<INITIAL>^[ \t]*#.*(\n|\r\n)           { ; }
 
 <INITIAL>^[ \t]+                    {
     int column = yyleng;
@@ -201,12 +202,12 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 }
 
 
-<BLOCK_CONTENT,FLOW_CONTENT>\&[a-zA-Z0-9_.\-]+ {
+<BLOCK_CONTENT,FLOW_CONTENT>\&[a-zA-Z0-9_.\-:]+ {
     yylval->sval = strdup(yytext);
     return ANCHOR;
 }
 
-<BLOCK_CONTENT,FLOW_CONTENT>\*[a-zA-Z0-9_.\-]+ {
+<BLOCK_CONTENT,FLOW_CONTENT>\*[a-zA-Z0-9_.\-:]+ {
     yylval->sval = strdup(yytext);
     return ALIAS;
 }
