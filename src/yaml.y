@@ -14,6 +14,8 @@ extern int yylex();
 %parse-param {void *yyscanner} {ParseOutput *output}
 %token-table
 %lex-param {void *yyscanner}
+%define parse.trace
+%define parse.error verbose
 
 /* Conflict Analysis & Resolution Strategy
  * 
@@ -44,6 +46,21 @@ extern int yylex();
 %destructor { 
     if ($$ != output->diagram) {
        free_stringdiagram($$); 
+    }
+} <sd>
+
+%printer { 
+    if ($$) fprintf(yyo, "\"%s\"", $$);
+    else fprintf(yyo, "<NULL>");
+} <sval>
+
+%printer { 
+    if ($$) {
+        fprintf(yyo, "<SD:%s>", 
+                $$->anchor ? $$->anchor : 
+                $$->tag ? $$->tag : "?");
+    } else {
+        fprintf(yyo, "<NULL>");
     }
 } <sd>
 
