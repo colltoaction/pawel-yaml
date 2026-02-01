@@ -97,7 +97,7 @@ clean-parser:
 clean-lexer:
 	rm -f $(LEX_YY_C) $(BUILD_DIR)/lex.yy.o
 
-.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl
+.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl tdd chaos lexing docker-build-pawel
 
 test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
 	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
@@ -105,6 +105,36 @@ test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
 
 yaml-test-suite: $(SUITE_DIR) $(TARGET)
 	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
+
+# TDD and Chaos Engineering Targets
+
+tdd: $(TARGET) $(SUITE_DIR)
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  TDD Harness - Test Discovery and Execution"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@./tdd_harness.sh discover | head -20
+	@echo "  ... ($(shell ./tdd_harness.sh discover 2>/dev/null | wc -l) total tests available)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Usage: ./tdd_harness.sh test <TEST_ID>  # Run specific test"
+	@echo ""
+
+chaos: $(TARGET) $(SUITE_DIR)
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  Parser Chaos Engineering - Grammar Rule Necessity Analysis"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@bash chaos.sh 2>&1 | tail -20
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Report: $(LOG_DIR)/chaos_dead_code.md"
+	@echo ""
+
+lexing: $(TARGET) $(SUITE_DIR)
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  Lexer Chaos Engineering - Token Rule Necessity Analysis"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@bash chaos_lexing.sh 2>&1 | tail -20
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Report: $(LOG_DIR)/CHAOS_LEXING_RESULTS.md"
+	@echo ""
 
 # Build pawel-yaml Docker image
 docker-build-pawel: $(TARGET)
