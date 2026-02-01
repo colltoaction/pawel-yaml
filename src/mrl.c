@@ -13,7 +13,7 @@ Generator *create_generator(const char *name, int arity, int coarity) {
 Generator *create_generator_from_token(int token_id, int arity, int coarity) {
     Generator *g = malloc(sizeof(Generator));
     g->token_id = token_id;
-    g->name = NULL;  /* No string allocation for token-based generators */
+    g->name = NULL;
     g->arity = arity;
     g->coarity = coarity;
     return g;
@@ -127,13 +127,11 @@ StringDiagram *create_sd_id(int n) {
     return sd;
 }
 
-/* 
- * Cleanup Functions for RML Structures
- */
+// Cleanup Functions for RML Structures
 
 void free_generator(Generator *gen) {
     if (!gen) return;
-    if (gen->name) free(gen->name);  /* Only free name if it was allocated */
+    if (gen->name) free(gen->name);
     free(gen);
 }
 
