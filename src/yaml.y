@@ -7,24 +7,6 @@
 
 extern int yylex();
 
-/* Helper: Combine multi-line scalar parts with space separator
- * Used for plain scalars that continue across lines
- * Example: "line1" + "line2" = "line1 line2"
- */
-static char *combine_scalar_parts(const char *part1, const char *part2) {
-    if (!part1 || !part2) return part1 ? strdup(part1) : (part2 ? strdup(part2) : calloc(1, 1));
-    
-    size_t len1 = strlen(part1);
-    size_t len2 = strlen(part2);
-    char *combined = malloc(len1 + len2 + 2);
-    if (!combined) return strdup(part1);
-    
-    strcpy(combined, part1);
-    combined[len1] = ' ';
-    strcpy(combined + len1 + 1, part2);
-    return combined;
-}
-
 %}
 
 %define api.pure full
@@ -34,7 +16,6 @@ static char *combine_scalar_parts(const char *part1, const char *part2) {
 %lex-param {void *yyscanner}
 %define parse.trace
 %define parse.error verbose
-%define parse.lac full
 
 /* Conflict Analysis & Resolution Strategy
  * 
@@ -115,7 +96,6 @@ static char *combine_scalar_parts(const char *part1, const char *part2) {
 %type <sd> block_node flow_node simple_node complex_node
 %type <sd> block_sequence block_mapping mapping_entry
 %type <sd> items flow_item_list mapping_items flow_mapping_list
-%type <sval> scalar_continuation scalar_continuation_lines
 
 %%
 
@@ -183,47 +163,12 @@ simple_node:
         $$ = create_sd_gen(g);
         free($1);
     }
-    | SCALAR "INDENT" scalar_continuation_lines "DEDENT" {
-        /* Multi-line plain scalar: accumulate all lines */
-        char *combined = combine_scalar_parts($1, $3);
-        Generator *g = get_or_create_generator(&output->alphabet, combined, 0, 1);
-        $$ = create_sd_gen(g);
-        free(combined);
-        free($1);
-        free($3);
-    }
     | ALIAS {
         Generator *g = get_or_create_generator(&output->alphabet, $1, 0, 1);
         $$ = create_sd_gen(g);
         free($1);
     }
     | flow_node { $$ = $1; }
-    ;
-
-scalar_continuation:
-    SCALAR {
-        $$ = $1;  /* Simple passthrough for now */
-    }
-    | SCALAR "INDENT" scalar_continuation_lines "DEDENT" {
-        /* Nested multi-line (rare but possible) */
-        char *combined = combine_scalar_parts($1, $3);
-        $$ = combined;
-        free($1);
-        free($3);
-    }
-    ;
-
-scalar_continuation_lines:
-    SCALAR {
-        $$ = $1;
-    }
-    | scalar_continuation_lines SCALAR {
-        /* Accumulate multiple continuation lines */
-        char *combined = combine_scalar_parts($1, $2);
-        $$ = combined;
-        free($1);
-        free($2);
-    }
     ;
 
 complex_node:
@@ -275,7 +220,6 @@ complex_node:
 sub_node:
     simple_node { $$ = $1; }
     | block_sequence { $$ = $1; }
-    | block_mapping { $$ = $1; }
     | "INDENT" root_node "DEDENT" { 
         /* Compose: INDENT ; root_node ; DEDENT */
         if (!output->alphabet) output->alphabet = create_alphabet();
