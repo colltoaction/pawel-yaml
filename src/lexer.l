@@ -172,10 +172,6 @@ static char* prefix_dup(char prefix, const char* s, int len) {
     BEGIN(BLOCK_SCALAR_START);
 }
 
-<BLOCK_SCALAR_START>[ \t]*#.*\n                                        { /* Comment line */}
-<BLOCK_SCALAR_START>[ \t]*\n                                           { /* Empty line, just newline */
-    yyless(yyleng - 1); /* Put back the newline */
-}
 <BLOCK_SCALAR_START>[^#\n]                                              {
     /* Invalid content on same line as block scalar indicator */
     /* This means characters other than comment or newline after | or > modifiers */
