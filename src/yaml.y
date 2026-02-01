@@ -320,6 +320,19 @@ items:
         else if ($1) $$ = $1;
         else $$ = $3;
     }
+    | items "INDENT" "-" root_node {
+        /* Handle nested sequences with indentation
+         * When a block sequence is nested with increased indentation,
+         * the lexer emits INDENT. This rule allows parser to continue
+         * recognizing items after that INDENT token.
+         * Note: This is a pragmatic workaround for lexer limitation
+         * where it cannot distinguish between "new indentation level"
+         * and "natural indentation within nested sequence context"
+         */
+        if ($1 && $4) $$ = create_sd_prod($1, $4);
+        else if ($1) $$ = $1;
+        else $$ = $4;
+    }
     ;
 
 block_mapping:
