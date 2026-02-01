@@ -23,6 +23,10 @@ PARSER_TAB_C = $(GEN_SRC_DIR)/parser.tab.c
 PARSER_TAB_H = $(GEN_INC_DIR)/parser.tab.h
 LEX_YY_C = $(GEN_SRC_DIR)/lex.yy.c
 
+# TDD & testing artifacts (preserved across clean)
+TMP_DIR = $(BUILD_DIR)/tmp
+LOG_DIR = $(BUILD_DIR)/log
+
 OBJS = $(BUILD_DIR)/mrl.o $(BUILD_DIR)/main.o $(BUILD_DIR)/yaml_parser.o \
        $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lex.yy.o
 
@@ -31,7 +35,7 @@ TARGET = $(BIN_DIR)/pawel-yaml
 all: directories $(TARGET)
 
 directories:
-	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR)
+	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR) $(TMP_DIR) $(LOG_DIR)
 
 # Initialize submodules via cloning
 setup: directories $(RUNTIMES_DIR) $(PLAY_DIR) $(SUITE_DIR)
@@ -71,10 +75,25 @@ $(BUILD_DIR)/parser.tab.o: $(PARSER_TAB_C) $(PARSER_TAB_H) $(SRC_DIR)/yaml_parse
 $(BUILD_DIR)/lex.yy.o: $(LEX_YY_C) $(PARSER_TAB_H)
 	$(CC) $(CFLAGS) -c $(LEX_YY_C) -o $(BUILD_DIR)/lex.yy.o
 
-clean:
+clean: clean-build
+
+clean-build:
+	# Remove generated code and binaries, but preserve TDD artifacts
+	rm -rf $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR)
+	rm -f $(BUILD_DIR)/*.o
+
+# Deep clean: remove all build artifacts including test tracking
+deepclean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all setup clean directories yaml-test-suite test-mrl
+# Targeted clean for specific components
+clean-parser:
+	rm -f $(PARSER_TAB_C) $(PARSER_TAB_H) $(BUILD_DIR)/parser.tab.o
+
+clean-lexer:
+	rm -f $(LEX_YY_C) $(BUILD_DIR)/lex.yy.o
+
+.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl
 
 test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
 	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
