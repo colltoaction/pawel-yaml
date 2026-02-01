@@ -3,7 +3,7 @@
 
 Generator *create_generator(const char *name, int arity, int coarity) {
     Generator *g = malloc(sizeof(Generator));
-    g->token_id = -1;  /* Not a token-based generator */
+    g->token_id = NO_TOKEN_ID;
     g->name = strdup(name);
     g->arity = arity;
     g->coarity = coarity;
@@ -23,10 +23,9 @@ Alphabet *create_alphabet() {
     Alphabet *a = malloc(sizeof(Alphabet));
     a->generators = NULL;
     a->count = 0;
-    /* Pre-create INDENT (0→1) and DEDENT (1→0) generators using string names */
-    a->indent_gen = create_generator("INDENT", 0, 1);
-    a->dedent_gen = create_generator("DEDENT", 1, 0);
-    /* Register them in the alphabet */
+    /* Pre-create INDENT (0→1) and DEDENT (1→0) generators */
+    a->indent_gen = create_generator(INDENT_NAME, 0, 1);
+    a->dedent_gen = create_generator(DEDENT_NAME, 1, 0);
     alphabet_add(a, a->indent_gen);
     alphabet_add(a, a->dedent_gen);
     return a;

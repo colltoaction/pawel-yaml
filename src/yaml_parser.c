@@ -15,8 +15,8 @@ static void print_indent(int depth) {
 
 static char *expand_tag(const char *tag) {
     if (!tag) return NULL;
-    if (strcmp(tag, "!") == 0) return "!";
-    if (strcmp(tag, "!!") == 0) return "tag:yaml.org,2002:";
+    if (strcmp(tag, YAML_TAG_SHORT) == 0) return YAML_TAG_SHORT;
+    if (strcmp(tag, YAML_TAG_RESERVED) == 0) return YAML_TAG_PREFIX;
     return (char *)tag;
 }
 
@@ -48,7 +48,7 @@ static char* unescape_double_quoted(const char* s) {
                 case 'v': res[j++] = '\v'; break;
                 case 'f': res[j++] = '\f'; break;
                 case 'r': res[j++] = '\r'; break;
-                case 'e': res[j++] = 27; break;
+                case 'e': res[j++] = ESC_CHAR; break;
                 case ' ': res[j++] = ' '; break;
                 case '"': res[j++] = '"'; break;
                 case '/': res[j++] = '/'; break;
@@ -217,7 +217,7 @@ void rml_print_events(ParseOutput *output) {
         } else {
             OUTPUT(" +DOC\n");
         }
-        visual_depth = 2;
+        visual_depth = DOCUMENT_INDENT_LEVEL;
         rml_print_recursive(sd);
         visual_depth = 0;
         if (sd->doc_end_marker) {

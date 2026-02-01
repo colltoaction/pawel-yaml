@@ -29,6 +29,16 @@
 #define STYLE_CHAR_ALIAS   '*'
 #define STYLE_CHAR_ANCHOR  '&'
 
+/* Magic constants for RML and YAML processing */
+#define NO_TOKEN_ID        (-1)
+#define ESC_CHAR           27
+#define YAML_TAG_SHORT     "!"
+#define YAML_TAG_RESERVED  "!!"
+#define YAML_TAG_PREFIX    "tag:yaml.org,2002:"
+#define DOCUMENT_INDENT_LEVEL 2
+#define INDENT_NAME        "INDENT"
+#define DEDENT_NAME        "DEDENT"
+
 
 /* Monoidal Alphabet Gamma - Definition 2.1
    Finite monoidal graph with singleton vertex set.
