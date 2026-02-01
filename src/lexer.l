@@ -24,13 +24,6 @@ static int pending_dedents = 0;
 /* Flow context tracking ([] and {}) */
 static int flow_level = 0;
 
-/* Block sequence tracking: when we're inside a block sequence, track its starting indent
- * This prevents emitting false INDENT tokens for continuation items at the same column.
- * Example: "- - x\n  - y" should not emit INDENT between x and second - (both at column 0 relative to sequence)
- */
-static int block_seq_column = -1;  /* -1 means not in block sequence, otherwise the column of the - */
-static int block_seq_depth = 0;    /* How many nested block sequences we're in */
-
 /* Block scalar accumulation (| or >) */
 static int block_indent = -1;
 static char* block_content = NULL;
@@ -93,8 +86,6 @@ static void reset_lexer_state(void) {
     indent_stack[0] = 0;
     pending_dedents = 0;
     flow_level = 0;
-    block_seq_column = -1;
-    block_seq_depth = 0;
     cleanup_block_scalar();
 }
 
@@ -138,50 +129,13 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 <INITIAL>^[ \t]*#.*(\n|\r\n)           { ; }
 
 <INITIAL>^[ \t]+                    {
-    int indent_spaces = yyleng;  /* Number of spaces at start of line */
-    int post_indent_column = yylloc->first_column + yyleng;  /* Column position AFTER the indent */
-    
-    /* Special handling when inside a block sequence:
-     * Block sequences have items marked by "- " at some column.
-     * Continuation items on the next line are indented by 2 spaces relative to the "-".
-     * This indentation is NOT a semantic level change - it's just item positioning.
-     *
-     * Example: "- - x\n  - y"
-     *   Line 1: First - is at 1-indexed column 1, second - is at column 1  
-     *   Line 2: 2 spaces at start → post_indent_column = 1 + 2 = 3
-     *   If block_seq_column = 1, then seq_item_indent = 1 + 2 = 3
-     *   Since post_indent_column (3) == seq_item_indent (3), suppress INDENT
-     */
-    
-    if (block_seq_depth > 0 && block_seq_column >= 0) {
-        int seq_item_indent = block_seq_column + 2;  /* Items are typically indented 2 spaces */
-        if (post_indent_column == seq_item_indent) {
-            /* This is sequence item indentation, not a structural level change */
-            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
-        } else if (indent_spaces > current_indent()) {
-            push_indent(indent_spaces);
-            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
-            return INDENT;
-        } else if (indent_spaces < current_indent()) {
-            while (indent_spaces < current_indent()) {
-                pop_indent();
-                pending_dedents++;
-            }
-            if (pending_dedents > 0) {
-                pending_dedents--;
-                if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
-                return DEDENT;
-            }
-            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
-        } else {
-            if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
-        }
-    } else if (indent_spaces > current_indent()) {
-        push_indent(indent_spaces);
+    int column = yyleng;
+    if (column > current_indent()) {
+        push_indent(column);
         if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
         return INDENT;
-    } else if (indent_spaces < current_indent()) {
-        while (indent_spaces < current_indent()) {
+    } else if (column < current_indent()) {
+        while (column < current_indent()) {
             pop_indent();
             pending_dedents++;
         }
@@ -190,10 +144,8 @@ static char* prefix_dup(char prefix, const char* s, int len) {
             if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
             return DEDENT;
         }
-        if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
-    } else {
-        if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
     }
+    if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
 }
 <INITIAL>^[^ \t\n\r%]               {
     yyless(0);
@@ -213,21 +165,9 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 }
 
 <BLOCK_CONTENT,FLOW_CONTENT>#.*                        { ; }
-<BLOCK_CONTENT>"- "/[ \t\n\r]             { 
-    block_seq_column = yylloc->first_column;
-    block_seq_depth++;
-    return BLOCK_SEQ_START; 
-}
-<BLOCK_CONTENT>"- "                       { 
-    block_seq_column = yylloc->first_column;
-    block_seq_depth++;
-    return BLOCK_SEQ_START; 
-}
-<BLOCK_CONTENT>"-"/(\n|\r\n|$)            { 
-    block_seq_column = yylloc->first_column;
-    block_seq_depth++;
-    return BLOCK_SEQ_START; 
-}
+<BLOCK_CONTENT>"- "/[ \t\n\r]             { return BLOCK_SEQ_START; }
+<BLOCK_CONTENT>"- "                       { return BLOCK_SEQ_START; }
+<BLOCK_CONTENT>"-"/(\n|\r\n|$)            { return BLOCK_SEQ_START; }
 <BLOCK_CONTENT>"? "                       { yyless(1); return BLOCK_KEY; }
 <BLOCK_CONTENT>"?"/[ \t\n\r]              { return BLOCK_KEY; }
 <BLOCK_CONTENT,FLOW_CONTENT>":"                      { return COLON; }
