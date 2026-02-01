@@ -1,22 +1,31 @@
-# Exclusions
 *
 !.gitignore
-!src/
-!src/**
+!./.agent/
+!./.agent/**
+!./src/
+!./src/**
 !Dockerfile.alpine
 !Makefile
 !README.md
-!TEST_FAILURES.yaml
-!test_yaml_suite.py
-!extract_test_yaml.py
-!extract_test_info.py
-!lexer_fuzz_chaos.sh
 
-# Preservation
+# Analysis and logs
+*.txt
+*.md
+!README.md
+!./.agent/TDD.md
+!./.agent/TEST_FAILURES_WORKFLOW.md
+*.log
 !build/tmp/
-!build/tmp/**
 !build/log/
-!build/log/**
+TEST_FAILURES.yaml
+THEORY_ALIGNED_SOLUTION.md
+
+# Temporary files
+tmp_*
+build/src/
+build/inc/
+build/bin/
+# Preserve test suite for TDD and chaos engineering
 !build/lib/
 !build/lib/yaml-test-suite/
 !build/lib/yaml-test-suite/**
@@ -24,17 +33,6 @@
 !build/lib/yaml-runtimes/**
 !build/lib/yaml-play/
 !build/lib/yaml-play/**
-
-# Temporary files
-.agent/
-tmp_*
-.agent/
-.agent/**
-build/src/
-build/inc/
-build/bin/
-
-# Local clones (redundant since they are in build/lib)
 yaml-play/
 yaml-reference-parser/
 yaml-runtimes/
