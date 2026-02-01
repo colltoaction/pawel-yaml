@@ -47,25 +47,69 @@ void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
                 printf("  =ALI %s\n", g->value);
                 break;
             case GEN_TYPE_SEQ_START:
-                printf("  +SEQ\n");
+                if (g->anchor || g->tag) {
+                    printf("  +SEQ");
+                    if (g->anchor) printf(" %s", g->anchor);
+                    if (g->tag) {
+                        const char *tag_val = g->tag;
+                        if (strcmp(tag_val, "!!seq") == 0) tag_val = "tag:yaml.org,2002:seq";
+                        printf(" <%s>", tag_val);
+                    }
+                    printf("\n");
+                } else {
+                    printf("  +SEQ\n");
+                }
                 break;
             case GEN_TYPE_SEQ_END:
                 printf("  -SEQ\n");
                 break;
             case GEN_TYPE_MAP_START:
-                printf("  +MAP\n");
+                if (g->anchor || g->tag) {
+                    printf("  +MAP");
+                    if (g->anchor) printf(" %s", g->anchor);
+                    if (g->tag) {
+                        const char *tag_val = g->tag;
+                        if (strcmp(tag_val, "!!map") == 0) tag_val = "tag:yaml.org,2002:map";
+                        printf(" <%s>", tag_val);
+                    }
+                    printf("\n");
+                } else {
+                    printf("  +MAP\n");
+                }
                 break;
             case GEN_TYPE_MAP_END:
                 printf("  -MAP\n");
                 break;
             case GEN_TYPE_FLOW_SEQ_START:
-                printf("  +SEQ []\n");
+                if (g->anchor || g->tag) {
+                    printf("  +SEQ []");
+                    if (g->anchor) printf(" %s", g->anchor);
+                    if (g->tag) {
+                        const char *tag_val = g->tag;
+                        if (strcmp(tag_val, "!!seq") == 0) tag_val = "tag:yaml.org,2002:seq";
+                        printf(" <%s>", tag_val);
+                    }
+                    printf("\n");
+                } else {
+                    printf("  +SEQ []\n");
+                }
                 break;
             case GEN_TYPE_FLOW_SEQ_END:
                 printf("  -SEQ\n");
                 break;
             case GEN_TYPE_FLOW_MAP_START:
-                printf("  +MAP {}\n");
+                if (g->anchor || g->tag) {
+                    printf("  +MAP {}");
+                    if (g->anchor) printf(" %s", g->anchor);
+                    if (g->tag) {
+                        const char *tag_val = g->tag;
+                        if (strcmp(tag_val, "!!map") == 0) tag_val = "tag:yaml.org,2002:map";
+                        printf(" <%s>", tag_val);
+                    }
+                    printf("\n");
+                } else {
+                    printf("  +MAP {}\n");
+                }
                 break;
             case GEN_TYPE_FLOW_MAP_END:
                 printf("  -MAP\n");

@@ -115,5 +115,7 @@ StringDiagram *sd_generator(Generator *g);
 StringDiagram *sd_compose(StringDiagram *f, StringDiagram *g);
 StringDiagram *sd_tensor(StringDiagram *f, StringDiagram *g);
 void sd_free(StringDiagram *sd);
+void sd_set_tag(StringDiagram *sd, const char *tag);
+void sd_set_anchor(StringDiagram *sd, const char *anchor);
 
 #endif /* MRL_H */

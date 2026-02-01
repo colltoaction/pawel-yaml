@@ -153,3 +153,25 @@ void sd_free(StringDiagram *sd) {
     /* Generators are owned by Alphabet, do not free sd->data.gen here */
     free(sd);
 }
+
+void sd_set_tag(StringDiagram *sd, const char *tag) {
+    if (!sd) return;
+    if (sd->type == SD_TYPE_GENERATOR) {
+        if (sd->data.gen->tag) free(sd->data.gen->tag);
+        sd->data.gen->tag = strdup(tag);
+    } else {
+        /* Apply to the first generator in the composition/tensor */
+        sd_set_tag(sd->data.binary.first, tag);
+    }
+}
+
+void sd_set_anchor(StringDiagram *sd, const char *anchor) {
+    if (!sd) return;
+    if (sd->type == SD_TYPE_GENERATOR) {
+        if (sd->data.gen->anchor) free(sd->data.gen->anchor);
+        sd->data.gen->anchor = strdup(anchor);
+    } else {
+        /* Apply to the first generator in the composition/tensor */
+        sd_set_anchor(sd->data.binary.first, anchor);
+    }
+}
