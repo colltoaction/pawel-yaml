@@ -53,7 +53,9 @@ stream:
 
 document:
     DOC_START node { $$ = $2; }
+    | DOC_START node DOC_END { $$ = $2; }
     | node { $$ = $1; }
+    | node DOC_END { $$ = $1; }
     ;
 
 node:
