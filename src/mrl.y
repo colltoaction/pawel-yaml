@@ -137,12 +137,8 @@
 %token <string> TAG
 %token <string> ANCHOR
 %token <string> ALIAS
-%token YAML_DIRECTIVE
-%token DOC_START
-%token BULLET
-%token COLON
-%token QUESTION
-%token LBRACK RBRACK LBRACE RBRACE COMMA
+%token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET COLON QUESTION
+%token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
 
 %type <sd> document_list
 %type <sd> document
@@ -157,18 +153,18 @@
 %%
 
 stream:
-    document_list {
-        ctx->diagram = $1;
+    document_list[list] {
+        ctx->diagram = $list;
     }
     ;
 
 document_list:
-    document { $$ = $1; }
-    | document_list document { $$ = sd_compose($1, $2); }
+    document[doc] { $$ = $doc; }
+    | document_list[list] document[doc] { $$ = sd_compose($list, $doc); }
     ;
 
 document:
-    nodes {
+    nodes[n] {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_DOC_START; gs->value = NULL; gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
@@ -181,9 +177,9 @@ document:
         ctx->alphabet->generators[ctx->alphabet->count++] = gs;
         ctx->alphabet->generators[ctx->alphabet->count++] = ge;
 
-        $$ = sd_compose(sd_generator(gs), sd_compose($1, sd_generator(ge)));
+        $$ = sd_compose(sd_generator(gs), sd_compose($n, sd_generator(ge)));
     }
-    | DOC_START nodes {
+    | DOC_START nodes[n] {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
@@ -196,9 +192,9 @@ document:
         ctx->alphabet->generators[ctx->alphabet->count++] = gs;
         ctx->alphabet->generators[ctx->alphabet->count++] = ge;
 
-        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
+        $$ = sd_compose(sd_generator(gs), sd_compose($n, sd_generator(ge)));
     }
-    | YAML_DIRECTIVE DOC_START nodes {
+    | YAML_DIRECTIVE DOC_START nodes[n] {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
@@ -211,7 +207,7 @@ document:
         ctx->alphabet->generators[ctx->alphabet->count++] = gs;
         ctx->alphabet->generators[ctx->alphabet->count++] = ge;
 
-        $$ = sd_compose(sd_generator(gs), sd_compose($3, sd_generator(ge)));
+        $$ = sd_compose(sd_generator(gs), sd_compose($n, sd_generator(ge)));
     }
     ;
 
@@ -220,76 +216,76 @@ nodes:
     ;
 
 node:
-    node_body { $$ = $1; }
-    | TAG node_body {
-        sd_set_tag($2, $1);
-        $$ = $2;
-        free($1);
+    node_body[body] { $$ = $body; }
+    | TAG[t] node_body[body] {
+        sd_set_tag($body, $t);
+        $$ = $body;
+        free($t);
     }
-    | ANCHOR node_body {
-        sd_set_anchor($2, $1);
-        $$ = $2;
-        free($1);
+    | ANCHOR[a] node_body[body] {
+        sd_set_anchor($body, $a);
+        $$ = $body;
+        free($a);
     }
-    | ANCHOR TAG node_body {
-        sd_set_anchor($3, $1);
-        sd_set_tag($3, $2);
-        $$ = $3;
-        free($1); free($2);
+    | ANCHOR[a] TAG[t] node_body[body] {
+        sd_set_anchor($body, $a);
+        sd_set_tag($body, $t);
+        $$ = $body;
+        free($a); free($t);
     }
-    | TAG ANCHOR node_body {
-        sd_set_tag($3, $1);
-        sd_set_anchor($3, $2);
-        $$ = $3;
-        free($1); free($2);
+    | TAG[t] ANCHOR[a] node_body[body] {
+        sd_set_tag($body, $t);
+        sd_set_anchor($body, $a);
+        $$ = $body;
+        free($t); free($a);
     }
     ;
 
 node_body:
     scalar { $$ = $1; }
-    | ALIAS {
-        alphabet_add_alias(ctx->alphabet, $1);
+    | ALIAS[a] {
+        alphabet_add_alias(ctx->alphabet, $a);
         Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
         $$ = sd_generator(g);
-        free($1);
+        free($a);
     }
-    | seq { $$ = $1; }
-    | map { $$ = $1; }
-    | flow_seq { $$ = $1; }
-    | flow_map { $$ = $1; }
+    | seq[s] { $$ = $s; }
+    | map[m] { $$ = $m; }
+    | flow_seq[fs] { $$ = $fs; }
+    | flow_map[fm] { $$ = $fm; }
     ;
 
 scalar:
-    SCALAR {
-        alphabet_add_scalar(ctx->alphabet, $1);
+    SCALAR[s] {
+        alphabet_add_scalar(ctx->alphabet, $s);
         Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
         $$ = sd_generator(g);
-        free($1);
+        free($s);
     }
-    | QSCALAR {
-        alphabet_add_quoted_scalar(ctx->alphabet, $1, '"');
+    | QSCALAR[qs] {
+        alphabet_add_quoted_scalar(ctx->alphabet, $qs, '"');
         Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
         $$ = sd_generator(g);
-        free($1);
+        free($qs);
     }
-    | SSCALAR {
-        alphabet_add_quoted_scalar(ctx->alphabet, $1, '\'');
+    | SSCALAR[ss] {
+        alphabet_add_quoted_scalar(ctx->alphabet, $ss, '\'');
         Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
         $$ = sd_generator(g);
-        free($1);
+        free($ss);
     }
-    | BSCALAR {
+    | BSCALAR[bs] {
         /* BSCALAR value starts with indicator char | or > */
-        char indicator = $1[0];
-        alphabet_add_quoted_scalar(ctx->alphabet, $1 + 1, indicator);
+        char indicator = $bs[0];
+        alphabet_add_quoted_scalar(ctx->alphabet, $bs + 1, indicator);
         Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
         $$ = sd_generator(g);
-        free($1);
+        free($bs);
     }
     ;
 
 seq:
-    seq_entries {
+    seq_entries[entries] {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_SEQ_START;
         gs->value = NULL;
@@ -307,21 +303,21 @@ seq:
         StringDiagram *start = sd_generator(gs);
         StringDiagram *end = sd_generator(ge);
         
-        $$ = sd_compose(start, sd_compose($1, end));
+        $$ = sd_compose(start, sd_compose($entries, end));
     }
     ;
 
 seq_entries:
-    seq_entry { $$ = $1; }
-    | seq_entries seq_entry { $$ = sd_compose($1, $2); }
+    seq_entry[entry] { $$ = $entry; }
+    | seq_entries[entries] seq_entry[entry] { $$ = sd_compose($entries, $entry); }
     ;
 
 seq_entry:
-    BULLET node { $$ = $2; }
+    BULLET node[n] { $$ = $n; }
     ;
 
 map:
-    map_entries {
+    map_entries[entries] {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_MAP_START;
         gs->value = NULL;
@@ -339,18 +335,18 @@ map:
         StringDiagram *start = sd_generator(gs);
         StringDiagram *end = sd_generator(ge);
         
-        $$ = sd_compose(start, sd_compose($1, end));
+        $$ = sd_compose(start, sd_compose($entries, end));
     }
     ;
 
 map_entries:
-    map_entry { $$ = $1; }
-    | map_entries map_entry { $$ = sd_compose($1, $2); }
+    map_entry[entry] { $$ = $entry; }
+    | map_entries[entries] map_entry[entry] { $$ = sd_compose($entries, $entry); }
     ;
 
 map_entry:
-    node COLON node { $$ = sd_compose($1, $3); }
-    | QUESTION node COLON node { $$ = sd_compose($2, $4); }
+    node[key] COLON node[val] { $$ = sd_compose($key, $val); }
+    | QUESTION node[key] COLON node[val] { $$ = sd_compose($key, $val); }
     ;
 
 flow_seq:
@@ -369,7 +365,7 @@ flow_seq:
 
         $$ = sd_compose(sd_generator(gs), sd_generator(ge));
     }
-    | LBRACK flow_seq_entries RBRACK {
+    | LBRACK flow_seq_entries[entries] RBRACK {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_FLOW_SEQ_START; gs->value = NULL; gs->tag = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
@@ -382,18 +378,18 @@ flow_seq:
         ctx->alphabet->generators[ctx->alphabet->count++] = gs;
         ctx->alphabet->generators[ctx->alphabet->count++] = ge;
 
-        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
+        $$ = sd_compose(sd_generator(gs), sd_compose($entries, sd_generator(ge)));
     }
     ;
 
 flow_seq_entries:
-    flow_node { $$ = $1; }
-    | flow_seq_entries COMMA flow_node { $$ = sd_compose($1, $3); }
-    | flow_seq_entries COMMA { $$ = $1; }
+    flow_node[n] { $$ = $n; }
+    | flow_seq_entries[entries] COMMA flow_node[n] { $$ = sd_compose($entries, $n); }
+    | flow_seq_entries[entries] COMMA { $$ = $entries; }
     ;
 
 flow_map:
-    LBRACE flow_map_entries RBRACE {
+    LBRACE flow_map_entries[entries] RBRACE {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_FLOW_MAP_START; gs->value = NULL; gs->tag = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
@@ -406,17 +402,17 @@ flow_map:
         ctx->alphabet->generators[ctx->alphabet->count++] = gs;
         ctx->alphabet->generators[ctx->alphabet->count++] = ge;
 
-        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
+        $$ = sd_compose(sd_generator(gs), sd_compose($entries, sd_generator(ge)));
     }
     ;
 
 flow_map_entries:
-    node COLON node { $$ = sd_compose($1, $3); }
-    | flow_map_entries COMMA node COLON node { $$ = sd_compose($1, sd_compose($3, $5)); }
+    node[key] COLON node[val] { $$ = sd_compose($key, $val); }
+    | flow_map_entries[entries] COMMA node[key] COLON node[val] { $$ = sd_compose($entries, sd_compose($key, $val)); }
     ;
 
 flow_node:
-    node { $$ = $1; }
+    node[n] { $$ = $n; }
     ;
 
 %%

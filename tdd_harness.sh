@@ -45,7 +45,7 @@ run_test() {
     
     local output=$("$PARSER" < "$test_file" 2>&1) || true
     
-    if echo "$output" | grep -qi "parse failed\|syntax error\|error"; then
+    if echo "$output" | grep -qi "parse failed\|syntax error\|error\|ambiguous"; then
         if [ "$should_fail" = "true" ]; then
             echo -e "${GREEN}PASS${NC}: $test_id"
             return 0

@@ -54,6 +54,8 @@ The project has transitioned to a **Single-Module Design** where the grammar def
 - **Location Tracking**: Use `%locations` to provide column-accurate error messages.
 - **Detailed Errors**: Use `%define parse.error detailed` to suggest expected tokens on failure.
 - **Conflict Management**: Use `%expect` and `%expect-rr` to document and lock in intentional ambiguities.
+- **Left Recursion**: Prefer `list: list item` (left-recursive) over `list: item list`. This bounds stack usage to $O(1)$ relative to list length.
+- **Naming Conventions**: Use `UPPERCASE` for tokens (terminals) and `lowercase` for non-terminals.
 
 ---
 
