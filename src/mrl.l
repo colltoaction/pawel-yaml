@@ -59,9 +59,9 @@ NSCAL [a-zA-Z0-9]
 
 "%YAML 1.2"      { return YAML_DIRECTIVE; }
 "---"            { return DOC_START; }
-"-"([ ]+|\n)     { return BULLET; }
-":"([ ]+|\n)     { return COLON; }
-"?"([ ]+|\n)     { return QUESTION; }
+"-"/[ \t\n]      { return BULLET; }
+":"/[ \t\n]      { return COLON; }
+"?"/[ \t\n]      { return QUESTION; }
 "!!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+      { yylval->string = strdup(yytext); return TAG; }
 "&"{NSCAL}+      { yylval->string = strdup(yytext); return ANCHOR; }
@@ -146,22 +146,11 @@ NSCAL [a-zA-Z0-9]
 }
 
 "#".*            { /* ignore comments */ }
-{NSCAL}([{NSCAL} ]*{NSCAL})?(\n[ \t]+{NSCAL}([{NSCAL} ]*{NSCAL})?)* {
-    /* Multi-line plain scalar: replace newlines and following spaces with a single space */
-    char *src = yytext;
-    char *dest = malloc(strlen(yytext) + 1);
-    char *dptr = dest;
-    while (*src) {
-        if (*src == '\n') {
-            *dptr++ = ' ';
-            src++;
-            while (*src == ' ' || *src == '\t') src++;
-        } else {
-            *dptr++ = *src++;
-        }
-    }
-    *dptr = '\0';
-    yylval->string = dest;
+[a-zA-Z0-9][a-zA-Z0-9 ]* {
+    /* Trim trailing spaces from plain scalar */
+    char *end = yytext + yyleng - 1;
+    while (end > yytext && (*end == ' ' || *end == '\t')) *end-- = '\0';
+    yylval->string = strdup(yytext);
     return SCALAR;
 }
 [ \t\n\r]+       { /* skip whitespace */ }

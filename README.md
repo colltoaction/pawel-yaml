@@ -29,6 +29,23 @@ This project implements the theoretical framework of Regular Monoidal Languages 
   - `COLON_ADJ` token added to distinguish between separator colons (`: `) and content colons (`:x`) in flow context.
   - Phase-based lexer (`INITIAL`, `BLOCK`, `FLOW`) to manage indentation context.
 
+## Architecture
+
+The project follows the **Regular Monoidal Languages (RML)** theory.
+
+### Core Files
+
+*   `src/mrl.y`: Bison grammar file containing the YAML grammar and the RML implementation (Alphabet, Grammar, StringDiagram).
+*   `src/mrl.l`: Flex lexer file for the YAML monoidal alphabet.
+*   `src/pawel-yaml.c`: Minimal driver for the parser.
+
+### CLI Usage
+
+The `pawel-yaml` binary supports the following flags:
+
+*   `-dump-tokens`: Lexes the input from stdin and prints the tokens to stdout. Useful for debugging the alphabet.
+*   `-ast-dump`: Parses the input and dumps the StringDiagram (as a YAML event stream). This is the default mode.
+
 ## Testing
 - **Suite**: Validated against complete `yaml-test-suite`.
 - **Pass Rate**: 100% (351/351 passed).

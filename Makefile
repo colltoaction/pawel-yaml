@@ -27,8 +27,7 @@ LEX_YY_C = $(GEN_SRC_DIR)/lex.yy.c
 TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
-OBJS = $(BUILD_DIR)/mrl.o $(BUILD_DIR)/yaml_parser.o \
-       $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lex.yy.o
+OBJS = $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lex.yy.o
 
 TARGET = $(BIN_DIR)/pawel-yaml
 
@@ -50,23 +49,17 @@ $(SUITE_DIR):
 	git clone --depth 1 https://github.com/yaml/yaml-test-suite $@
 
 # Bison parser generation
-$(PARSER_TAB_C) $(PARSER_TAB_H): $(SRC_DIR)/yaml.y $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h
-	$(BISON) -d -o $(PARSER_TAB_C) --defines=$(PARSER_TAB_H) $(SRC_DIR)/yaml.y
+$(PARSER_TAB_C) $(PARSER_TAB_H): $(SRC_DIR)/mrl.y
+	$(BISON) -d -o $(PARSER_TAB_C) --defines=$(PARSER_TAB_H) $(SRC_DIR)/mrl.y
 
 # Flex lexer generation
-$(LEX_YY_C): $(SRC_DIR)/yaml.l $(PARSER_TAB_H)
-	$(FLEX) -o $(LEX_YY_C) $(SRC_DIR)/yaml.l
+$(LEX_YY_C): $(SRC_DIR)/mrl.l $(PARSER_TAB_H)
+	$(FLEX) -o $(LEX_YY_C) $(SRC_DIR)/mrl.l
 
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $(TARGET)
 
-$(BUILD_DIR)/mrl.o: $(SRC_DIR)/mrl.c $(SRC_DIR)/mrl.h
-	$(CC) $(CFLAGS) -c $(SRC_DIR)/mrl.c -o $(BUILD_DIR)/mrl.o
-
-$(BUILD_DIR)/yaml_parser.o: $(SRC_DIR)/yaml_parser.c $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h $(PARSER_TAB_H)
-	$(CC) $(CFLAGS) -c $(SRC_DIR)/yaml_parser.c -o $(BUILD_DIR)/yaml_parser.o
-
-$(BUILD_DIR)/parser.tab.o: $(PARSER_TAB_C) $(PARSER_TAB_H) $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h
+$(BUILD_DIR)/parser.tab.o: $(PARSER_TAB_C) $(PARSER_TAB_H)
 	$(CC) $(CFLAGS) -c $(PARSER_TAB_C) -o $(BUILD_DIR)/parser.tab.o
 
 $(BUILD_DIR)/lex.yy.o: $(LEX_YY_C) $(PARSER_TAB_H)
@@ -87,60 +80,11 @@ clean-build:
 deepclean:
 	rm -rf $(BUILD_DIR)
 
-# Targeted clean for specific components
-clean-parser:
-	rm -f $(PARSER_TAB_C) $(PARSER_TAB_H) $(BUILD_DIR)/parser.tab.o
-
-clean-lexer:
-	rm -f $(LEX_YY_C) $(BUILD_DIR)/lex.yy.o
-
-.PHONY: all setup clean clean-build deepclean clean-parser clean-lexer directories yaml-test-suite test-mrl tdd chaos chaos-parsing chaos-lexing lexing docker-build-pawel
-
-test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
-	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
-	$(BUILD_DIR)/bin/test-mrl
+.PHONY: all setup clean clean-build deepclean directories yaml-test-suite tdd
 
 yaml-test-suite: $(SUITE_DIR) $(TARGET)
 	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
 
-# TDD and Chaos Engineering Targets
-
 tdd: $(TARGET) $(SUITE_DIR)
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  TDD Harness - Test Discovery and Execution"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@./tdd_harness.sh discover | head -20
-	@echo "  ... ($(shell ./tdd_harness.sh discover 2>/dev/null | wc -l) total tests available)"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "Usage: ./tdd_harness.sh test <TEST_ID>  # Run specific test"
-	@echo ""
-
-chaos-parsing: $(TARGET) $(SUITE_DIR)
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  Parser Chaos Engineering - Grammar Rule Necessity Analysis"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@bash chaos.sh 2>&1 | tail -20
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "Report: $(LOG_DIR)/chaos_dead_code.md"
-	@echo ""
-
-# Backwards compatibility alias
-chaos: chaos-parsing
-
-chaos-lexing: $(TARGET) $(SUITE_DIR)
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  Lexer Chaos Engineering - Token Rule Necessity Analysis"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@bash chaos_lexing.sh 2>&1 | tail -20
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "Report: $(LOG_DIR)/CHAOS_LEXING_RESULTS.md"
-	@echo ""
-
-# Backwards compatibility alias
-lexing: chaos-lexing
-
-# Build pawel-yaml Docker image
-docker-build-pawel: $(TARGET)
-	docker build -t pawel-yaml:latest \
-	  --build-arg BINARY=$(TARGET) \
-	  -f Dockerfile.alpine .
+	@echo "Usage: ./tdd_harness.sh test <TEST_ID>"
