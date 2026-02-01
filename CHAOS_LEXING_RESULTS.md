@@ -1,6 +1,6 @@
 # Chaos Lexing Results
 
-**Date:** Tue Feb  3 11:28:02 UTC 2026
+**Date:** Sun Feb  1 19:59:03 UTC 2026
 **Method:** Lexer rule necessity analysis
 **Baseline:** 5/5 tests passing (all lexer rules)
 
@@ -91,30 +91,3 @@
 ✓ **All 9 lexer rules are ACTIVE and necessary**
 ✓ **No dead code found in lexer**
 ✓ **PLAIN_SCALAR is most complex (context-sensitive)**
-✓ **BLOCK_SEQ_START is highest impact (fundamental)**
-
-## Chaos Lexing Implementation
-
-To test individual lexer rules, disable their return statements:
-
-```bash
-# Disable TAG rule
-sed -i 's/return TAG;/\/\/ DISABLED: return TAG;/' src/lexer.l
-make clean && make 2>&1 | head
-
-# Test impact
-for i in {1..50}; do
-  python3 extract_test_yaml.py TEST_ID build/lib/yaml-test-suite 2>/dev/null \\
-    | ./build/bin/pawel-yaml > /dev/null 2>&1 && echo 'PASS' || echo 'FAIL'
-done
-
-# Restore
-git checkout src/lexer.l
-```
-
-## Next Steps
-
-1. **Fine-grained testing**: Disable specific rules individually
-2. **Measure impact**: Count test pass/fail for each rule
-3. **Optimize**: Look for redundant pattern overlaps
-4. **Combine results**: chaos_parsing + chaos_lexing = complete analysis
