@@ -53,15 +53,13 @@ static bool gen_name_matches_token(Generator *g, int token) {
     return (token_name && strcmp(g->name, token_name) == 0);
 }
 
-/* Lookup table for escape sequence handling */
-static const struct {
-    char escape_char;
-    char unescaped_char;
-} escape_map[] = {
-    {'0', '\0'}, {'a', '\a'}, {'b', '\b'}, {'t', '\t'},
-    {'n', '\n'}, {'v', '\v'}, {'f', '\f'}, {'r', '\r'},
-    {'e', ESC_CHAR}, {' ', ' '}, {'"', '"'}, {'/', '/'},
-    {'\\', '\\'}, {0, 0}  /* Sentinel */
+/* Lookup table for escape sequence handling - character based for O(1) lookup */
+static const unsigned char escape_lut[256] = {
+    ['0'] = '\0', ['a'] = '\a', ['b'] = '\b', ['t'] = '\t',
+    ['n'] = '\n', ['v'] = '\v', ['f'] = '\f', ['r'] = '\r',
+    ['e'] = ESC_CHAR, [' '] = ' ', ['"'] = '"', ['/'] = '/',
+    ['\\'] = '\\',
+    /* All other indices default to 0, which is handled specially */
 };
 
 static char* unescape_double_quoted(const char* s) {
@@ -70,15 +68,17 @@ static char* unescape_double_quoted(const char* s) {
     while (s[i]) {
         if (s[i] == '\\' && s[i+1]) {
             i++;
-            char unescaped = s[i];
-            /* Look up escape sequence in table */
-            for (int k = 0; escape_map[k].escape_char != 0; k++) {
-                if (escape_map[k].escape_char == s[i]) {
-                    unescaped = escape_map[k].unescaped_char;
-                    break;
-                }
+            unsigned char esc_char = (unsigned char)s[i];
+            /* Direct array lookup for escape sequences */
+            if (esc_char < 256 && escape_lut[esc_char] != 0) {
+                res[j++] = (char)escape_lut[esc_char];
+            } else if (esc_char == '0') {
+                /* Special case: '0' maps to null character */
+                res[j++] = '\0';
+            } else {
+                /* Unknown escape: keep the character as-is */
+                res[j++] = s[i];
             }
-            res[j++] = unescaped;
         } else {
             res[j++] = s[i];
         }
