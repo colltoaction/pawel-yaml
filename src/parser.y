@@ -101,7 +101,16 @@ block_node:
     block_sequence
     | block_mapping
     | INDENT node DEDENT {
-        $$ = $2;
+        /* Compose: INDENT ; node ; DEDENT */
+        if (!output->alphabet) output->alphabet = create_alphabet();
+        StringDiagram *inner_comp = create_sd_comp(output->alphabet->indent_gen ? 
+                                                    create_sd_gen(output->alphabet->indent_gen) : 
+                                                    $2, 
+                                                    $2);
+        $$ = create_sd_comp(inner_comp, 
+                           output->alphabet->dedent_gen ? 
+                           create_sd_gen(output->alphabet->dedent_gen) : 
+                           NULL);
     }
     ;
 

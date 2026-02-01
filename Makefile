@@ -37,13 +37,13 @@ directories:
 setup: directories $(RUNTIMES_DIR) $(PLAY_DIR) $(SUITE_DIR)
 
 $(RUNTIMES_DIR):
-	git clone https://github.com/yaml/yaml-runtimes $(RUNTIMES_DIR)
+	git clone --depth 1 https://github.com/yaml/yaml-runtimes $@
 
 $(PLAY_DIR):
-	git clone https://github.com/yaml/yaml-play $(PLAY_DIR)
+	git clone --depth 1 https://github.com/yaml/yaml-play $@
 
 $(SUITE_DIR):
-	git clone https://github.com/yaml/yaml-test-suite $(SUITE_DIR)
+	git clone --depth 1 https://github.com/yaml/yaml-test-suite $@
 
 # Bison parser generation
 $(PARSER_TAB_C) $(PARSER_TAB_H): $(SRC_DIR)/yaml.y $(SRC_DIR)/yaml_parser.h $(SRC_DIR)/mrl.h
@@ -80,7 +80,7 @@ test-mrl: directories $(BUILD_DIR)/mrl.o tests/test_mrl.c
 	$(CC) $(CFLAGS) $(BUILD_DIR)/mrl.o tests/test_mrl.c -o $(BUILD_DIR)/bin/test-mrl
 	$(BUILD_DIR)/bin/test-mrl
 
-yaml-test-suite: $(TARGET)
+yaml-test-suite: $(SUITE_DIR) $(TARGET)
 	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
 
 # Build pawel-yaml Docker image

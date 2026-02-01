@@ -3,6 +3,7 @@
 #include <string.h>
 #include "yaml_parser.h"
 #include "mrl.h"
+#include "parser.tab.h"  /* Get token IDs from Bison */
 
 static int visual_depth = 0;
 
@@ -31,14 +32,6 @@ static void print_escaped(const char *s) {
 }
 
 extern const char *rml_token_name(int tok);
-
-/* Bison token values normally start at 258 */
-#define STYLE_ALIAS 274
-#define STYLE_ANCHOR 275
-#define SEQ 267
-#define MAP 268
-#define STYLE_DQUOTE 270
-#define STYLE_SQUOTE 271
 
 static char* unescape_double_quoted(const char* s) {
     char* res = malloc(strlen(s) + 1);
