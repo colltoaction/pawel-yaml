@@ -16,6 +16,7 @@ extern int yylex();
 %lex-param {void *yyscanner}
 %define parse.trace
 %define parse.error verbose
+%define parse.lac full
 
 /* Conflict Analysis & Resolution Strategy
  * 
