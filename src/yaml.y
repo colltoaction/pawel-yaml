@@ -275,6 +275,7 @@ complex_node:
 sub_node:
     simple_node { $$ = $1; }
     | block_sequence { $$ = $1; }
+    | block_mapping { $$ = $1; }
     | "INDENT" root_node "DEDENT" { 
         /* Compose: INDENT ; root_node ; DEDENT */
         if (!output->alphabet) output->alphabet = create_alphabet();

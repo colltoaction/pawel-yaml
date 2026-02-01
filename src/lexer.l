@@ -168,6 +168,7 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 <BLOCK_CONTENT>"- "/[ \t\n\r]             { return BLOCK_SEQ_START; }
 <BLOCK_CONTENT>"- "                       { return BLOCK_SEQ_START; }
 <BLOCK_CONTENT>"-"/(\n|\r\n|$)            { return BLOCK_SEQ_START; }
+<BLOCK_CONTENT>"? "                       { yyless(1); return BLOCK_KEY; }
 <BLOCK_CONTENT>"?"/[ \t\n\r]              { return BLOCK_KEY; }
 <BLOCK_CONTENT,FLOW_CONTENT>":"                      { return COLON; }
 <BLOCK_CONTENT,FLOW_CONTENT>"["           { 
