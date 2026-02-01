@@ -33,28 +33,32 @@ static void print_escaped(const char *s) {
 
 extern const char *rml_token_name(int tok);
 
+/* Lookup table for escape sequence handling */
+static const struct {
+    char escape_char;
+    char unescaped_char;
+} escape_map[] = {
+    {'0', '\0'}, {'a', '\a'}, {'b', '\b'}, {'t', '\t'},
+    {'n', '\n'}, {'v', '\v'}, {'f', '\f'}, {'r', '\r'},
+    {'e', ESC_CHAR}, {' ', ' '}, {'"', '"'}, {'/', '/'},
+    {'\\', '\\'}, {0, 0}  /* Sentinel */
+};
+
 static char* unescape_double_quoted(const char* s) {
     char* res = malloc(strlen(s) + 1);
     int i = 0, j = 0;
     while (s[i]) {
         if (s[i] == '\\' && s[i+1]) {
             i++;
-            switch (s[i]) {
-                case '0': res[j++] = '\0'; break;
-                case 'a': res[j++] = '\a'; break;
-                case 'b': res[j++] = '\b'; break;
-                case 't': res[j++] = '\t'; break;
-                case 'n': res[j++] = '\n'; break;
-                case 'v': res[j++] = '\v'; break;
-                case 'f': res[j++] = '\f'; break;
-                case 'r': res[j++] = '\r'; break;
-                case 'e': res[j++] = ESC_CHAR; break;
-                case ' ': res[j++] = ' '; break;
-                case '"': res[j++] = '"'; break;
-                case '/': res[j++] = '/'; break;
-                case '\\': res[j++] = '\\'; break;
-                default: res[j++] = s[i]; break;
+            char unescaped = s[i];
+            /* Look up escape sequence in table */
+            for (int k = 0; escape_map[k].escape_char != 0; k++) {
+                if (escape_map[k].escape_char == s[i]) {
+                    unescaped = escape_map[k].unescaped_char;
+                    break;
+                }
             }
+            res[j++] = unescaped;
         } else {
             res[j++] = s[i];
         }
