@@ -153,7 +153,8 @@ static char* prefix_dup(char prefix, const char* s, int len) {
     return SCALAR;
 }
 
-<BLOCK_CONTENT>[|>][\-+]?                 {
+<BLOCK_CONTENT>[|>][0-9]?[\-+]?|[|>][\-+]?[0-9]? {
+    /* Block scalar: | or > with optional indentation indicator (0-9) and/or chomping indicator (-/+) */
     CTX->block_type = yytext[0];
     CTX->block_indent = -1;
     CTX->block_content = malloc(1024);
