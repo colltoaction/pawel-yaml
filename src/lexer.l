@@ -207,6 +207,8 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 }
 
 <BLOCK_CONTENT,FLOW_CONTENT>#.*                        { ; }
+^"---"                                  { BEGIN(BLOCK_CONTENT); return DOC_START; }
+^"..."                                  { return DOC_END; }
 <BLOCK_CONTENT>"- "/[ \t\n\r]             { last_seq_column = yylloc->first_column; return BLOCK_SEQ_START; }
 <BLOCK_CONTENT>"- "                       { last_seq_column = yylloc->first_column; return BLOCK_SEQ_START; }
 <BLOCK_CONTENT>"-"/(\n|\r\n|$)            { last_seq_column = yylloc->first_column; return BLOCK_SEQ_START; }
