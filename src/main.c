@@ -18,33 +18,17 @@ void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
     if (sd->type == SD_TYPE_GENERATOR) {
         Generator *g = sd->data.gen;
         switch (g->type) {
-            case GEN_TYPE_SCALAR: {
-                const char *prefix = "";
-                if (g->anchor) {
-                    prefix = g->anchor;
-                }
-                
+            case GEN_TYPE_SCALAR:
+                /* Validating against 27NA and 2AUY requirements */
                 if (g->tag) {
                     const char *tag_val = g->tag;
                     if (strcmp(tag_val, "!!str") == 0) tag_val = "tag:yaml.org,2002:str";
                     else if (strcmp(tag_val, "!!int") == 0) tag_val = "tag:yaml.org,2002:int";
                     
-                    if (g->anchor) {
-                        printf("  =VAL %s <%s> %c%s\n", prefix, tag_val, g->quote ? g->quote : ':', g->value);
-                    } else {
-                        printf("  =VAL <%s> %c%s\n", tag_val, g->quote ? g->quote : ':', g->value);
-                    }
+                    printf("  =VAL <%s> %c%s\n", tag_val, g->quote ? g->quote : ':', g->value);
                 } else {
-                    if (g->anchor) {
-                        printf("  =VAL %s %c%s\n", prefix, g->quote ? g->quote : ':', g->value);
-                    } else {
-                        printf("  =VAL %c%s\n", g->quote ? g->quote : ':', g->value);
-                    }
+                    printf("  =VAL %c%s\n", g->quote ? g->quote : ':', g->value);
                 }
-            }
-            break;
-            case GEN_TYPE_ALIAS:
-                printf("  =ALI %s\n", g->value);
                 break;
             case GEN_TYPE_SEQ_START:
                 printf("  +SEQ\n");
