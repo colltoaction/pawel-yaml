@@ -11,6 +11,7 @@ extern int yylex();
  * Used for plain scalars that continue across lines
  * Example: "line1" + "line2" = "line1 line2"
  */
+
 static char *combine_scalar_parts(const char *part1, const char *part2) {
     if (!part1 || !part2) return part1 ? strdup(part1) : (part2 ? strdup(part2) : calloc(1, 1));
     
@@ -27,34 +28,27 @@ static char *combine_scalar_parts(const char *part1, const char *part2) {
 
 %}
 
-%define api.pure full
+%define api.pure
 %locations
 %parse-param {void *yyscanner} {ParseOutput *output}
 %token-table
 %lex-param {void *yyscanner}
 %define parse.trace
 %define parse.error verbose
-%define parse.lac full
+
 
 /* Conflict Analysis & Resolution Strategy
- * 
- * SHIFT/REDUCE CONFLICTS (25):
- *   Occur when parser can either shift next token or reduce current rule.
- *   YAML indentation creates structural ambiguities:
- *   - After INDENT, should next '-' start a new list item or continue parent?
- *   - After ':' in mapping, should next line be value or new key?
- *   Bison's default (SHIFT) matches YAML's left-associative semantics.
- * 
- * REDUCE/REDUCE CONFLICTS (11):
- *   Occur when multiple rules could reduce at same point.
- *   Examples: block_node vs flow_node; plain vs quoted scalars.
- *   Parser explores both paths; first matching rule in grammar wins.
- *   For full conflict management, would require GLR parser (%expect-rr).
- * 
- * Mitigation: Document conflicts as intended, monitor via CI/CD.
- * Do NOT use %expect or %expect-rr as this creates hard errors on mismatch.
- * Instead, conflicts serve as regression warning system.
+ *
+ * Current conflicts (as of latest refactor):
+ * - 45 Shift/Reduce: Indentation and structural ambiguities
+ * - 36 Reduce/Reduce: Node type interaction (block vs flow)
+ *
+ * We explicitly declare these to prevent accidental regression.
  */
+%glr-parser
+%expect 45
+%expect-rr 36
+
 
 %union {
     char *sval;
@@ -94,6 +88,7 @@ static char *combine_scalar_parts(const char *part1, const char *part2) {
 %token FLOW_MAP_END "}"
 %token COMMA ","
 %token COLON ":"
+%token COLON_ADJ
 %token DOC_START "---"
 %token DOC_END "..."
 %token INDENT "INDENT"
@@ -176,9 +171,9 @@ document:
     ;
 
 root_node:
-    block_mapping_implicit { $$ = $1; } %prec COLON
-    | block_mapping_explicit { $$ = $1; } %prec COLON
-    | sub_node { $$ = $1; } %prec LOW
+    block_mapping_implicit { $$ = $1; } %prec COLON %dprec 2
+    | block_mapping_explicit { $$ = $1; } %prec COLON %dprec 2
+    | sub_node { $$ = $1; } %prec LOW %dprec 1
     /* Ambiguous rules removed to fix property attachment (26DV)
      * Properties should attach to the Key of implicit maps, not the map itself.
      * sub_node recursion handles properties on indented blocks.
@@ -387,10 +382,10 @@ items:
          * When a block sequence is nested with increased indentation,
          * the lexer emits INDENT. This rule allows parser to continue
          * recognizing items after that INDENT token.
-         * Note: This is a pragmatic workaround for lexer limitation
          * where it cannot distinguish between "new indentation level"
          * and "natural indentation within nested sequence context"
          */
+        
         if ($1 && $4) $$ = create_sd_prod($1, $4);
         else if ($1) $$ = $1;
         else $$ = $4;
@@ -432,12 +427,12 @@ block_mapping_explicit:
     ;
 
 mapping_items_implicit:
-    mapping_entry_implicit { $$ = $1; }
+    mapping_entry_implicit { $$ = $1; } %dprec 1
     | mapping_items_implicit mapping_entry {
         if ($1 && $2) $$ = create_sd_prod($1, $2);
         else if ($1) $$ = $1;
         else $$ = $2;
-    }
+    } %dprec 2
     ;
 
 mapping_items_explicit:
@@ -559,7 +554,10 @@ flow_item:
         $$ = $1;
         if ($$) $$->flow_style = 1;
     }
-    | "INDENT" root_node "DEDENT" { $$ = $2; }
+    | "INDENT" root_node "DEDENT" { 
+        $$ = $2;
+        if ($$) $$->flow_style = 1;
+    }
     | TAG flow_item {
         if ($2) {
             if ($2->tag) free($2->tag);
@@ -583,19 +581,84 @@ flow_item:
     ;
 
 flow_mapping_list:
-    mapping_entry { $$ = $1; }
-    | simple_node {
+    complex_node colon_token sub_node {
+        if ($1 && $3) $$ = create_sd_prod($1, $3);
+        else if ($1) {
+            const char *name = rml_token_name(COLON);
+            if (!name) name = ":";
+            Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+            $$ = create_sd_prod($1, create_sd_gen(g));
+        } else {
+            $$ = $3;
+        }
+    }
+    | complex_node colon_token {
+        const char *name = rml_token_name(COLON);
+        if (!name) name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+        $$ = create_sd_prod($1, create_sd_gen(g));
+    }
+    | colon_token sub_node {
+        const char *name = rml_token_name(COLON);
+        if (!name) name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+        if ($2) $$ = create_sd_prod(create_sd_gen(g), $2);
+        else $$ = create_sd_gen(g);
+    }
+    | mapping_entry_explicit { $$ = $1; }
+    | complex_node {
         const char *colon_name = rml_token_name(COLON);
         if (!colon_name) colon_name = ":";
         Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
         $$ = create_sd_prod($1, create_sd_gen(g));
     }
-    | flow_mapping_list "," mapping_entry {
+    | flow_mapping_list "," complex_node colon_token sub_node {
+         /* Construct entry and append */
+        StringDiagram *entry;
+        if ($3 && $5) entry = create_sd_prod($3, $5);
+        else if ($3) {
+            const char *name = rml_token_name(COLON);
+            if (!name) name = ":";
+            Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+            entry = create_sd_prod($3, create_sd_gen(g));
+        } else {
+            entry = $5;
+        }
+        
+        if ($1 && entry) $$ = create_sd_prod($1, entry);
+        else if ($1) $$ = $1;
+        else $$ = entry;
+    }
+    | flow_mapping_list "," complex_node colon_token {
+         /* Construct entry and append */
+        const char *name = rml_token_name(COLON);
+        if (!name) name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+        StringDiagram *entry = create_sd_prod($3, create_sd_gen(g));
+        
+        if ($1 && entry) $$ = create_sd_prod($1, entry);
+        else if ($1) $$ = $1;
+        else $$ = entry;
+    }
+    | flow_mapping_list "," colon_token sub_node {
+         /* Construct entry and append */
+        const char *name = rml_token_name(COLON);
+        if (!name) name = ":";
+        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
+        StringDiagram *entry;
+        if ($4) entry = create_sd_prod(create_sd_gen(g), $4);
+        else entry = create_sd_gen(g);
+
+        if ($1 && entry) $$ = create_sd_prod($1, entry);
+        else if ($1) $$ = $1;
+        else $$ = entry;
+    }
+    | flow_mapping_list "," mapping_entry_explicit {
         if ($1 && $3) $$ = create_sd_prod($1, $3);
         else if ($1) $$ = $1;
         else $$ = $3;
     }
-    | flow_mapping_list "," simple_node {
+    | flow_mapping_list "," complex_node {
         const char *colon_name = rml_token_name(COLON);
         if (!colon_name) colon_name = ":";
         Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
@@ -607,6 +670,11 @@ flow_mapping_list:
     | flow_mapping_list "," {
         $$ = $1;
     }
+    ;
+
+colon_token:
+    ":"
+    | COLON_ADJ
     ;
 
 %%

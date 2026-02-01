@@ -214,7 +214,8 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 <BLOCK_CONTENT>"-"/(\n|\r\n|$)            { last_seq_column = yylloc->first_column; return BLOCK_SEQ_START; }
 <BLOCK_CONTENT>"? "                       { yyless(1); return BLOCK_KEY; }
 <BLOCK_CONTENT>"?"/[ \t\n\r]              { return BLOCK_KEY; }
-<BLOCK_CONTENT,FLOW_CONTENT>":"                      { return COLON; }
+<BLOCK_CONTENT,FLOW_CONTENT>":"/([ \t\n\r])      { return COLON; }
+<BLOCK_CONTENT,FLOW_CONTENT>":"                  { return COLON_ADJ; }
 <BLOCK_CONTENT,FLOW_CONTENT>"["           { 
     flow_level++; 
     BEGIN(FLOW_CONTENT);
@@ -250,7 +251,7 @@ static char* prefix_dup(char prefix, const char* s, int len) {
     return SCALAR;
 }
 
-<FLOW_CONTENT>(([?:-]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])+)|([a-zA-Z0-9_\/\\\$\(\)\+\=\<\^\~\;\.]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])*))([ \t]+[\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])*)* {
+<FLOW_CONTENT>(([?-]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])+)|([a-zA-Z0-9_\/\\\$\(\)\+\=\<\^\~\;\.]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])*))([ \t]+[\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]([\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;]|[:#][\%a-zA-Z0-9_.\/\\\$\@\(\)\!\+\-\!\?\"\'\=\<\>\*\&\^\|\~\`\;])*)* {
     yylval->sval = prefix_dup(':', yytext, yyleng);
     return SCALAR;
 }
