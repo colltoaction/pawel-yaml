@@ -336,10 +336,9 @@ void rml_print_events(ParseOutput *output) {
     fflush(stdout);
 }
 
-#include "lexer_context.h"
 
 int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **out_diagram) {
-    extern int yylex_init_extra(LexerContext* user_defined, void** scanner);
+    extern int yylex_init(void** scanner);
     extern int yylex_destroy(void* scanner);
     extern void yyset_in(FILE* in_str, void* yyscanner);
     extern int yyparse(void* scanner, ParseOutput *output);
@@ -351,13 +350,9 @@ int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **o
     *out_diagram = NULL;
     
     ParseOutput output = {0};
-    LexerContext ctx = {0};
-    ctx.indent_stack[0] = 0;
-    ctx.indent_level = 0;
-    ctx.pending_dedents = 0;
     
     void* scanner;
-    if (yylex_init_extra(&ctx, &scanner)) return EXIT_FAILURE;
+    if (yylex_init(&scanner)) return EXIT_FAILURE;
     
     yyset_in(stdin, scanner);
     
