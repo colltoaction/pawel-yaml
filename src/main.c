@@ -22,12 +22,12 @@ int main(int argc, char **argv) {
         free_alphabet(a);
     }
     
-    if (res != 0) {
+    if (res != EXIT_SUCCESS) {
         if (!sd) {
             fprintf(stderr, "Parse failed with code %d\n", res);
         }
-        return 1;
+        return EXIT_FAILURE;
     }
 
-    return 0;
+    return EXIT_SUCCESS;
 }

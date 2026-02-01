@@ -146,7 +146,21 @@ StringDiagram *create_sd_prod(StringDiagram *left, StringDiagram *right);
 StringDiagram *create_sd_id(int n);
 StringDiagram *clone_stringdiagram(StringDiagram *sd);
 
-/* ===== Cleanup Functions ===== */
+/* ===== Acceptance Test ===== */
+
+/* Grammar-based acceptance test via string diagram simulation
+ * Validates that a string diagram is accepted by the regular monoidal
+ * grammar using deterministic state transitions.
+ * 
+ * PHASE 1: Extract generator sequence from diagram tree
+ * PHASE 2: Match generators to grammar transitions
+ * PHASE 3: Simulate state machine transitions
+ * 
+ * Returns true if diagram is accepted by the grammar, false otherwise.
+ * 
+ * Reference: FLEX_PATTERNS_ANALYSIS.md § Recommended Refactoring Strategy
+ */
+bool mrl_accepts(Grammar *g, StringDiagram *sd);
 
 void free_generator(Generator *gen);
 void free_statelist(StateList *sl);
@@ -162,6 +176,5 @@ typedef struct {
 } Relation;
 
 Relation *mrl_evaluate_relation(Grammar *g, StringDiagram *sd, int num_states);
-bool mrl_accepts(Grammar *g, StringDiagram *sd);
 
 #endif

@@ -40,6 +40,19 @@ static void print_escaped(const char *s) {
 
 extern const char *rml_token_name(int tok);
 
+/* ===== Output Formatting and Structure Detection =====
+ * Helper functions for emitting RML events from string diagrams.
+ * Structured for clarity and reduced duplication.
+ */
+
+/* Check if generator name matches a specific token type
+ * Used by is_structural() to identify control-flow generators */
+static bool gen_name_matches_token(Generator *g, int token) {
+    if (!g || !g->name) return false;
+    const char *token_name = rml_token_name(token);
+    return (token_name && strcmp(g->name, token_name) == 0);
+}
+
 /* Lookup table for escape sequence handling */
 static const struct {
     char escape_char;
@@ -93,25 +106,34 @@ static char* unescape_single_quoted(const char* s) {
 
 static void print_scalar(Generator *gen, const char *anchor, const char *tag) {
     if (!gen) return;
+    
     const char *expanded_tag = expand_tag(tag);
     const char *alias_sym = rml_token_name(STYLE_ALIAS);
     
+    /* Check if this is an alias (references saved anchor)
+     * Aliases are preserved as-is from the input */
     if (gen->name && alias_sym && gen->name[0] == alias_sym[0]) {
-        /* Preserve asterisk in alias output */
         print_indent(visual_depth);
         OUTPUT("=ALI %s\n", gen->name);
     } else {
         print_indent(visual_depth);
         printf("=VAL ");
+        
+        /* Print anchor if present */
         if (anchor) {
             const char *anchor_sym = rml_token_name(STYLE_ANCHOR);
             if (anchor_sym && anchor[0] != anchor_sym[0]) putchar(anchor_sym[0]);
             printf("%s ", anchor);
         }
+        
+        /* Print tag if present */
         if (expanded_tag) {
              printf("<%s> ", expanded_tag);
         }
         
+        /* Print scalar value with style indicator and unescaping
+         * Style indicator (first char): ':' (plain), '"' (double), '\'' (single)
+         * Content follows style indicator with escape sequences decoded */
         if (gen->name) {
             char style = gen->name[0];
             const char* content = gen->name + 1;
@@ -140,20 +162,30 @@ static void print_scalar(Generator *gen, const char *anchor, const char *tag) {
 
 static bool is_structural(Generator *g) {
     if (!g || !g->name) return false;
-    const char *seq = rml_token_name(SEQ);
-    if (seq && strcmp(g->name, seq) == 0) return true;
-    const char *map = rml_token_name(MAP);
-    if (map && strcmp(g->name, map) == 0) return true;
-    /* INDENT/DEDENT treated as structural to avoid print_scalar */
-    const char *indent = rml_token_name(INDENT);
-    if (indent && strcmp(g->name, indent) == 0) return true;
-    const char *dedent = rml_token_name(DEDENT);
-    if (dedent && strcmp(g->name, dedent) == 0) return true;
+    
+    /* Identify generators that control flow but don't emit scalars
+     * SEQ/MAP: collection markers (not emitted as values)
+     * INDENT/DEDENT: indentation markers (not emitted as values) */
+    if (gen_name_matches_token(g, SEQ)) return true;
+    if (gen_name_matches_token(g, MAP)) return true;
+    if (gen_name_matches_token(g, INDENT)) return true;
+    if (gen_name_matches_token(g, DEDENT)) return true;
     return false;
 }
 
+/* ===== Collection Printing (Unified Pattern) =====
+ * Uses a generic print_collection() function to reduce duplication.
+ * Both sequences and maps follow the same structure:
+ * 1. Print header (+SEQ or +MAP with tags/anchors)
+ * 2. Recurse on children with adjusted indentation
+ * 3. Print footer (-SEQ or -MAP)
+ */
+
 /* Print collection header and content with proper indentation */
-static void print_collection_header(StringDiagram *sd, const char *marker, const char *flow_brackets) {
+static void print_collection_header(
+    StringDiagram *sd,
+    const char *marker,
+    const char *flow_brackets) {
     const char *t = expand_tag(sd->tag);
     const char *flow = sd->flow_style ? flow_brackets : "";
     print_indent(visual_depth);
@@ -177,36 +209,50 @@ static void print_collection_footer(const char *marker) {
     fflush(stdout);
 }
 
-static void print_seq_collection(StringDiagram *sd, const char *eff_tag, const char *eff_anchor) {
+/* Generic collection printer to reduce duplication
+ * Handles both +SEQ/-SEQ and +MAP/-MAP patterns uniformly
+ * 
+ * PARAMETERS:
+ *   sd: StringDiagram node
+ *   marker_prefix: "+SEQ" or "+MAP"
+ *   flow_brackets: " []" or " {}" (for flow style)
+ *   eff_tag: Effective tag (inherited if not on node)
+ *   eff_anchor: Effective anchor (inherited if not on node)
+ */
+static void print_collection(
+    StringDiagram *sd,
+    const char *marker_prefix,
+    const char *flow_brackets,
+    const char *eff_tag,
+    const char *eff_anchor) {
     char *orig_tag = sd->tag;
     char *orig_anchor = sd->anchor;
-    if (!sd->tag) sd->tag = (char*)eff_tag; 
+    if (!sd->tag) sd->tag = (char*)eff_tag;
     if (!sd->anchor) sd->anchor = (char*)eff_anchor;
     
-    print_collection_header(sd, "+SEQ", " []");
+    print_collection_header(sd, marker_prefix, flow_brackets);
     visual_depth++;
     rml_print_recursive(sd->data.op.left, NULL, NULL);
     visual_depth--;
-    print_collection_footer("-SEQ");
+    
+    /* Convert +SEQ to -SEQ, +MAP to -MAP */
+    char footer_marker[10];
+    snprintf(footer_marker, sizeof(footer_marker), "-%s",
+             marker_prefix[1] == 'S' ? "SEQ" : "MAP");
+    print_collection_footer(footer_marker);
     
     sd->tag = orig_tag;
     sd->anchor = orig_anchor;
 }
 
-static void print_map_collection(StringDiagram *sd, const char *eff_tag, const char *eff_anchor) {
-    char *orig_tag = sd->tag;
-    char *orig_anchor = sd->anchor;
-    if (!sd->tag) sd->tag = (char*)eff_tag;
-    if (!sd->anchor) sd->anchor = (char*)eff_anchor;
+static void print_seq_collection(StringDiagram *sd, const char *eff_tag,
+                                 const char *eff_anchor) {
+    print_collection(sd, "+SEQ", " []", eff_tag, eff_anchor);
+}
 
-    print_collection_header(sd, "+MAP", " {}");
-    visual_depth++;
-    rml_print_recursive(sd->data.op.left, NULL, NULL);
-    visual_depth--;
-    print_collection_footer("-MAP");
-
-    sd->tag = orig_tag;
-    sd->anchor = orig_anchor;
+static void print_map_collection(StringDiagram *sd, const char *eff_tag,
+                                 const char *eff_anchor) {
+    print_collection(sd, "+MAP", " {}", eff_tag, eff_anchor);
 }
 
 void rml_print_recursive(StringDiagram *sd, const char *inh_anchor, const char *inh_tag) {
@@ -217,18 +263,25 @@ void rml_print_recursive(StringDiagram *sd, const char *inh_anchor, const char *
     
     switch (sd->type) {
         case SD_GENERATOR:
+            /* Scalar generators are printed unless they're structural markers */
             if (!is_structural(sd->data.gen)) {
                 print_scalar(sd->data.gen, eff_anchor, eff_tag);
             } else {
+                /* INDENT/DEDENT are control flow only; don't emit output */
                 Generator *g = sd->data.gen;
                 if (g && g->name) {
-                    /* INDENT/DEDENT are no-ops */
+                    /* Structural generators elided from output */
                 }
             }
             break;
             
-        case SD_COMPOSITION:
-            if (sd->data.op.right->type == SD_GENERATOR && is_structural(sd->data.op.right->data.gen)) {
+        case SD_COMPOSITION: {
+            /* Check if right operand is a structural wrapper (SEQ/MAP)
+             * If so, treat as collection; otherwise flatten composition */
+            bool is_right_gen = (sd->data.op.right->type == SD_GENERATOR);
+            bool is_right_structural = is_right_gen &&
+                                       is_structural(sd->data.op.right->data.gen);
+            if (is_right_structural) {
                 Generator *wrapper = sd->data.op.right->data.gen;
                 
                 if (wrapper->name && strcmp(wrapper->name, rml_token_name(SEQ)) == 0) {
@@ -240,17 +293,21 @@ void rml_print_recursive(StringDiagram *sd, const char *inh_anchor, const char *
                     rml_print_recursive(sd->data.op.right, eff_anchor, eff_tag);
                 }
             } else {
+                /* Regular composition: print both operands */
                 rml_print_recursive(sd->data.op.left, eff_anchor, eff_tag);
                 rml_print_recursive(sd->data.op.right, eff_anchor, eff_tag);
             }
             break;
+        }
             
         case SD_PRODUCT:
+            /* Parallel product: print both operands in order */
             rml_print_recursive(sd->data.op.left, eff_anchor, eff_tag);
             rml_print_recursive(sd->data.op.right, eff_anchor, eff_tag);
             break;
             
         case SD_IDENTITY:
+            /* Identity contributes no output */
             break;
     }
 }
@@ -287,7 +344,7 @@ int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **o
     extern void yyset_in(FILE* in_str, void* yyscanner);
     extern int yyparse(void* scanner, ParseOutput *output);
     
-    if (!out_alphabet || !out_grammar || !out_diagram) return 1;
+    if (!out_alphabet || !out_grammar || !out_diagram) return EXIT_FAILURE;
     
     *out_alphabet = NULL;
     *out_grammar = NULL;
@@ -300,7 +357,7 @@ int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **o
     ctx.pending_dedents = 0;
     
     void* scanner;
-    if (yylex_init_extra(&ctx, &scanner)) return 2;
+    if (yylex_init_extra(&ctx, &scanner)) return EXIT_FAILURE;
     
     yyset_in(stdin, scanner);
     
@@ -312,5 +369,6 @@ int yaml_parse(Alphabet **out_alphabet, Grammar **out_grammar, StringDiagram **o
     *out_grammar = output.grammar;
     *out_diagram = output.diagram;
     
-    return result;
+    /* Bison's yyparse returns 0 on success, non-zero on error */
+    return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

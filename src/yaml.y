@@ -6,11 +6,11 @@
 #include "yaml_parser.h"
 
 extern int yylex();
-extern void yyerror(void *yyscanner, ParseOutput *output, const char *s);
 
 %}
 
 %define api.pure full
+%locations
 %parse-param {void *yyscanner} {ParseOutput *output}
 %token-table
 %lex-param {void *yyscanner}
@@ -407,10 +407,17 @@ flow_mapping_list:
 
 %%
 
-void yyerror(void *yyscanner, ParseOutput *output, const char *s) {
+void yyerror(YYLTYPE *yylloc, void *yyscanner, ParseOutput *output, const char *s) {
     (void)yyscanner;
     (void)output;
-    fprintf(stderr, "Parse error: %s\n", s);
+    if (yylloc) {
+        fprintf(stderr, "%d.%d-%d.%d: %s\n",
+                yylloc->first_line, yylloc->first_column,
+                yylloc->last_line, yylloc->last_column,
+                s);
+    } else {
+        fprintf(stderr, "Parse error: %s\n", s);
+    }
 }
 
 const char *rml_token_name(int tok) {

@@ -145,12 +145,10 @@ StringDiagram *clone_stringdiagram(StringDiagram *sd) {
     
     switch (sd->type) {
         case SD_GENERATOR:
-            clone->data.gen = sd->data.gen; // Generators are shared/reference counted? No, they are owned by Alphabet.
+            /* Generators are owned by Alphabet, not cloned */
+            clone->data.gen = sd->data.gen;
             break;
         case SD_COMPOSITION:
-            clone->data.op.left = clone_stringdiagram(sd->data.op.left);
-            clone->data.op.right = clone_stringdiagram(sd->data.op.right);
-            break;
         case SD_PRODUCT:
             clone->data.op.left = clone_stringdiagram(sd->data.op.left);
             clone->data.op.right = clone_stringdiagram(sd->data.op.right);
@@ -162,7 +160,31 @@ StringDiagram *clone_stringdiagram(StringDiagram *sd) {
     return clone;
 }
 
-// Cleanup Functions for RML Structures
+/* ===== Cleanup Functions =====
+ * Free dynamically allocated RML data structures.
+ */
+
+/* ===== Helper Functions for RML Processing =====
+ * These support functions are defined in C for performance and struct access,
+ * but their structure follows patterns that Flex could optimize.
+ * 
+ * Reference: FLEX_PATTERNS_ANALYSIS.md § Hybrid Approach Recommendation
+ */
+
+/* Clone a StateList for safe mutation (Phase 2 support) */
+static StateList* clone_state_vector(StateList *src) {
+    if (!src) return NULL;
+    
+    StateList *clone = create_statelist();
+    if (!clone) return NULL;
+    
+    for (int i = 0; i < src->count; i++) {
+        if (src->names[i]) {
+            statelist_add(clone, src->names[i]);
+        }
+    }
+    return clone;
+}
 
 void free_generator(Generator *gen) {
     if (!gen) return;
@@ -210,9 +232,6 @@ void free_stringdiagram(StringDiagram *sd) {
         case SD_GENERATOR:
             break;
         case SD_COMPOSITION:
-            free_stringdiagram(sd->data.op.left);
-            free_stringdiagram(sd->data.op.right);
-            break;
         case SD_PRODUCT:
             free_stringdiagram(sd->data.op.left);
             free_stringdiagram(sd->data.op.right);
@@ -228,12 +247,8 @@ Relation *create_relation(int arity, int coarity, int num_states) {
     r->q_n = arity;
     r->q_m = coarity;
     long size = 1;
-    for (int i=0; i<arity; i++) size *= num_states;
-    for (int i=0; i<coarity; i++) size *= num_states;
+    for (int i = 0; i < arity; i++) size *= num_states;
+    for (int i = 0; i < coarity; i++) size *= num_states;
     r->matrix = calloc(size, sizeof(bool));
     return r;
-}
-
-bool mrl_accepts(Grammar *g, StringDiagram *sd) {
-    return false; // Stub
 }

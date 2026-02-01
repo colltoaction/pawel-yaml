@@ -239,3 +239,238 @@ static int current_indent(void* yyscanner) {
     LexerContext* ctx = (LexerContext*)yyget_extra(yyscanner);
     return ctx->indent_stack[ctx->indent_level];
 }
+
+/* ===== Grammar-Based String Diagram Acceptance Test =====
+ * 
+ * PHASE 1: Extract Generator Sequences
+ * ====================================
+ * Recognizes string diagrams against regular monoidal grammar by:
+ * 1. Extracting generator sequence from diagram tree (diagram_to_generators)
+ * 2. Matching generators to grammar transitions (grammar_transition_match)
+ * 3. Simulating state machine to determine acceptance (mrl_accepts)
+ * 
+ * Conceptually this is a state machine that Flex could optimize, but we keep
+ * it in C for direct struct field access which Flex patterns lack.
+ * 
+ * Reference: FLEX_PATTERNS_ANALYSIS.md § Recommended Refactoring Strategy
+ *
+ * ===== Phase 1 Implementation Notes =====
+ * This implementation favors clarity and maintainability while keeping the
+ * performance-critical path in C. Future optimization may involve:
+ * - Flex rules for input normalization
+ * - C helpers for acceptance verdicts
+ * - Start condition stack for nested generators (yy_push/pop_state)
+ */
+
+/* PHASE 1.1: Extract Generator Sequence
+ * 
+ * PURPOSE:
+ *   Flatten recursive string diagram tree into linear generator sequence.
+ *   Handles composition (sequential) and product (parallel) operations.
+ * 
+ * INPUT:
+ *   sd - StringDiagram to flatten (tree structure)
+ * OUTPUT:
+ *   gens - Array to populate with extracted generators
+ *   count - Running count (incremented for each generator found)
+ * 
+ * PATTERN EQUIVALENCE:
+ *   This implements what Flex start conditions could orchestrate:
+ *   - Each switch case corresponds to a potential Flex rule
+ *   - Recursion simulates depth-first traversal (could use stack/conditions)
+ * 
+ * COMPLEXITY: O(n) where n = number of nodes in diagram tree
+ */
+static void diagram_to_generators(StringDiagram *sd, Generator **gens, int *count) {
+    if (!sd || *count >= 256) return;
+    
+    switch (sd->type) {
+        case SD_GENERATOR:
+            /* Leaf: emit generator if non-null */
+            if (sd->data.gen) {
+                gens[*count] = sd->data.gen;
+                (*count)++;
+            }
+            break;
+            
+        case SD_COMPOSITION:
+            /* Sequential: left then right */
+            diagram_to_generators(sd->data.op.left, gens, count);
+            diagram_to_generators(sd->data.op.right, gens, count);
+            break;
+            
+        case SD_PRODUCT:
+            /* Parallel: left then right (flattened order) */
+            diagram_to_generators(sd->data.op.left, gens, count);
+            diagram_to_generators(sd->data.op.right, gens, count);
+            break;
+            
+        case SD_IDENTITY:
+            /* Identity: contributes no generators */
+            break;
+    }
+}
+
+/* PHASE 1.2: State Vector Cloning Helper
+ * 
+ * PURPOSE:
+ *   Create independent copy of state list for transition codomain.
+ *   Avoids mutation of shared grammar transition structures.
+ * 
+ * SAFETY:
+ *   Caller owns returned StateList and must call free_statelist()
+ * 
+ * NOTE:
+ *   Flex wouldn't need this (no shared state mutation), but C requires
+ *   careful memory management for the state vector.
+ */
+static StateList* clone_state_vector(StateList *src) {
+    if (!src) return NULL;
+    
+    StateList *clone = create_statelist();
+    if (!clone) return NULL;
+    
+    for (int i = 0; i < src->count; i++) {
+        if (src->names[i]) {
+            statelist_add(clone, src->names[i]);
+        }
+    }
+    return clone;
+}
+
+/* PHASE 2: Match Generator to Grammar Transitions
+ * 
+ * PURPOSE:
+ *   Find grammar transition matching (generator, current_state_vector).
+ *   Returns transition with updated state vector if match found.
+ * 
+ * ALGORITHM:
+ *   1. Linear search through all grammar transitions
+ *   2. Check generator match
+ *   3. Check arity match (domain state count = current_states count)
+ *   4. Check state vector pairwise equality
+ * 
+ * RETURN:
+ *   Pointer to matching Transition, or NULL if no match
+ * 
+ * COMPLEXITY: O(m*n) where m=transitions, n=state_count
+ *             (could optimize to hash lookup with state composition)
+ * 
+ * PATTERN EQUIVALENCE:
+ *   This corresponds to Flex REJECT action:
+ *   ```flex
+ *   <MATCH_TRANS>GRAM[A-Z_]+/VALID_TARGET { advance_state(); }
+ *   <MATCH_TRANS>GRAM[A-Z_]+/INVALID_TARGET { REJECT; }
+ *   ```
+ *   We inline the search loop for direct struct access.
+ */
+static Transition* grammar_transition_match(Grammar *g, Generator *gen,
+                                            StateList *current_states) {
+    if (!g || !gen || !current_states) return NULL;
+    
+    for (int i = 0; i < g->transition_count; i++) {
+        Transition *t = g->transitions[i];
+        if (!t) continue;
+        
+        /* Check: generator matches */
+        if (t->gen != gen) continue;
+        
+        /* Check: arity matches (state vector length = domain length) */
+        if (t->dom->count != current_states->count) continue;
+        
+        /* Check: state vector pairwise equality */
+        bool state_match = true;
+        for (int j = 0; j < current_states->count; j++) {
+            if (!current_states->names[j] || !t->dom->names[j] ||
+                strcmp(current_states->names[j], t->dom->names[j]) != 0) {
+                state_match = false;
+                break;
+            }
+        }
+        
+        if (state_match) return t;
+    }
+    return NULL;
+}
+
+/* PHASE 3: Unified State Machine Acceptance Test
+ * 
+ * PURPOSE:
+ *   Determine if string diagram is accepted by regular monoidal grammar.
+ *   Simulates the NMA (Non-deterministic Monoidal Automaton) on the diagram.
+ * 
+ * ALGORITHM:
+ *   1. Extract generator sequence from diagram
+ *   2. Initialize empty state vector (base case)
+ *   3. For each generator:
+ *      - Find matching grammar transition
+ *      - Update state vector to transition codomain
+ *   4. Accept iff final state vector arity/coarity match
+ * 
+ * ACCEPTANCE CRITERIA:
+ *   - All generators matched to transitions
+ *   - Final state vector coarity == input diagram coarity
+ * 
+ * RETURN:
+ *   true if accepted, false if rejected
+ * 
+ * PATTERN EQUIVALENCE:
+ *   This is the core DFA loop that Flex would orchestrate via states:
+ *   ```flex
+ *   <INITIAL>BEGIN_TEST { BEGIN(GENERATOR_EXTRACT); }
+ *   <GENERATOR_EXTRACT>...
+ *   <TRANSITION_MATCH>...
+ *   <ACCEPT_STATE><<EOF>> { return accepted_state; }
+ *   ```
+ *   
+ *   Reference: FLEX_PATTERNS_ANALYSIS.md § Recommended Refactoring Strategy
+ *   Keeping in C for now due to struct field access limitations in Flex.
+ */
+bool mrl_accepts(Grammar *g, StringDiagram *sd) {
+    if (!g || !sd) return false;
+    if (!g->alphabet) return false;
+    
+    /* PHASE 3.1: Extract generator sequence */
+    Generator *gens[256];
+    int gen_count = 0;
+    diagram_to_generators(sd, gens, &gen_count);
+    
+    /* PHASE 3.2: Initialize state machine */
+    StateList *current_states = create_statelist();
+    if (!current_states) return false;
+    
+    /* Edge case: empty generator sequence */
+    if (gen_count == 0) {
+        bool result = (sd->arity == 0 && sd->coarity == 0);
+        free_statelist(current_states);
+        return result;
+    }
+    
+    /* PHASE 3.3: Simulate transitions for each generator */
+    for (int i = 0; i < gen_count; i++) {
+        Generator *current_gen = gens[i];
+        if (!current_gen) {
+            free_statelist(current_states);
+            return false;
+        }
+        
+        /* Find matching grammar transition */
+        Transition *trans = grammar_transition_match(g, current_gen, current_states);
+        if (!trans) {
+            free_statelist(current_states);
+            return false;
+        }
+        
+        /* Update state vector to transition codomain */
+        free_statelist(current_states);
+        current_states = clone_state_vector(trans->cod);
+        if (!current_states) return false;
+    }
+    
+    /* PHASE 3.4: Check acceptance criteria */
+    bool accepted = (sd->arity == gen_count &&
+                     sd->coarity == current_states->count);
+    
+    free_statelist(current_states);
+    return accepted;
+}
