@@ -175,6 +175,90 @@ document:
 root_node:
     block_mapping { $$ = $1; } %prec COLON
     | sub_node { $$ = $1; } %prec LOW
+    | TAG block_mapping {
+        if ($2) {
+            if ($2->tag) free($2->tag);
+            $2->tag = $1;
+            $$ = $2;
+        } else {
+            free($1);
+            $$ = NULL;
+        }
+    }
+    | TAG block_sequence {
+        if ($2) {
+            if ($2->tag) free($2->tag);
+            $2->tag = $1;
+            $$ = $2;
+        } else {
+            free($1);
+            $$ = NULL;
+        }
+    }
+    | ANCHOR block_mapping {
+        if ($2) {
+            if ($2->anchor) free($2->anchor);
+            $2->anchor = $1;
+            $$ = $2;
+        } else {
+            free($1);
+            $$ = NULL;
+        }
+    }
+    | ANCHOR block_sequence {
+        if ($2) {
+            if ($2->anchor) free($2->anchor);
+            $2->anchor = $1;
+            $$ = $2;
+        } else {
+            free($1);
+            $$ = NULL;
+        }
+    }
+    | TAG ANCHOR block_mapping {
+        if ($3) {
+            if ($3->tag) free($3->tag);
+            if ($3->anchor) free($3->anchor);
+            $3->tag = $1;
+            $3->anchor = $2;
+            $$ = $3;
+        } else {
+            free($1); free($2); $$ = NULL;
+        }
+    }
+    | TAG ANCHOR block_sequence {
+        if ($3) {
+            if ($3->tag) free($3->tag);
+            if ($3->anchor) free($3->anchor);
+            $3->tag = $1;
+            $3->anchor = $2;
+            $$ = $3;
+        } else {
+            free($1); free($2); $$ = NULL;
+        }
+    }
+    | ANCHOR TAG block_mapping {
+        if ($3) {
+            if ($3->tag) free($3->tag);
+            if ($3->anchor) free($3->anchor);
+            $3->anchor = $1;
+            $3->tag = $2;
+            $$ = $3;
+        } else {
+            free($1); free($2); $$ = NULL;
+        }
+    }
+    | ANCHOR TAG block_sequence {
+        if ($3) {
+            if ($3->tag) free($3->tag);
+            if ($3->anchor) free($3->anchor);
+            $3->anchor = $1;
+            $3->tag = $2;
+            $$ = $3;
+        } else {
+            free($1); free($2); $$ = NULL;
+        }
+    }
     ;
 
 simple_node:

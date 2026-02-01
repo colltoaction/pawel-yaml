@@ -24,12 +24,10 @@ static int pending_dedents = 0;
 /* Flow context tracking ([] and {}) */
 static int flow_level = 0;
 
-/* Block sequence tracking: when we're inside a block sequence, track its starting indent
- * This prevents emitting false INDENT tokens for continuation items at the same column.
- * Example: "- - x\n  - y" should not emit INDENT between x and second - (both at column 0 relative to sequence)
+/* Track the last column where we saw a BLOCK_SEQ_START ("-")  
+ * Used to suppress false INDENT tokens in nested sequence contexts
  */
-static int block_seq_column = -1;  /* -1 means not in block sequence, otherwise the column of the - */
-static int block_seq_depth = 0;    /* How many nested block sequences we're in */
+static int last_seq_column = -1;
 
 /* Block scalar accumulation (| or >) */
 static int block_indent = -1;
@@ -93,8 +91,7 @@ static void reset_lexer_state(void) {
     indent_stack[0] = 0;
     pending_dedents = 0;
     flow_level = 0;
-    block_seq_column = -1;
-    block_seq_depth = 0;
+    last_seq_column = -1;
     cleanup_block_scalar();
 }
 
@@ -138,25 +135,22 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 <INITIAL>^[ \t]*#.*(\n|\r\n)           { ; }
 
 <INITIAL>^[ \t]+                    {
-    int indent_spaces = yyleng;  /* Number of spaces at start of line */
-    int post_indent_column = yylloc->first_column + yyleng;  /* Column position AFTER the indent */
+    int indent_spaces = yyleng;
     
-    /* Special handling when inside a block sequence:
-     * Block sequences have items marked by "- " at some column.
-     * Continuation items on the next line are indented by 2 spaces relative to the "-".
-     * This indentation is NOT a semantic level change - it's just item positioning.
+    /* Special case: if we just saw a BLOCK_SEQ_START at column N,
+     * and now we have indent of N+2, this is likely sequence item continuation.
+     * Suppress INDENT in this specific case to allow nested sequences to work.
+     * Example: "- - x\n  - y" → first - at col 1, next indent is 3 (col 1 + 2)
      *
-     * Example: "- - x\n  - y"
-     *   Line 1: First - is at 1-indexed column 1, second - is at column 1  
-     *   Line 2: 2 spaces at start → post_indent_column = 1 + 2 = 3
-     *   If block_seq_column = 1, then seq_item_indent = 1 + 2 = 3
-     *   Since post_indent_column (3) == seq_item_indent (3), suppress INDENT
+     * BUT: Only suppress if the next non-space token will be another "-" 
+     * We check this heuristically: last_seq_column >= 0 means we just saw a "-"
      */
-    
-    if (block_seq_depth > 0 && block_seq_column >= 0) {
-        int seq_item_indent = block_seq_column + 2;  /* Items are typically indented 2 spaces */
-        if (post_indent_column == seq_item_indent) {
-            /* This is sequence item indentation, not a structural level change */
+    if (last_seq_column >= 0) {
+        int expected_item_indent = last_seq_column + 2;
+        int actual_column = yylloc->first_column + indent_spaces;
+        
+        if (actual_column == expected_item_indent) {
+            /* This looks like a sequence item continuation - suppress INDENT */
             if (flow_level > 0) BEGIN(FLOW_CONTENT); else BEGIN(BLOCK_CONTENT);
         } else if (indent_spaces > current_indent()) {
             push_indent(indent_spaces);
@@ -213,21 +207,9 @@ static char* prefix_dup(char prefix, const char* s, int len) {
 }
 
 <BLOCK_CONTENT,FLOW_CONTENT>#.*                        { ; }
-<BLOCK_CONTENT>"- "/[ \t\n\r]             { 
-    block_seq_column = yylloc->first_column;
-    block_seq_depth++;
-    return BLOCK_SEQ_START; 
-}
-<BLOCK_CONTENT>"- "                       { 
-    block_seq_column = yylloc->first_column;
-    block_seq_depth++;
-    return BLOCK_SEQ_START; 
-}
-<BLOCK_CONTENT>"-"/(\n|\r\n|$)            { 
-    block_seq_column = yylloc->first_column;
-    block_seq_depth++;
-    return BLOCK_SEQ_START; 
-}
+<BLOCK_CONTENT>"- "/[ \t\n\r]             { last_seq_column = yylloc->first_column; return BLOCK_SEQ_START; }
+<BLOCK_CONTENT>"- "                       { last_seq_column = yylloc->first_column; return BLOCK_SEQ_START; }
+<BLOCK_CONTENT>"-"/(\n|\r\n|$)            { last_seq_column = yylloc->first_column; return BLOCK_SEQ_START; }
 <BLOCK_CONTENT>"? "                       { yyless(1); return BLOCK_KEY; }
 <BLOCK_CONTENT>"?"/[ \t\n\r]              { return BLOCK_KEY; }
 <BLOCK_CONTENT,FLOW_CONTENT>":"                      { return COLON; }
