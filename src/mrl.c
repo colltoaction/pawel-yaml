@@ -33,7 +33,8 @@ Alphabet *create_alphabet() {
 
 void alphabet_add(Alphabet *alphabet, Generator *gen) {
     if (!alphabet) return;
-    alphabet->generators = realloc(alphabet->generators, sizeof(Generator *) * (alphabet->count + 1));
+    size_t new_size = sizeof(Generator *) * (alphabet->count + 1);
+    alphabet->generators = realloc(alphabet->generators, new_size);
     alphabet->generators[alphabet->count++] = gen;
 }
 
@@ -41,8 +42,9 @@ Generator *alphabet_find_full(Alphabet *alphabet, const char *name, int arity, i
     if (!alphabet || !name) return NULL;
     for (int i = 0; i < alphabet->count; i++) {
         if (strcmp(alphabet->generators[i]->name, name) == 0) {
-            if ((arity == -1 || alphabet->generators[i]->arity == arity) &&
-                (coarity == -1 || alphabet->generators[i]->coarity == coarity)) {
+            bool arity_matches = (arity == -1 || alphabet->generators[i]->arity == arity);
+            bool coarity_matches = (coarity == -1 || alphabet->generators[i]->coarity == coarity);
+            if (arity_matches && coarity_matches) {
                 return alphabet->generators[i];
             }
         }
