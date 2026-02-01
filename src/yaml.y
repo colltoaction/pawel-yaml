@@ -14,6 +14,26 @@ extern void yyerror(void *yyscanner, ParseOutput *output, const char *s);
 %token-table
 %lex-param {void *yyscanner}
 
+/* Conflict Analysis & Resolution Strategy
+ * 
+ * SHIFT/REDUCE CONFLICTS (25):
+ *   Occur when parser can either shift next token or reduce current rule.
+ *   YAML indentation creates structural ambiguities:
+ *   - After INDENT, should next '-' start a new list item or continue parent?
+ *   - After ':' in mapping, should next line be value or new key?
+ *   Bison's default (SHIFT) matches YAML's left-associative semantics.
+ * 
+ * REDUCE/REDUCE CONFLICTS (11):
+ *   Occur when multiple rules could reduce at same point.
+ *   Examples: block_node vs flow_node; plain vs quoted scalars.
+ *   Parser explores both paths; first matching rule in grammar wins.
+ *   For full conflict management, would require GLR parser (%expect-rr).
+ * 
+ * Mitigation: Document conflicts as intended, monitor via CI/CD.
+ * Do NOT use %expect or %expect-rr as this creates hard errors on mismatch.
+ * Instead, conflicts serve as regression warning system.
+ */
+
 %union {
     char *sval;
     StringDiagram *sd;
