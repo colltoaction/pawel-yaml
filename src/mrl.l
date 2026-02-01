@@ -10,12 +10,6 @@ static int expecting_value = 0;
 static int pending_dedents = 0;
 static int first_line = 1;
 
-/* Check if UTF-8 bytes represent visible space U+2423 */
-static int is_visible_space(const unsigned char *s) {
-    return s[0] == 0xE2 && s[1] == 0x90 && s[2] == 0xA3;
-}
-
-
 static void push_indent(int col) {
     if (indent_sp < 99) indent_stack[++indent_sp] = col;
 }
@@ -62,24 +56,6 @@ static void append_block_line(const char *line, int len) {
     append_scalar(line, len);
     append_scalar("\n", 1);
 }
-
-static void enter_flow_context(void) {
-    flow_level++;
-    expecting_value = 1;
-}
-
-static void exit_flow_context(void) {
-    if (flow_level > 0) flow_level--;
-    expecting_value = 0;
-}
-
-static char *finalize_block_scalar_value(void) {
-    char *final = malloc(scalar_content_len + 2);
-    final[0] = block_type;
-    memcpy(final + 1, scalar_content, scalar_content_len);
-    final[scalar_content_len + 1] = '\0';
-    return final;
-}
 %}
 
 %option noyywrap
@@ -107,21 +83,6 @@ NSCAL [a-zA-Z0-9\-\._%:/]
         return DEDENT;
     }
 
-<INDENT_CHECK>[ \t]*#[^\n]* {
-    /* Line with only whitespace and comment - skip it, stay in INDENT_CHECK */
-    BEGIN(INDENT_CHECK);
-}
-
-<INDENT_CHECK>[ \t]*\n {
-    /* Blank line - skip it, stay in INDENT_CHECK */
-    BEGIN(INDENT_CHECK);
-}
-
-<INDENT_CHECK>[ \t]*\n {
-    /* Blank line - skip it, stay in INDENT_CHECK */
-    BEGIN(INDENT_CHECK);
-}
-
 <INDENT_CHECK>[ \t]* {
     int indent = 0;
     for (int i=0; i<yyleng; i++) {
@@ -130,25 +91,18 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     }
     
     BEGIN(INITIAL);
-    
-    /* In flow context ({...} or [...]), ignore indentation changes */
-    if (flow_level > 0) {
-        /* Just go back to INITIAL without emitting INDENT/DEDENT */
-        /* yyless(0) doesn't work here, so we just continue */
-    } else {
-        int cur = current_indent();
-        if (indent > cur) {
-            push_indent(indent);
-            return INDENT;
-        } else if (indent < cur) {
-            while (indent < current_indent()) {
-                pop_indent();
-                pending_dedents++;
-            }
-            if (pending_dedents > 0) {
-                pending_dedents--;
-                return DEDENT;
-            }
+    int cur = current_indent();
+    if (indent > cur) {
+        push_indent(indent);
+        return INDENT;
+    } else if (indent < cur) {
+        while (indent < current_indent()) {
+            pop_indent();
+            pending_dedents++;
+        }
+        if (pending_dedents > 0) {
+            pending_dedents--;
+            return DEDENT;
         }
     }
 }
@@ -185,19 +139,14 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 }
 
 \n {
-    /* In flow context, newlines are just whitespace, don't check indentation */
-    if (flow_level == 0) {
-        BEGIN(INDENT_CHECK);
-    }
-    /* Otherwise skip the newline in flow context */
+    BEGIN(INDENT_CHECK);
 }
 
 
 
 "%TAG"           { BEGIN(DIRECTIVE_MODE); return TAG_DIRECTIVE; }
-"%YAML"[ ]?"1"[.,][0-9]  { return YAML_DIRECTIVE; }
-"%"[a-zA-Z][^\n]* { /* Unknown directive - skip */ }
-"---"            { expecting_value = 1; last_was_value = 0; return DOC_START; }
+"%YAML 1.2"      { return YAML_DIRECTIVE; }
+"---"            { expecting_value = 1; return DOC_START; }
 "..."            { expecting_value = 1; return DOC_END; }
 
 <DIRECTIVE_MODE>{
@@ -211,27 +160,21 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 "-"/[ \t\n]      { expecting_value = 1; return BULLET; }
 ":"/[ \t\n]      { expecting_value = 1; return COLON; }
 "?"/[ \t\n]      { expecting_value = 1; return QUESTION; }
-"!"              { yylval->string = strdup("!"); return TAG; }
 "!!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+"!"{NSCAL}* { yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+      { yylval->string = strdup(yytext); return TAG; }
 "&"{NSCAL}+      { yylval->string = strdup(yytext); return ANCHOR; }
 "*"{NSCAL}+      { yylval->string = strdup(yytext); expecting_value = 0; return ALIAS; }
-"["              { enter_flow_context(); return LBRACK; }
-"]"              { exit_flow_context(); return RBRACK; }
-"{"              { enter_flow_context(); return LBRACE; }
-"}"              { exit_flow_context(); return RBRACE; }
+"["              { flow_level++; expecting_value = 1; return LBRACK; }
+"]"              { if (flow_level > 0) flow_level--; expecting_value = 0; return RBRACK; }
+"{"              { flow_level++; expecting_value = 1; return LBRACE; }
+"}"              { if (flow_level > 0) flow_level--; expecting_value = 0; return RBRACE; }
 ":"              { 
     if (expecting_value && flow_level > 0) {
          /* Colon starting a value in flow context = Scalar */
          init_scalar();
          append_scalar(":", 1);
          expecting_value = 0;
-         BEGIN(SIMPLE_SCALAR);
-    } else if (expecting_value && flow_level == 0) {
-         /* In block context, when expecting value, : not followed by space = scalar */
-         init_scalar();
-         append_scalar(":", 1);
          BEGIN(SIMPLE_SCALAR);
     } else if (flow_level > 0) {
          expecting_value = 1;
@@ -282,8 +225,12 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     } else {
         /* End of block scalar - line is less indented */
         /* We need to return this line to the lexer */
-        yyless(0);
-        yylval->string = finalize_block_scalar_value();
+        yyless(0); 
+        char *final = malloc(scalar_content_len + 2);
+        final[0] = block_type;
+        memcpy(final + 1, scalar_content, scalar_content_len);
+        final[scalar_content_len+1] = '\0';
+        yylval->string = final;
         BEGIN(INITIAL);
         return BSCALAR;
     }
@@ -292,13 +239,21 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 <BLOCK_SCALAR>. {
     /* Non-indented line starts with a character */
     yyless(0);
-    yylval->string = finalize_block_scalar_value();
+    char *final = malloc(scalar_content_len + 2);
+    final[0] = block_type;
+    memcpy(final + 1, scalar_content, scalar_content_len);
+    final[scalar_content_len+1] = '\0';
+    yylval->string = final;
     BEGIN(INITIAL);
     return BSCALAR;
 }
 
 <BLOCK_SCALAR><<EOF>> {
-    yylval->string = finalize_block_scalar_value();
+    char *final = malloc(scalar_content_len + 2);
+    final[0] = block_type;
+    memcpy(final + 1, scalar_content, scalar_content_len);
+    final[scalar_content_len+1] = '\0';
+    yylval->string = final;
     BEGIN(INITIAL);
     return BSCALAR;
 }
