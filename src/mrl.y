@@ -145,8 +145,7 @@
 %nonassoc COLON
 %nonassoc SCALAR
 
-%type <sd> document_list
-%type <sd> document
+%type <sd> implicit_document explicit_document explicit_documents
 %type <sd> nodes node node_body scalar
 %type <sd> seq seq_entries seq_entry
 %type <sd> map map_entries map_entry
@@ -158,14 +157,20 @@
 %%
 
 stream:
-    document_list[list] {
-        ctx->diagram = $list;
+    implicit_document[doc] {
+        ctx->diagram = $doc;
+    }
+    | explicit_documents[docs] {
+        ctx->diagram = $docs;
+    }
+    | implicit_document[doc] explicit_documents[docs] {
+        ctx->diagram = sd_compose($doc, $docs);
     }
     ;
 
-document_list:
-    document[doc] { $$ = $doc; }
-    | document_list[list] document[doc] { $$ = sd_compose($list, $doc); }
+explicit_documents:
+    explicit_document[doc] { $$ = $doc; }
+    | explicit_documents[docs] explicit_document[doc] { $$ = sd_compose($docs, $doc); }
     ;
 
 directives:
@@ -185,23 +190,8 @@ directive:
     }
     ;
 
-document:
-    nodes[n] {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_DOC_START; gs->value = NULL; gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        $$ = sd_compose(sd_generator(gs), sd_compose($n, sd_generator(ge)));
-    }
-    | DOC_START nodes[n] {
+explicit_document:
+    DOC_START nodes[n] {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
@@ -219,6 +209,24 @@ document:
     | directives DOC_START nodes[n] {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
+        Generator *ge = malloc(sizeof(Generator));
+        ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
+        
+        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
+            ctx->alphabet->capacity *= 2;
+            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
+        }
+        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
+        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+
+        $$ = sd_compose(sd_generator(gs), sd_compose($n, sd_generator(ge)));
+    }
+    ;
+
+implicit_document:
+    nodes[n] {
+        Generator *gs = malloc(sizeof(Generator));
+        gs->type = GEN_TYPE_DOC_START; gs->value = NULL; gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
         ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
         
