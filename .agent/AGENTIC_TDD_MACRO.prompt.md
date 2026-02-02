@@ -27,7 +27,7 @@ For the core TDD methodology used in individual steps, see [Agentic TDD Protocol
 ## Implementation Details
 
 ### Named References in Bison
-When refactoring Bison grammars, replace positional arguments (e.g., `$1`, `$2`) with named references (e.g., `[name]`). This is part of the "Logic-to-Grammar" effort described in [.agent/ENGINEERING_PLAYBOOK.md](.agent/ENGINEERING_PLAYBOOK.md).
+When refactoring Bison grammars, replace positional arguments (e.g., `$1`, `$2`) with named references (e.g., `[name]`). This is part of the "Logic-to-Grammar" effort described in [Engineering Playbook].
 
 ### Future Awareness
 "Future Awareness" means that while working on an early commit, we use information from later commits to make better design decisions today. For example:
@@ -36,6 +36,7 @@ When refactoring Bison grammars, replace positional arguments (e.g., `$1`, `$2`)
 -   Ensuring agent documentation (this playbook) is present throughout the history.
 
 ## Links
--   [Engineering Playbook](.agent/ENGINEERING_PLAYBOOK.md)
--   [Agentic TDD Protocol](.agent/AGENTIC_TDD.md)
--   [Theory Aligned Solution](.agent/THEORY_ALIGNED_SOLUTION.md)
+
+[Engineering Playbook]: .agent/ENGINEERING_PLAYBOOK.md
+[Agentic TDD Protocol]: .agent/AGENTIC_TDD.md
+[Theory Aligned Solution]: .agent/THEORY_ALIGNED_SOLUTION.md
