@@ -386,22 +386,25 @@ Your instinct was correct. The problem isn't solvable by extending Flex/Bison. I
 - 0 false negatives
 - Clean architecture
 
-### Phase 2: Composed IR (Current: 215+/351)
-- `yaml_compose()` implementation
-- Event to IR mapping
-- Semantic validation through IR transformation
+### Phase 2: ❌ Missing (Target: 240+/351)
+- Semantic validation walk
+- Check 36 constraint categories
+- Build event tree
+- Validate properties
 
-**Johnson's Pattern updated for pawel-yaml:**
+**Johnson's Pattern to Follow:**
 ```c
-/* Stage 1 produces event stream */
-/* Stage 2 (Compose) parses it: */
-int yaml_compose(void) {
-    // ...
-    int result = composition_yy_parse(); 
-    // This is Phase 2 semantic validation
-    return result;
-}
-```
+/* In mrl.y */
+documents : document_list
+    {
+        $$ = $1;
+    }
+;
+
+%{
+    int validate_events(struct Event *doc);
+%}
+
 // In semantic action:
 grammar_rule : components
     {
@@ -415,32 +418,31 @@ grammar_rule : components
 
 ---
 
----
+## 10. Conclusion: The YACC Paper Validates Your Architecture
 
-## 11. 2026 Update: The 4-Stage Pipeline & GLR Safety
+### Summary Table
 
-### 11.1 From 2 Phases to 4 Stages
-The architecture has evolved into a robust 4-stage pipeline:
-1. **Parse**: `scanning.l` + `parsing.y` (Syntactic Events)
-2. **Compose**: `composition.l` + `composition.y` (Event to IR)
-3. **Serialize**: IR to Event transformation
-4. **Present**: Event to Presentation (RML output)
+| Aspect | YACC Says | Your Parser | Status |
+|--------|-----------|-------------|--------|
+| **Grammar for syntax** | Use grammar rules | 215 tests passing | ✅ |
+| **Actions for computation** | Use after matching | Event stream generated | ✅ |
+| **Semantic validation** | Post-parse separate | Missing (was removed) | ❌ |
+| **Lexer context tracking** | Acceptable with limits | `flow_level` counter | ✅ |
+| **State machines for semantics** | Avoid ("noxious") | Not attempted after Flex fix | ✅ |
+| **Error handling** | In actions or yyerror | Can call from validation | ✅ Ready |
+| **Conflicts in grammar** | Accept if unavoidable | 31 shifts/reduces | ✅ OK |
 
-This confirms Johnson's original vision of separate transformations.
+### The Path Forward
 
-### 11.2 GLR Memory Management (The Double-Free Insight)
-When using Bison's GLR mode, the parser may follow multiple paths simultaneously. This creates a high risk of **double-free** errors if destructors are used alongside manual `free()` calls in actions.
+1. **Keep current grammar** (215/351 baseline is correct)
+2. **Restore validation layer** (implement Phase 2 `validate_events()`)
+3. **Check semantic constraints** (36 false positive categories)
+4. **Expected improvement** (215 → 240+/351, 68%+)
 
-**Current Protocol:**
-- Use `%destructor` for automatic cleanup of discarded branches.
-- In manual actions, set pointers to `NULL` after `free()` to avoid double cleanup.
-- Ensure destructors are NULL-safe (check `$$` before `free`).
+This aligns perfectly with:
+- ✅ RML theory (semantic constraints outside grammar)
+- ✅ YACC principles (two-phase parsing)
+- ✅ Current architecture (clean separation)
 
-### 11.3 Global State & Pipeline Control
-The use of global flags (like `yyout` for diagnostic dumping) demonstrates the "Lexical Tie-in" necessity. While Johnson warns against them, they remain the most practical way to toggle behavior across the 4 stages without bloating function signatures.
-
----
-
-## 12. Conclusion: The Unified Theory of YAML Parsing
-The journey from RML theory to current implementation validates that YAML's complexity is not in its syntax, but in its **multi-stage transformations**. By adhering to the YACC-prescribed separation of concerns, the parser maintains structural integrity even as semantic complexity grows.
+**The YACC paper doesn't just support this approach—it invented it.**
 
