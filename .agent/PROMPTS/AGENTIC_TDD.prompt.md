@@ -2,21 +2,16 @@
 
 Enforce the Agentic TDD Protocol to ensure every mutation is tool-verifiable.
 
+```yaml
+- &red 🔴: Establish failure writing a failing test case
+- 🟢: Write the simplest possible code to pass the test
+- 🔵: Generalize the quick fix into proper abstractions
+- 🟡: Protect History
+- ⚫: Commit Checkpoint
+- Definition of Done is:
+    met: ✅
+    not met: *red
 ```
-Start
-  ╥
-  ╠═════════════════════╦═══════════════╡No
-  ║                     ║                 ║  
- 🔴 RED ╞═ 🟢 GREEN   🔵 REFACTOR       ║
-            ╥           ╥                 ║
-            ╠═══════════╝                 ║
-            ║                             ╨
-           🟡 VERIFY ╞═ ⚫ COMMIT ╞═ Definition Met?
-                                          ╥
-                                         Yes ╞═ ✅ DONE
-```
-
----
 
 ---
 
