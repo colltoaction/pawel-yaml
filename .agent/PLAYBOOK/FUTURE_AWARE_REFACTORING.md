@@ -1,52 +1,42 @@
-# Playbook: Future-Aware Refactoring ⚛️
+# Agentic TDD Macro Cycle Playbook
 
-Adopt the **Agentic TDD Macro Cycle** to align project history with architectural goals. Combining interactive rebasing with "look-ahead" design decisions ensures every commit is consistent with the project's final state.
+This document describes the **Agentic TDD Macro Cycle** (also known as the "Future-Aware Refactoring" playbook).
 
-## 🔄 Macro Cycle: Plan-Rebase-Polish
+## Overview
 
-### 1. Identify Goal
-Define the structural or stylistic rework (e.g., "Use Named References").
+The Agentic TDD Macro Cycle is a systematic approach to refactoring a codebase by rebasing its history and applying future-known best practices at each step. This ensures that the entire project history remains clean, consistent, and "aware" of the architectural decisions made in later stages.
 
-### 2. Locate Baseline
-Find the first relevant commit in history.
+For the core TDD methodology used in individual steps, see [Agentic TDD Protocol].
 
-### 3. Initiate Rebase
-Start interactive rebase (`git rebase -i <baseline>`) and mark targets for `edit`.
+## Protocol
 
-### 4. Stop Protocol (At Each Commit)
-- **Sync Infrastructure**: Check out the latest versions of shared infrastructure (e.g., `.agent/tooling.sh`).
-- **Apply Rework**: Implement the target change for the current scope.
-- **Verify**: Rebuild and run the test harness (`./.agent/tooling.sh tdd:test <ID>`).
-- **Continue**: `git add` and `git rebase --continue`.
+1.  **Identify the Goal**: Define the architectural or stylistic change that should be applied across the history (e.g., "Use Named References in Bison grammar").
+2.  **Locate the Baseline**: Find the first commit in the history where the change becomes relevant.
+3.  **Initiate Rebase**: Start an interactive rebase (`git rebase -i <baseline>`) and set all relevant commits to `edit` (or `e`).
+4.  **At Each Stop (The "Edit Stop" Cycle)**:
+    -   **Synchronize Infrastructure**: Check out the latest versions of shared infrastructure files (test harnesses, documentation, build scripts) from the `growing-yaml` branch.
+    -   **Apply Refactoring**: Implement the target refactoring for the current commit's scope.
+    -   **TDD Verification**: 
+        -   Build the project.
+        -   Run tests using the [test_yaml_suite.py](test_yaml_suite.py) or [tdd_harness.sh](tdd_harness.sh).
+        -   Ensure behavior is consistent with the current commit's intent.
+    -   **Commit**: Amend the commit or create a new `refactor:` commit.
+    -   **Continue**: `git rebase --continue`.
+5.  **Final Polish**: Verify the final state against the original HEAD to ensure no regressions were introduced.
 
----
+## Implementation Details
 
-## 🛡 Conflict Protocol: INSPECT-ALIGN-CONTINUE
-Apply this protocol when architectural conflicts occur during rebase.
+### Named References in Bison
+When refactoring Bison grammars, replace positional arguments (e.g., `$1`, `$2`) with named references (e.g., `[name]`). This is part of the "Logic-to-Grammar" effort described in [Engineering Playbook].
 
-### 1. INSPECT (The Future)
-- Identify the "future" commit that successfully implemented the feature.
-- Use `git show <future_commit>:<file>` to examine the final architecture.
-- **Goal**: Understand the destination to ensure the current resolution aligns with it.
+### Future Awareness
+"Future Awareness" means that while working on an early commit, we use information from later commits to make better design decisions today. For example:
+-   Declaring tokens that we know will be needed later.
+-   Setting up data structures that can support future features.
+-   Ensuring agent documentation (this playbook) is present throughout the history.
 
-### 2. ALIGN (The Present)
-Resolve conflicts by adopting future architectural patterns immediately.
-- **Use Named References**: Adopt `[name]` instead of `$1`.
-- **Merge Logic**: Prefer declarative grammar rules over procedural hacks.
-- **Sync Tooling**: Immediately adopt upgraded `Makefile` or scripts.
+## Links
 
-### 3. VERIFY (The Harness)
-Ensure the intermediate commit is functional.
-- Rebuild via `make clean && make`.
-- Verify with `./.agent/tooling.sh tdd:test <ID>`.
-
-### 4. CONTINUE
-- `git add <files>`
-- `git rebase --continue`
-
----
-
-## 🎯 Strategic Benefits
-- **Zero Regressions**: Conflicts are solved once in the correct direction.
-- **Clean History**: Every commit is stylistically and architecturally consistent.
-- **Efficiency**: Transcend positional debt by looking ahead to the destination.
+[Engineering Playbook]: .agent/ENGINEERING_PLAYBOOK.md
+[Agentic TDD Protocol]: .agent/AGENTIC_TDD.md
+[Theory Aligned Solution]: .agent/THEORY_ALIGNED_SOLUTION.md
