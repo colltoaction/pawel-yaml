@@ -341,7 +341,7 @@ map:
 
 map_entries:
     map_entry[entry] { $$ = $entry; }
-    | map_entries[entries] map_entry[entry] { $$ = sd_compose($entries, $entry); }
+    | map_entry[entry] map_entries[entries] { $$ = sd_compose($entry, $entries); }
     ;
 
 map_entry:
