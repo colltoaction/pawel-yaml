@@ -36,20 +36,21 @@ int yyget_lineno(void *scanner);
         char *anchor;
         char *tag;
     } NodeProps;
-}
 
-%code {
-    int yylex(void *yylval_param, void *yyscanner);
-    void yyerror(void *scanner, const char *s);
-    
     struct Event* mk_evt(EventType type, char *val, char quote);
     struct Event* append_evt(struct Event *head, struct Event *tail);
     void emit_events(struct Event *head);
 }
 
+%code {
+    int yylex(YYSTYPE *yylval_param, void *yyscanner);
+    void yyerror(void *scanner, const char *s);
+}
+
 %glr-parser
-%expect 31
+%expect 32
 %expect-rr 0
+
 %define api.pure true
 %define parse.error detailed
 %parse-param {void *scanner}
@@ -91,23 +92,14 @@ stream:
     ;
 
 documents:
-    implicit_document[doc] { 
-        emit_events($doc); 
-    }
+    implicit_document[doc] { emit_events($doc); }
     | explicit_documents
     | implicit_document[doc] explicit_documents
-    | DOC_END { 
-        /* Bare document end marker - no output */
-    }
     ;
 
 explicit_documents:
-    explicit_document[doc] { 
-        emit_events($doc); 
-    }
-    | explicit_documents explicit_document[doc] { 
-        emit_events($doc); 
-    }
+    explicit_document[doc] { emit_events($doc); }
+    | explicit_documents explicit_document[doc] { emit_events($doc); }
     ;
 
 explicit_document:
@@ -116,22 +108,10 @@ explicit_document:
         struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
         $$ = append_evt(ds, append_evt($body, de));
     }
-    | DOC_START optional_doc_end {
-        struct Event *ds = mk_evt(EVT_DOC_START, "---", 0);
-        struct Event *sc = mk_evt(EVT_SCALAR, "", 0);
-        struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
-        $$ = append_evt(ds, append_evt(sc, de));
-    }
     | directives DOC_START document_body[body] optional_doc_end {
         struct Event *ds = mk_evt(EVT_DOC_START, "---", 0);
         struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
         $$ = append_evt(ds, append_evt($body, de));
-    }
-    | directives DOC_START optional_doc_end {
-        struct Event *ds = mk_evt(EVT_DOC_START, "---", 0);
-        struct Event *sc = mk_evt(EVT_SCALAR, "", 0);
-        struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
-        $$ = append_evt(ds, append_evt(sc, de));
     }
     ;
 
@@ -142,9 +122,9 @@ directives:
 
 directive:
     YAML_DIRECTIVE
-    | TAG_DIRECTIVE SCALAR SCALAR { free($2); free($3); }
-    | TAG_DIRECTIVE TAG SCALAR { free($2); free($3); }
-    | TAG_DIRECTIVE TAG TAG { free($2); free($3); }
+    | TAG_DIRECTIVE SCALAR[s1] SCALAR[s2] { free($s1); free($s2); }
+    | TAG_DIRECTIVE TAG[t] SCALAR[s] { free($t); free($s); }
+    | TAG_DIRECTIVE TAG[t1] TAG[t2] { free($t1); free($t2); }
     ;
 
 optional_doc_end:
@@ -153,9 +133,7 @@ optional_doc_end:
     ;
 
 implicit_document:
-    document_body[body] optional_doc_end {
-        /* Implicit document may optionally have document end marker (...) 
-           Fixes S4T7: Accept cases like "aaa: bbb\n...\n" */
+    document_body[body] {
         struct Event *ds = mk_evt(EVT_DOC_START, NULL, 0);
         struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
         $$ = append_evt(ds, append_evt($body, de));
@@ -164,61 +142,41 @@ implicit_document:
 
 document_body:
     node[n] { $$ = $n; }
-    | map_entries[entries] %dprec 3 {
-        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
-        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
-        $$ = append_evt(ms, append_evt($entries, me));
-    }
-    | seq_entries[entries] %dprec 2 {
-        struct Event *ss = mk_evt(EVT_SEQ_START, NULL, 0);
-        struct Event *se = mk_evt(EVT_SEQ_END, NULL, 0);
-        $$ = append_evt(ss, append_evt($entries, se));
-    }
-    | node_props[props] map_entries[entries] %dprec 4 {
-        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
-        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
-        $$ = append_evt(ms, append_evt($entries, me));
-        attach_props($$, $props.anchor, $props.tag);
-    }
-    | node_props[props] seq_entries[entries] %dprec 3 {
-        struct Event *ss = mk_evt(EVT_SEQ_START, NULL, 0);
-        struct Event *se = mk_evt(EVT_SEQ_END, NULL, 0);
-        $$ = append_evt(ss, append_evt($entries, se));
+    ;
+
+node:
+    node_body[body] { $$ = $body; }
+    | node_props[props] node_body[body] {
+        $$ = $body;
         attach_props($$, $props.anchor, $props.tag);
     }
     ;
 
-node:
-    node_body[body] %dprec 2 { $$ = $body; }
-    | node_props[props] node_body[body] %dprec 3 { $$ = $body; attach_props($$, $props.anchor, $props.tag); }
-    | node_props[props] %dprec 1 { $$ = mk_evt(EVT_SCALAR, "", 0); attach_props($$, $props.anchor, $props.tag); }
+node_props:
+    TAG[t] { $$.tag = $t; $$.anchor = NULL; }
+    | ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
+    | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
+    | TAG[t] ANCHOR[a] { $$.tag = $t; $$.anchor = $a; }
     ;
 
 node_body:
     scalar[s] { $$ = $s; }
     | ALIAS[a] { $$ = mk_evt(EVT_ALIAS, $a, 0); free($a); }
-    | flow_seq[fs] { $$ = $fs; }
-    | flow_map[fm] { $$ = $fm; }
-    | collection[coll] { $$ = $coll; }
+    | collection[c] { $$ = $c; }
     ;
 
-node_props:
-    TAG[t] { $$.anchor = NULL; $$.tag = $t; }
-    | ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
-    | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
-    | TAG[t] ANCHOR[a] { $$.anchor = $a; $$.tag = $t; }
+collection:
+    seq[s] { $$ = $s; }
+    | map[m] { $$ = $m; }
+    | flow_seq[fs] { $$ = $fs; }
+    | flow_map[fm] { $$ = $fm; }
     ;
 
 scalar:
     SCALAR[s] { $$ = mk_evt(EVT_SCALAR, $s, 0); free($s); }
-    | QSCALAR[s] { $$ = mk_evt(EVT_SCALAR, $s, '"'); free($s); }
-    | SSCALAR[s] { $$ = mk_evt(EVT_SCALAR, $s, '\''); free($s); }
-    | BSCALAR[s] { $$ = mk_evt(EVT_SCALAR, $s + 1, $s[0]); free($s); }
-    ;
-
-collection:
-    map[m] { $$ = $m; }
-    | seq[s] { $$ = $s; }
+    | QSCALAR[qs] { $$ = mk_evt(EVT_SCALAR, $qs, '"'); free($qs); }
+    | SSCALAR[ss] { $$ = mk_evt(EVT_SCALAR, $ss, '\''); free($ss); }
+    | BSCALAR[bs] { $$ = mk_evt(EVT_SCALAR, $bs + 1, $bs[0]); free($bs); }
     ;
 
 seq:
@@ -235,13 +193,8 @@ seq_entries:
     ;
 
 seq_entry:
-    BULLET node[n] %dprec 2 { $$ = $n; }
-    | BULLET map_entries[entries] %dprec 3 {
-        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
-        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
-        $$ = append_evt(ms, append_evt($entries, me));
-    }
-    | BULLET %dprec 1 { $$ = mk_evt(EVT_SCALAR, "", 0); }
+    BULLET node[n] { $$ = $n; }
+    | BULLET { $$ = mk_evt(EVT_SCALAR, "", 0); }
     ;
 
 map:
@@ -258,22 +211,14 @@ map_entries:
     ;
 
 map_entry:
-    /* Explicit key with explicit value */
-    entry_key[key] COLON node[val] %dprec 3 { $$ = append_evt($key, $val); }
-    | QUESTION node[key] COLON node[val] %dprec 5 { $$ = append_evt($key, $val); }
-    
-    /* Explicit key with implicit nil value (YAML spec: value defaults to null) */
-    | entry_key[key] COLON %dprec 1 { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
-    | QUESTION node[key] COLON %dprec 1 { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
-    | QUESTION node[key] %dprec 2 { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
-    
-    /* Implicit key with explicit value (key defaults to null) */
-    | COLON node[val] %dprec 2 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
-    | QUESTION COLON node[val] %dprec 2 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
-    
-    /* Both key and value implicit nil */
-    | COLON %dprec 1 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
-    | QUESTION COLON %dprec 1 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
+    entry_key[key] COLON node[val] { $$ = append_evt($key, $val); }
+    | QUESTION node[key] COLON node[val] { $$ = append_evt($key, $val); }
+    | entry_key[key] COLON { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
+    | COLON node[val] { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
+    | COLON { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
+    | QUESTION node[key] COLON { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
+    | QUESTION COLON node[val] { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
+    | QUESTION COLON { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
     ;
 
 entry_key:
@@ -281,6 +226,10 @@ entry_key:
     | ALIAS[a] { $$ = mk_evt(EVT_ALIAS, $a, 0); free($a); }
     | flow_seq[fs] { $$ = $fs; }
     | flow_map[fm] { $$ = $fm; }
+    | node_props[props] scalar[s] { $$ = $s; attach_props($$, $props.anchor, $props.tag); }
+    | node_props[props] ALIAS[a] { $$ = mk_evt(EVT_ALIAS, $a, 0); attach_props($$, NULL, $props.tag); free($a); }
+    | node_props[props] flow_seq[fs] { $$ = $fs; attach_props($$, $props.anchor, $props.tag); }
+    | node_props[props] flow_map[fm] { $$ = $fm; attach_props($$, $props.anchor, $props.tag); }
     ;
 
 flow_seq:
@@ -297,50 +246,9 @@ flow_seq:
     ;
 
 flow_seq_entries:
-    flow_node[n] { 
-        /* Reject bare dash in flow sequences at parse time */
-        if ($n && $n->type == EVT_SCALAR && $n->value && strcmp($n->value, "-") == 0 && $n->quote == 0) {
-            yyerror(NULL, "bare dash '-' not allowed in flow context");
-            YYERROR;
-        }
-        $$ = $n; 
-    }
-    | flow_seq_entries[entries] COMMA flow_node[n] { 
-        if ($n && $n->type == EVT_SCALAR && $n->value && strcmp($n->value, "-") == 0 && $n->quote == 0) {
-            yyerror(NULL, "bare dash '-' not allowed in flow context");
-            YYERROR;
-        }
-        $$ = append_evt($entries, $n); 
-    }
+    flow_node[n] { $$ = $n; }
+    | flow_seq_entries[entries] COMMA flow_node[n] { $$ = append_evt($entries, $n); }
     | flow_seq_entries[entries] COMMA { $$ = $entries; }
-    | flow_node[key] COLON flow_node[val] {
-        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
-        ms->style = '{';
-        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
-        $$ = append_evt(ms, append_evt($key, append_evt($val, me)));
-    }
-    | flow_node[key] COLON {
-        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
-        ms->style = '{';
-        struct Event *val = mk_evt(EVT_SCALAR, "", 0);
-        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
-        $$ = append_evt(ms, append_evt($key, append_evt(val, me)));
-    }
-    | COLON flow_node[val] {
-        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
-        ms->style = '{';
-        struct Event *key = mk_evt(EVT_SCALAR, "", 0);
-        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
-        $$ = append_evt(ms, append_evt(key, append_evt($val, me)));
-    }
-    | COLON {
-        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
-        ms->style = '{';
-        struct Event *key = mk_evt(EVT_SCALAR, "", 0);
-        struct Event *val = mk_evt(EVT_SCALAR, "", 0);
-        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
-        $$ = append_evt(ms, append_evt(key, append_evt(val, me)));
-    }
     ;
 
 flow_map:
@@ -378,8 +286,11 @@ void yyerror(void *scanner, const char *s) {
 struct Event* mk_evt(EventType type, char *val, char quote) {
     struct Event *e = calloc(1, sizeof(struct Event));
     e->type = type;
-    if (val) e->value = strdup(val);
+    e->value = val ? strdup(val) : NULL;
+    e->anchor = NULL;
+    e->tag = NULL;
     e->quote = quote;
+    e->next = NULL;
     return e;
 }
 
@@ -407,64 +318,6 @@ static void print_indent(int depth) {
     for (int i = 0; i < depth; i++) fputc(' ', stdout);
 }
 
-/* Expand YAML shorthand tags to full canonical form */
-const char* expand_tag(const char *tag) {
-    if (!tag) return NULL;
-    
-    /* Standard shorthand tags */
-    if (strcmp(tag, "!!str") == 0) return "tag:yaml.org,2002:str";
-    if (strcmp(tag, "!!int") == 0) return "tag:yaml.org,2002:int";
-    if (strcmp(tag, "!!float") == 0) return "tag:yaml.org,2002:float";
-    if (strcmp(tag, "!!bool") == 0) return "tag:yaml.org,2002:bool";
-    if (strcmp(tag, "!!null") == 0) return "tag:yaml.org,2002:null";
-    if (strcmp(tag, "!!seq") == 0) return "tag:yaml.org,2002:seq";
-    if (strcmp(tag, "!!map") == 0) return "tag:yaml.org,2002:map";
-    
-    /* Already expanded or custom tag - return as-is */
-    return tag;
-}
-
-/* Apply line folding to double-quoted string values
- * YAML spec: newline + leading spaces -> single space
- * This matches the expected folding behavior for double-quoted strings
- */
-static char* apply_line_folding(const char *value) {
-    if (!value) return NULL;
-    
-    /* Count space needed for folded string */
-    int result_len = 0;
-    for (int i = 0; value[i]; i++) {
-        if (value[i] == '\n') {
-            /* Replace newline + spaces with single space */
-            int j = i + 1;
-            while (value[j] && (value[j] == ' ' || value[j] == '\t')) j++;
-            result_len += 1;  /* Single space replaces newline + spaces */
-            i = j - 1;        /* Continue from after spaces */
-        } else {
-            result_len++;
-        }
-    }
-    
-    /* Build folded string */
-    char *folded = malloc(result_len + 1);
-    int out_idx = 0;
-    
-    for (int i = 0; value[i]; i++) {
-        if (value[i] == '\n') {
-            /* Replace newline + spaces with single space */
-            int j = i + 1;
-            while (value[j] && (value[j] == ' ' || value[j] == '\t')) j++;
-            folded[out_idx++] = ' ';
-            i = j - 1;  /* Continue from after spaces */
-        } else {
-            folded[out_idx++] = value[i];
-        }
-    }
-    folded[out_idx] = '\0';
-    
-    return folded;
-}
-
 void emit_events(struct Event *head) {
     static int depth = 1;
     while (head) {
@@ -474,30 +327,19 @@ void emit_events(struct Event *head) {
             case EVT_SCALAR:
                 fputs("=VAL ", stdout);
                 if (head->anchor) printf("&%s ", head->anchor + 1);
-                if (head->tag) printf("<%s> ", expand_tag(head->tag));
+                if (head->tag) printf("<%s> ", head->tag);
                 fputc(head->quote ? head->quote : ':', stdout);
-                if (head->value) {
-                    /* For double-quoted strings, apply line folding per YAML spec */
-                    if (head->quote == '"') {
-                        char *folded = apply_line_folding(head->value);
-                        if (folded) {
-                            fputs(folded, stdout);
-                            free(folded);
-                        }
-                    } else {
-                        fputs(head->value, stdout);
-                    }
-                }
+                if (head->value) fputs(head->value, stdout);
                 fputc('\n', stdout);
                 break;
             case EVT_ALIAS:
-                fputs("=ALI *", stdout); fputs(head->value + 1, stdout); fputc('\n', stdout);
+                fputs("=ALI ", stdout); fputs(head->value + 1, stdout); fputc('\n', stdout);
                 break;
             case EVT_SEQ_START:
                 fputs("+SEQ", stdout);
                 if (head->style == '[') fputs(" []", stdout);
                 if (head->anchor) printf(" &%s", head->anchor + 1);
-                if (head->tag) printf(" <%s>", expand_tag(head->tag));
+                if (head->tag) printf(" <%s>", head->tag);
                 fputc('\n', stdout);
                 break;
             case EVT_SEQ_END:   fputs("-SEQ\n", stdout); break;
@@ -505,7 +347,7 @@ void emit_events(struct Event *head) {
                 fputs("+MAP", stdout);
                 if (head->style == '{') fputs(" {}", stdout);
                 if (head->anchor) printf(" &%s", head->anchor + 1);
-                if (head->tag) printf(" <%s>", expand_tag(head->tag));
+                if (head->tag) printf(" <%s>", head->tag);
                 fputc('\n', stdout);
                 break;
             case EVT_MAP_END:   fputs("-MAP\n", stdout); break;
@@ -530,14 +372,9 @@ int yylex_init(void **scanner);
 int yylex_destroy(void *scanner);
 void yyset_in(FILE *in, void *scanner);
 
-int mrl_entry(int argc, char **argv) {
-    (void)argc; (void)argv;
+int main(int argc, char **argv) {
     void *scanner; yylex_init(&scanner); yyset_in(stdin, scanner);
     int result = yyparse(scanner);
     yylex_destroy(scanner);
     return result;
-}
-
-int main(int argc, char **argv) {
-    return mrl_entry(argc, argv);
 }
