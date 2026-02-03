@@ -45,6 +45,7 @@ int yyget_lineno(void *scanner);
     struct Event* mk_evt(EventType type, char *val, char quote);
     struct Event* append_evt(struct Event *head, struct Event *tail);
     void emit_events(struct Event *head);
+    int validate_events(struct Event *head);
 }
 
 %glr-parser
@@ -91,7 +92,10 @@ stream:
     ;
 
 documents:
-    implicit_document[doc] { emit_events($doc); }
+    implicit_document[doc] { 
+    if (validate_events($doc)) { exit(1); }
+    emit_events($doc); 
+}
     | explicit_documents
     | implicit_document[doc] explicit_documents
     | DOC_END { 
@@ -100,8 +104,14 @@ documents:
     ;
 
 explicit_documents:
-    explicit_document[doc] { emit_events($doc); }
-    | explicit_documents explicit_document[doc] { emit_events($doc); }
+    explicit_document[doc] { 
+    if (validate_events($doc)) { exit(1); }
+    emit_events($doc); 
+}
+| explicit_documents explicit_document[doc] { 
+    if (validate_events($doc)) { exit(1); }
+    emit_events($doc); 
+}
     ;
 
 explicit_document:
@@ -444,6 +454,30 @@ static char* apply_line_folding(const char *value) {
     folded[out_idx] = '\0';
     
     return folded;
+}
+
+/* Validate event tree for YAML constraints
+ * Returns: 0 if valid, 1 if invalid (should reject) */
+int validate_events(struct Event *head) {
+    /* Check for bare dashes in flow sequences
+     * Pattern: SEQ_START { SCALAR "-" } SEQ_END in flow context
+     * These are invalid per YAML spec (ambiguous without whitespace) */
+    
+    int in_flow_seq = 0;
+    for (struct Event *e = head; e; e = e->next) {
+        if (e->type == EVT_SEQ_START && e->style == '[') {
+            in_flow_seq = 1;
+        } else if (e->type == EVT_SEQ_END && in_flow_seq) {
+            in_flow_seq = 0;
+        } else if (in_flow_seq && e->type == EVT_SCALAR && e->value && 
+                   strcmp(e->value, "-") == 0 && e->quote == 0) {
+            /* Bare dash scalar in flow sequence - invalid */
+            fprintf(stderr, "syntax error, bare dash in flow sequence\n");
+            return 1;
+        }
+    }
+    
+    return 0;  /* Valid */
 }
 
 void emit_events(struct Event *head) {
