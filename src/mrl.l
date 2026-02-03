@@ -130,18 +130,25 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     }
     
     BEGIN(INITIAL);
-    int cur = current_indent();
-    if (indent > cur) {
-        push_indent(indent);
-        return INDENT;
-    } else if (indent < cur) {
-        while (indent < current_indent()) {
-            pop_indent();
-            pending_dedents++;
-        }
-        if (pending_dedents > 0) {
-            pending_dedents--;
-            return DEDENT;
+    
+    /* In flow context ({...} or [...]), ignore indentation changes */
+    if (flow_level > 0) {
+        /* Just go back to INITIAL without emitting INDENT/DEDENT */
+        /* yyless(0) doesn't work here, so we just continue */
+    } else {
+        int cur = current_indent();
+        if (indent > cur) {
+            push_indent(indent);
+            return INDENT;
+        } else if (indent < cur) {
+            while (indent < current_indent()) {
+                pop_indent();
+                pending_dedents++;
+            }
+            if (pending_dedents > 0) {
+                pending_dedents--;
+                return DEDENT;
+            }
         }
     }
 }
