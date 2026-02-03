@@ -201,6 +201,11 @@ NSCAL [a-zA-Z0-9\-\._%:/]
          append_scalar(":", 1);
          expecting_value = 0;
          BEGIN(SIMPLE_SCALAR);
+    } else if (expecting_value && flow_level == 0) {
+         /* In block context, when expecting value, : not followed by space = scalar */
+         init_scalar();
+         append_scalar(":", 1);
+         BEGIN(SIMPLE_SCALAR);
     } else if (flow_level > 0) {
          expecting_value = 1;
          return COLON; 
