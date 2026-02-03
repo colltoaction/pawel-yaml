@@ -193,8 +193,13 @@ seq_entries:
     ;
 
 seq_entry:
-    BULLET node[n] { $$ = $n; }
-    | BULLET { $$ = mk_evt(EVT_SCALAR, "", 0); }
+    BULLET node[n] %dprec 2 { $$ = $n; }
+    | BULLET map_entries[entries] %dprec 3 {
+        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
+        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
+        $$ = append_evt(ms, append_evt($entries, me));
+    }
+    | BULLET %dprec 1 { $$ = mk_evt(EVT_SCALAR, "", 0); }
     ;
 
 map:
