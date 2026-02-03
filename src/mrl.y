@@ -110,10 +110,22 @@ explicit_document:
         struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
         $$ = append_evt(ds, append_evt($body, de));
     }
+    | DOC_START optional_doc_end {
+        struct Event *ds = mk_evt(EVT_DOC_START, "---", 0);
+        struct Event *sc = mk_evt(EVT_SCALAR, "", 0);
+        struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
+        $$ = append_evt(ds, append_evt(sc, de));
+    }
     | directives DOC_START document_body[body] optional_doc_end {
         struct Event *ds = mk_evt(EVT_DOC_START, "---", 0);
         struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
         $$ = append_evt(ds, append_evt($body, de));
+    }
+    | directives DOC_START optional_doc_end {
+        struct Event *ds = mk_evt(EVT_DOC_START, "---", 0);
+        struct Event *sc = mk_evt(EVT_SCALAR, "", 0);
+        struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
+        $$ = append_evt(ds, append_evt(sc, de));
     }
     ;
 
