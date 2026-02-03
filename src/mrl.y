@@ -122,6 +122,7 @@
 }
 
 %define api.pure true
+%define parse.error detailed
 %parse-param {ParserContext *ctx}
 %parse-param {void *scanner}
 %lex-param {void *scanner}
