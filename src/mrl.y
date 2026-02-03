@@ -397,7 +397,7 @@ void emit_events(struct Event *head) {
                 fputc('\n', stdout);
                 break;
             case EVT_ALIAS:
-                fputs("=ALI ", stdout); fputs(head->value + 1, stdout); fputc('\n', stdout);
+                fputs("=ALI *", stdout); fputs(head->value + 1, stdout); fputc('\n', stdout);
                 break;
             case EVT_SEQ_START:
                 fputs("+SEQ", stdout);
