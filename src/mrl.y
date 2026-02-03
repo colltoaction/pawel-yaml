@@ -284,6 +284,21 @@ flow_seq_entries:
     flow_node[n] { $$ = $n; }
     | flow_seq_entries[entries] COMMA flow_node[n] { $$ = append_evt($entries, $n); }
     | flow_seq_entries[entries] COMMA { $$ = $entries; }
+    | COLON flow_node[val] {
+        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
+        ms->style = '{';
+        struct Event *key = mk_evt(EVT_SCALAR, "", 0);
+        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
+        $$ = append_evt(ms, append_evt(key, append_evt($val, me)));
+    }
+    | COLON {
+        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
+        ms->style = '{';
+        struct Event *key = mk_evt(EVT_SCALAR, "", 0);
+        struct Event *val = mk_evt(EVT_SCALAR, "", 0);
+        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
+        $$ = append_evt(ms, append_evt(key, append_evt(val, me)));
+    }
     ;
 
 flow_map:
