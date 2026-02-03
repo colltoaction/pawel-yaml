@@ -2,6 +2,10 @@
 #include "parser.tab.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+
+/* Forward declaration for error handling */
+void yyerror(void *scanner, const char *msg);
 
 static int indent_stack[100] = {0};
 static int indent_sp = 0;
@@ -79,6 +83,28 @@ static char *finalize_block_scalar_value(void) {
     memcpy(final + 1, scalar_content, scalar_content_len);
     final[scalar_content_len + 1] = '\0';
     return final;
+}
+
+/* Validate escape sequences in double-quoted strings. 
+   Valid YAML escapes: \\ \" \/ \n \t \r \0 \a \b \f \v \e \N{...} \uXXXX \UXXXXXXXX \xXX
+   Returns 1 if valid, 0 if invalid (error message printed to stderr) */
+static int validate_dquote_escapes(const char *str, int len) {
+    for (int i = 0; i < len; i++) {
+        if (str[i] == '\\' && i + 1 < len) {
+            char next = str[i+1];
+            /* Check if escape sequence is valid */
+            if (next != '\\' && next != '"' && next != '/' && next != 'n' && next != 't' && 
+                next != 'r' && next != '0' && next != 'a' && next != 'b' && 
+                next != 'f' && next != 'v' && next != 'e' &&
+                next != 'N' && next != 'u' && next != 'U' && next != 'x') {
+                fprintf(stderr, "syntax error, invalid escape sequence\n");
+                return 0;
+            }
+            /* Skip the escape sequence (backslash + next char) */
+            i += 1;
+        }
+    }
+    return 1;
 }
 %}
 
@@ -214,7 +240,20 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     }
 }
 ","              { expecting_value = 1; return COMMA; }
-\"[^\"]*\"       { yylval->string = strndup(yytext+1, strlen(yytext)-2); expecting_value = 0; return QSCALAR; }
+\"([^\"\\]|\\.)*\" {
+    /* Double-quoted string - validate escape sequences */
+    int len = strlen(yytext) - 2;
+    char *content = strndup(yytext + 1, len);
+    if (!validate_dquote_escapes(content, len)) {
+        /* Invalid escape detected - error already printed by validate_dquote_escapes */
+        free(content);
+        /* In Bison GLR parser, we must exit cleanly to signal parse failure */
+        exit(1);
+    }
+    yylval->string = content;
+    expecting_value = 0;
+    return QSCALAR;
+}
 \'[^\']*\'       { yylval->string = strndup(yytext+1, strlen(yytext)-2); expecting_value = 0; return SSCALAR; }
 "|"[1-9]*[-+]*[ \t]*(\n|#.*)      { init_block_scalar('|'); expecting_value = 0; BEGIN(BLOCK_SCALAR); }
 ">"[1-9]*[-+]*[ \t]*(\n|#.*)      { init_block_scalar('>'); expecting_value = 0; BEGIN(BLOCK_SCALAR); }
