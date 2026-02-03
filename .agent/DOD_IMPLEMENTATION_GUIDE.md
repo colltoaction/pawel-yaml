@@ -2,7 +2,7 @@
 
 **Purpose:** Bridge Definition of Done with UNIX first principles  
 **Audience:** Developer implementing Phase 2  
-**Duration:** 2-4 hours  
+**Duration:** 2-4 time units  
 
 ---
 
@@ -14,7 +14,7 @@ You have a complete Definition of Done. Now here's how to execute it using UNIX-
 
 ## Phase 2 Implementation Walkthrough
 
-### Step 1: Understand the Single Responsibility (15 min)
+### Step 1: Understand the Single Responsibility (15 smaller time units)
 
 **UNIX Principle:** Each component does one thing well.
 
@@ -39,7 +39,7 @@ That's it. Nothing else. No side effects except error reporting.
 
 ---
 
-### Step 2: Review the YACC Pattern (20 min)
+### Step 2: Review the YACC Pattern (20 smaller time units)
 
 **Reference:** `.agent/YACC_INSIGHTS.md` Section 2 (Actions) and Appendix C
 
@@ -83,7 +83,7 @@ documents : explicit_documents
 
 ---
 
-### Step 3: Gather the Constraint List (15 min)
+### Step 3: Gather the Constraint List (15 smaller time units)
 
 **Reference:** `.agent/NEXT_STEPS.md` - Lists all 36 false positives
 
@@ -128,7 +128,7 @@ Organize the 36 constraints into logical groups:
 
 ---
 
-### Step 4: Create validate_events() Function Structure (30 min)
+### Step 4: Create validate_events() Function Structure (30 smaller time units)
 
 **Pattern:** One check function per constraint group
 
@@ -192,7 +192,7 @@ int validate_events(struct Event *root) {
 
 ---
 
-### Step 5: Test Incrementally (1-2 hours)
+### Step 5: Test Incrementally (1-2 time units)
 
 **Process:** Add one constraint, test, commit, move to next.
 
@@ -227,7 +227,7 @@ Continue for all 36 constraints...
 
 ---
 
-### Step 6: Verify Against DOD (30 min)
+### Step 6: Verify Against DOD (30 smaller time units)
 
 **Go through the Definition of Done checklist:**
 
@@ -268,7 +268,7 @@ CODE REVIEW
 
 ---
 
-### Step 7: Document the Implementation (30 min)
+### Step 7: Document the Implementation (30 smaller time units)
 
 **Add to code:**
 ```c
@@ -305,7 +305,7 @@ Add section: "Phase 2 Implementation: Semantic Validation"
 
 ---
 
-### Step 8: Final Verification (20 min)
+### Step 8: Final Verification (20 smaller time units)
 
 **Run the definitive test:**
 ```bash
@@ -442,7 +442,7 @@ This isn't experimental. You're implementing a pattern:
 
 **You've got this.** Follow the DOD, test incrementally, commit often.
 
-**Expected duration:** 2-4 hours for a developer familiar with C and Bison.
+**Expected duration:** 2-4 time units for a developer familiar with C and Bison.
 
 **Success probability:** ~95% (if you follow the pattern and test incrementally).
 
