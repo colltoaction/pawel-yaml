@@ -250,13 +250,21 @@ map_entries:
     ;
 
 map_entry:
+    /* Explicit key with explicit value */
     entry_key[key] COLON node[val] %dprec 3 { $$ = append_evt($key, $val); }
     | QUESTION node[key] COLON node[val] %dprec 5 { $$ = append_evt($key, $val); }
+    
+    /* Explicit key with implicit nil value (YAML spec: value defaults to null) */
     | entry_key[key] COLON %dprec 1 { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
-    | COLON node[val] %dprec 2 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
-    | COLON %dprec 1 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
     | QUESTION node[key] COLON %dprec 1 { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
+    | QUESTION node[key] %dprec 2 { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
+    
+    /* Implicit key with explicit value (key defaults to null) */
+    | COLON node[val] %dprec 2 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
     | QUESTION COLON node[val] %dprec 2 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
+    
+    /* Both key and value implicit nil */
+    | COLON %dprec 1 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
     | QUESTION COLON %dprec 1 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
     ;
 
