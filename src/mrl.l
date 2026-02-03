@@ -270,7 +270,28 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     last_was_value = 1;  /* Mark that we just parsed a value */
     return QSCALAR;
 }
-\'[^\']*\'       { yylval->string = strndup(yytext+1, strlen(yytext)-2); expecting_value = 0; last_was_value = 1; return SSCALAR; }
+\'(\'\'|[^\'])*\'  { 
+    /* Single-quoted string: '' is escaped quote, [^'] is any char except quote */
+    int len = strlen(yytext);
+    char *content = malloc(len);  /* Temp buffer to process escapes */
+    int j = 0;
+    
+    /* Copy content (between quotes), handling '' -> ' */
+    for (int i = 1; i < len - 1; i++) {
+        if (yytext[i] == '\'' && yytext[i+1] == '\'') {
+            content[j++] = '\'';
+            i++;  /* Skip next quote */
+        } else {
+            content[j++] = yytext[i];
+        }
+    }
+    content[j] = '\0';
+    
+    yylval->string = content;
+    expecting_value = 0;
+    last_was_value = 1;
+    return SSCALAR;
+}
 "|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar('|'); expecting_value = 0; last_was_value = 0; BEGIN(BLOCK_SCALAR); }
 ">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar('>'); expecting_value = 0; last_was_value = 0; BEGIN(BLOCK_SCALAR); }
 
