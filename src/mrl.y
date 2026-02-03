@@ -94,6 +94,9 @@ documents:
     implicit_document[doc] { emit_events($doc); }
     | explicit_documents
     | implicit_document[doc] explicit_documents
+    | DOC_END { 
+        /* Bare document end marker - no output */
+    }
     ;
 
 explicit_documents:

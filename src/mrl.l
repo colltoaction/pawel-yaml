@@ -10,6 +10,12 @@ static int expecting_value = 0;
 static int pending_dedents = 0;
 static int first_line = 1;
 
+/* Check if UTF-8 bytes represent visible space U+2423 */
+static int is_visible_space(const unsigned char *s) {
+    return s[0] == 0xE2 && s[1] == 0x90 && s[2] == 0xA3;
+}
+
+
 static void push_indent(int col) {
     if (indent_sp < 99) indent_stack[++indent_sp] = col;
 }
@@ -178,6 +184,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 "-"/[ \t\n]      { expecting_value = 1; return BULLET; }
 ":"/[ \t\n]      { expecting_value = 1; return COLON; }
 "?"/[ \t\n]      { expecting_value = 1; return QUESTION; }
+"!"              { yylval->string = strdup("!"); return TAG; }
 "!!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+"!"{NSCAL}* { yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+      { yylval->string = strdup(yytext); return TAG; }
