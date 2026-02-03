@@ -147,7 +147,9 @@ optional_doc_end:
     ;
 
 implicit_document:
-    document_body[body] {
+    document_body[body] optional_doc_end {
+        /* Implicit document may optionally have document end marker (...) 
+           Fixes S4T7: Accept cases like "aaa: bbb\n...\n" */
         struct Event *ds = mk_evt(EVT_DOC_START, NULL, 0);
         struct Event *de = mk_evt(EVT_DOC_END, NULL, 0);
         $$ = append_evt(ds, append_evt($body, de));
