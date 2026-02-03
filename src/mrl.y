@@ -36,21 +36,20 @@ int yyget_lineno(void *scanner);
         char *anchor;
         char *tag;
     } NodeProps;
+}
 
+%code {
+    int yylex(void *yylval_param, void *yyscanner);
+    void yyerror(void *scanner, const char *s);
+    
     struct Event* mk_evt(EventType type, char *val, char quote);
     struct Event* append_evt(struct Event *head, struct Event *tail);
     void emit_events(struct Event *head);
 }
 
-%code {
-    int yylex(YYSTYPE *yylval_param, void *yyscanner);
-    void yyerror(void *scanner, const char *s);
-}
-
 %glr-parser
-%expect 32
+%expect 31
 %expect-rr 0
-
 %define api.pure true
 %define parse.error detailed
 %parse-param {void *scanner}
@@ -122,9 +121,9 @@ directives:
 
 directive:
     YAML_DIRECTIVE
-    | TAG_DIRECTIVE SCALAR[s1] SCALAR[s2] { free($s1); free($s2); }
-    | TAG_DIRECTIVE TAG[t] SCALAR[s] { free($t); free($s); }
-    | TAG_DIRECTIVE TAG[t1] TAG[t2] { free($t1); free($t2); }
+    | TAG_DIRECTIVE SCALAR SCALAR { free($2); free($3); }
+    | TAG_DIRECTIVE TAG SCALAR { free($2); free($3); }
+    | TAG_DIRECTIVE TAG TAG { free($2); free($3); }
     ;
 
 optional_doc_end:
@@ -142,41 +141,61 @@ implicit_document:
 
 document_body:
     node[n] { $$ = $n; }
-    ;
-
-node:
-    node_body[body] { $$ = $body; }
-    | node_props[props] node_body[body] {
-        $$ = $body;
+    | map_entries[entries] %dprec 3 {
+        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
+        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
+        $$ = append_evt(ms, append_evt($entries, me));
+    }
+    | seq_entries[entries] %dprec 2 {
+        struct Event *ss = mk_evt(EVT_SEQ_START, NULL, 0);
+        struct Event *se = mk_evt(EVT_SEQ_END, NULL, 0);
+        $$ = append_evt(ss, append_evt($entries, se));
+    }
+    | node_props[props] map_entries[entries] %dprec 4 {
+        struct Event *ms = mk_evt(EVT_MAP_START, NULL, 0);
+        struct Event *me = mk_evt(EVT_MAP_END, NULL, 0);
+        $$ = append_evt(ms, append_evt($entries, me));
+        attach_props($$, $props.anchor, $props.tag);
+    }
+    | node_props[props] seq_entries[entries] %dprec 3 {
+        struct Event *ss = mk_evt(EVT_SEQ_START, NULL, 0);
+        struct Event *se = mk_evt(EVT_SEQ_END, NULL, 0);
+        $$ = append_evt(ss, append_evt($entries, se));
         attach_props($$, $props.anchor, $props.tag);
     }
     ;
 
-node_props:
-    TAG[t] { $$.tag = $t; $$.anchor = NULL; }
-    | ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
-    | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
-    | TAG[t] ANCHOR[a] { $$.tag = $t; $$.anchor = $a; }
+node:
+    node_body[body] %dprec 2 { $$ = $body; }
+    | node_props[props] node_body[body] %dprec 3 { $$ = $body; attach_props($$, $props.anchor, $props.tag); }
+    | node_props[props] %dprec 1 { $$ = mk_evt(EVT_SCALAR, "", 0); attach_props($$, $props.anchor, $props.tag); }
     ;
 
 node_body:
     scalar[s] { $$ = $s; }
     | ALIAS[a] { $$ = mk_evt(EVT_ALIAS, $a, 0); free($a); }
-    | collection[c] { $$ = $c; }
-    ;
-
-collection:
-    seq[s] { $$ = $s; }
-    | map[m] { $$ = $m; }
     | flow_seq[fs] { $$ = $fs; }
     | flow_map[fm] { $$ = $fm; }
+    | collection[coll] { $$ = $coll; }
+    ;
+
+node_props:
+    TAG[t] { $$.anchor = NULL; $$.tag = $t; }
+    | ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
+    | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
+    | TAG[t] ANCHOR[a] { $$.anchor = $a; $$.tag = $t; }
     ;
 
 scalar:
     SCALAR[s] { $$ = mk_evt(EVT_SCALAR, $s, 0); free($s); }
-    | QSCALAR[qs] { $$ = mk_evt(EVT_SCALAR, $qs, '"'); free($qs); }
-    | SSCALAR[ss] { $$ = mk_evt(EVT_SCALAR, $ss, '\''); free($ss); }
-    | BSCALAR[bs] { $$ = mk_evt(EVT_SCALAR, $bs + 1, $bs[0]); free($bs); }
+    | QSCALAR[s] { $$ = mk_evt(EVT_SCALAR, $s, '"'); free($s); }
+    | SSCALAR[s] { $$ = mk_evt(EVT_SCALAR, $s, '\''); free($s); }
+    | BSCALAR[s] { $$ = mk_evt(EVT_SCALAR, $s + 1, $s[0]); free($s); }
+    ;
+
+collection:
+    map[m] { $$ = $m; }
+    | seq[s] { $$ = $s; }
     ;
 
 seq:
@@ -211,14 +230,14 @@ map_entries:
     ;
 
 map_entry:
-    entry_key[key] COLON node[val] { $$ = append_evt($key, $val); }
-    | QUESTION node[key] COLON node[val] { $$ = append_evt($key, $val); }
-    | entry_key[key] COLON { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
-    | COLON node[val] { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
-    | COLON { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
-    | QUESTION node[key] COLON { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
-    | QUESTION COLON node[val] { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
-    | QUESTION COLON { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
+    entry_key[key] COLON node[val] %dprec 3 { $$ = append_evt($key, $val); }
+    | QUESTION node[key] COLON node[val] %dprec 5 { $$ = append_evt($key, $val); }
+    | entry_key[key] COLON %dprec 1 { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
+    | COLON node[val] %dprec 2 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
+    | COLON %dprec 1 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
+    | QUESTION node[key] COLON %dprec 1 { $$ = append_evt($key, mk_evt(EVT_SCALAR, "", 0)); }
+    | QUESTION COLON node[val] %dprec 2 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), $val); }
+    | QUESTION COLON %dprec 1 { $$ = append_evt(mk_evt(EVT_SCALAR, "", 0), mk_evt(EVT_SCALAR, "", 0)); }
     ;
 
 entry_key:
@@ -226,10 +245,6 @@ entry_key:
     | ALIAS[a] { $$ = mk_evt(EVT_ALIAS, $a, 0); free($a); }
     | flow_seq[fs] { $$ = $fs; }
     | flow_map[fm] { $$ = $fm; }
-    | node_props[props] scalar[s] { $$ = $s; attach_props($$, $props.anchor, $props.tag); }
-    | node_props[props] ALIAS[a] { $$ = mk_evt(EVT_ALIAS, $a, 0); attach_props($$, NULL, $props.tag); free($a); }
-    | node_props[props] flow_seq[fs] { $$ = $fs; attach_props($$, $props.anchor, $props.tag); }
-    | node_props[props] flow_map[fm] { $$ = $fm; attach_props($$, $props.anchor, $props.tag); }
     ;
 
 flow_seq:
@@ -286,11 +301,8 @@ void yyerror(void *scanner, const char *s) {
 struct Event* mk_evt(EventType type, char *val, char quote) {
     struct Event *e = calloc(1, sizeof(struct Event));
     e->type = type;
-    e->value = val ? strdup(val) : NULL;
-    e->anchor = NULL;
-    e->tag = NULL;
+    if (val) e->value = strdup(val);
     e->quote = quote;
-    e->next = NULL;
     return e;
 }
 
@@ -372,9 +384,14 @@ int yylex_init(void **scanner);
 int yylex_destroy(void *scanner);
 void yyset_in(FILE *in, void *scanner);
 
-int main(int argc, char **argv) {
+int mrl_entry(int argc, char **argv) {
+    (void)argc; (void)argv;
     void *scanner; yylex_init(&scanner); yyset_in(stdin, scanner);
     int result = yyparse(scanner);
     yylex_destroy(scanner);
     return result;
+}
+
+int main(int argc, char **argv) {
+    return mrl_entry(argc, argv);
 }
