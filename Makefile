@@ -19,15 +19,21 @@ PLAY_DIR = $(LIB_DIR)/yaml-play
 SUITE_DIR = $(LIB_DIR)/yaml-test-suite
 
 # Generated parser files
-PARSER_TAB_C = $(GEN_SRC_DIR)/parser.tab.c
-PARSER_TAB_H = $(GEN_INC_DIR)/parser.tab.h
-LEX_YY_C = $(GEN_SRC_DIR)/lex.yy.c
+YAML_TAB_C = $(GEN_SRC_DIR)/yaml.tab.c
+YAML_TAB_H = $(GEN_INC_DIR)/yaml.tab.h
+YAML_LEX_C = $(GEN_SRC_DIR)/yaml.lex.c
 
-# TDD & testing artifacts (preserved across clean)
+RML_TAB_C = $(GEN_SRC_DIR)/rml.tab.c
+RML_TAB_H = $(GEN_INC_DIR)/rml.tab.h
+RML_LEX_C = $(GEN_SRC_DIR)/rml.lex.c
+
+# TDD & testing artifacts
 TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
-OBJS = $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lex.yy.o
+OBJS = $(BUILD_DIR)/yaml.tab.o $(BUILD_DIR)/yaml.lex.o \
+       $(BUILD_DIR)/rml.tab.o $(BUILD_DIR)/rml.lex.o \
+       $(BUILD_DIR)/main.o
 
 TARGET = $(BIN_DIR)/pawel-yaml
 
@@ -36,55 +42,51 @@ all: directories $(TARGET)
 directories:
 	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR) $(TMP_DIR) $(LOG_DIR)
 
-# Initialize submodules via cloning
-setup: directories $(RUNTIMES_DIR) $(PLAY_DIR) $(SUITE_DIR)
+# Stage 1: YAML Parser
+$(YAML_TAB_C) $(YAML_TAB_H): $(SRC_DIR)/yaml.y
+	$(BISON) -d -o $(YAML_TAB_C) --defines=$(YAML_TAB_H) $(SRC_DIR)/yaml.y
 
-$(RUNTIMES_DIR):
-	git clone --depth 1 https://github.com/yaml/yaml-runtimes $@
+$(YAML_LEX_C): $(SRC_DIR)/yaml.l $(YAML_TAB_H)
+	$(FLEX) -o $(YAML_LEX_C) $(SRC_DIR)/yaml.l
 
-$(PLAY_DIR):
-	git clone --depth 1 https://github.com/yaml/yaml-play $@
+# Stage 2: RML Parser
+$(RML_TAB_C) $(RML_TAB_H): $(SRC_DIR)/rml.y
+	$(BISON) -d -o $(RML_TAB_C) --defines=$(RML_TAB_H) $(SRC_DIR)/rml.y
 
-$(SUITE_DIR):
-	git clone --depth 1 https://github.com/yaml/yaml-test-suite $@
-
-# Bison parser generation
-$(PARSER_TAB_C) $(PARSER_TAB_H): $(SRC_DIR)/mrl.y
-	$(BISON) -d -o $(PARSER_TAB_C) --defines=$(PARSER_TAB_H) $(SRC_DIR)/mrl.y
-
-# Flex lexer generation
-$(LEX_YY_C): $(SRC_DIR)/mrl.l $(PARSER_TAB_H)
-	$(FLEX) -o $(LEX_YY_C) $(SRC_DIR)/mrl.l
+$(RML_LEX_C): $(SRC_DIR)/rml.l $(RML_TAB_H)
+	$(FLEX) -o $(RML_LEX_C) $(SRC_DIR)/rml.l
 
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $(TARGET)
 
-$(BUILD_DIR)/parser.tab.o: $(PARSER_TAB_C) $(PARSER_TAB_H)
-	$(CC) $(CFLAGS) -c $(PARSER_TAB_C) -o $(BUILD_DIR)/parser.tab.o
+$(BUILD_DIR)/yaml.tab.o: $(YAML_TAB_C)
+	$(CC) $(CFLAGS) -c $(YAML_TAB_C) -o $@
 
-$(BUILD_DIR)/lex.yy.o: $(LEX_YY_C) $(PARSER_TAB_H)
-	$(CC) $(CFLAGS) -c $(LEX_YY_C) -o $(BUILD_DIR)/lex.yy.o
+$(BUILD_DIR)/yaml.lex.o: $(YAML_LEX_C)
+	$(CC) $(CFLAGS) -c $(YAML_LEX_C) -o $@
+
+$(BUILD_DIR)/rml.tab.o: $(RML_TAB_C)
+	$(CC) $(CFLAGS) -c $(RML_TAB_C) -o $@
+
+$(BUILD_DIR)/rml.lex.o: $(RML_LEX_C)
+	$(CC) $(CFLAGS) -c $(RML_LEX_C) -o $@
+
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(YAML_TAB_H) $(RML_TAB_H)
+	$(CC) $(CFLAGS) -c $(SRC_DIR)/main.c -o $@
 
 clean: clean-build
 
 clean-build:
-	# Remove generated code and binaries, but preserve TDD artifacts and test suite
 	rm -rf $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR)
-	# Only remove non-test files from lib (files, not directories)
-	find $(LIB_DIR) -maxdepth 1 -type f -delete 2>/dev/null || true
-	# Clean object files
 	rm -f $(BUILD_DIR)/*.o
-	@echo "✓ Preserved: $(TMP_DIR), $(LOG_DIR), yaml-test-suite"
 
-# Deep clean: remove all build artifacts including test tracking
 deepclean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all setup clean clean-build deepclean directories yaml-test-suite tdd
+.PHONY: all clean clean-build deepclean directories yaml-test-suite tdd
 
 yaml-test-suite: $(SUITE_DIR) $(TARGET)
 	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
 
 tdd: $(TARGET) $(SUITE_DIR)
 	@./tdd_harness.sh discover | head -20
-	@echo "Usage: ./tdd_harness.sh test <TEST_ID>"

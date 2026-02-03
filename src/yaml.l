@@ -1,11 +1,14 @@
 %{
-#include "parser.tab.h"
+#include "yaml.tab.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
+#define YYSTYPE YAML_STYPE
+#define YYLTYPE YAML_LTYPE
+
 /* Forward declaration for error handling */
-void yyerror(void *scanner, const char *msg);
+void yaml_error(void *yylloc, void *scanner, const char *msg);
 
 static int indent_stack[100] = {0};
 static int indent_sp = 0;
@@ -126,6 +129,8 @@ static int validate_dquote_escapes(const char *str, int len) {
 %option noyywrap
 %option reentrant
 %option bison-bridge
+%option bison-locations
+%option prefix="yaml_"
 
 %x BLOCK_SCALAR
 %x BLOCK_CONTENT
