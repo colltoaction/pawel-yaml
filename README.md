@@ -5,9 +5,7 @@ Adopt the theoretical framework of **Regular Monoidal Languages** to build a hig
 ---
 
 ## 📊 Status: Growing Parser Completeness
-- **Current**: 73.22% pass rate (257/351 tests)
-- **Baseline**: 55.84% pass rate (196/351 tests)
-- **Progress**: +61 tests fixed through systematic TDD
+- **Baseline**: ~60% pass rate.
 - **Engine**: Unified RML architecture in `src/mrl.y` and `src/mrl.l`.
 - **Methodology**: 100% Agentic TDD with 0% dead-code architecture.
 
@@ -40,27 +38,3 @@ make setup
 # Run full project health check
 ./.agent/tooling.sh check
 ```
-
-## Memory Validation
-
-The project includes Makefile targets for automated memory leak detection using Valgrind:
-
-### Quick Check
-```bash
-make valgrind          # Simple test with detailed output
-make valgrind-summary  # Quick pass/fail check
-```
-
-### Comprehensive Checks
-```bash
-make valgrind-full   # Multiple test cases (recommended)
-make valgrind-suite  # Test against yaml-test-suite samples
-```
-
-All valgrind targets:
-- Use `--leak-check=full` for comprehensive analysis
-- Distinguish memory leaks from validation errors
-- Generate logs in `build/log/valgrind_*.log`
-- Exit with error code only on actual memory leaks
-
-**Current Status**: ✓ All memory leaks resolved (30 allocs, 30 frees)
