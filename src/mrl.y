@@ -365,6 +365,23 @@ static void print_indent(int depth) {
     for (int i = 0; i < depth; i++) fputc(' ', stdout);
 }
 
+/* Expand YAML shorthand tags to full canonical form */
+const char* expand_tag(const char *tag) {
+    if (!tag) return NULL;
+    
+    /* Standard shorthand tags */
+    if (strcmp(tag, "!!str") == 0) return "tag:yaml.org,2002:str";
+    if (strcmp(tag, "!!int") == 0) return "tag:yaml.org,2002:int";
+    if (strcmp(tag, "!!float") == 0) return "tag:yaml.org,2002:float";
+    if (strcmp(tag, "!!bool") == 0) return "tag:yaml.org,2002:bool";
+    if (strcmp(tag, "!!null") == 0) return "tag:yaml.org,2002:null";
+    if (strcmp(tag, "!!seq") == 0) return "tag:yaml.org,2002:seq";
+    if (strcmp(tag, "!!map") == 0) return "tag:yaml.org,2002:map";
+    
+    /* Already expanded or custom tag - return as-is */
+    return tag;
+}
+
 void emit_events(struct Event *head) {
     static int depth = 1;
     while (head) {
@@ -374,7 +391,7 @@ void emit_events(struct Event *head) {
             case EVT_SCALAR:
                 fputs("=VAL ", stdout);
                 if (head->anchor) printf("&%s ", head->anchor + 1);
-                if (head->tag) printf("<%s> ", head->tag);
+                if (head->tag) printf("<%s> ", expand_tag(head->tag));
                 fputc(head->quote ? head->quote : ':', stdout);
                 if (head->value) fputs(head->value, stdout);
                 fputc('\n', stdout);
@@ -386,7 +403,7 @@ void emit_events(struct Event *head) {
                 fputs("+SEQ", stdout);
                 if (head->style == '[') fputs(" []", stdout);
                 if (head->anchor) printf(" &%s", head->anchor + 1);
-                if (head->tag) printf(" <%s>", head->tag);
+                if (head->tag) printf(" <%s>", expand_tag(head->tag));
                 fputc('\n', stdout);
                 break;
             case EVT_SEQ_END:   fputs("-SEQ\n", stdout); break;
@@ -394,7 +411,7 @@ void emit_events(struct Event *head) {
                 fputs("+MAP", stdout);
                 if (head->style == '{') fputs(" {}", stdout);
                 if (head->anchor) printf(" &%s", head->anchor + 1);
-                if (head->tag) printf(" <%s>", head->tag);
+                if (head->tag) printf(" <%s>", expand_tag(head->tag));
                 fputc('\n', stdout);
                 break;
             case EVT_MAP_END:   fputs("-MAP\n", stdout); break;
