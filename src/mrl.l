@@ -169,7 +169,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 
 "%TAG"           { BEGIN(DIRECTIVE_MODE); return TAG_DIRECTIVE; }
-"%YAML 1.2"      { return YAML_DIRECTIVE; }
+"%YAML"[ ]?"1"[.,][0-9]  { return YAML_DIRECTIVE; }
 "---"            { expecting_value = 1; return DOC_START; }
 "..."            { expecting_value = 1; return DOC_END; }
 
