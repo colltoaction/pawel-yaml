@@ -13,25 +13,10 @@ static int flow_level = 0;
 static int expecting_value = 0;
 static int pending_dedents = 0;
 static int first_line = 1;
-/* Track if last token was a value token (quoted string, scalar, block indicator)
- * Used to enforce YAML spec: comments require whitespace before them */
-static int last_was_value = 0;
 
 /* Check if UTF-8 bytes represent visible space U+2423 */
 static int is_visible_space(const unsigned char *s) {
     return s[0] == 0xE2 && s[1] == 0x90 && s[2] == 0xA3;
-}
-
-/* Validate that a comment has proper spacing before it
- * Comments require whitespace (space/tab) before them (or start of line)
- * This prevents invalid YAML like: "value"# comment or ># comment
- */
-static int validate_comment_context() {
-    if (last_was_value) {
-        fprintf(stderr, "syntax error, comment without preceding whitespace\n");
-        return 0;
-    }
-    return 1;
 }
 
 
@@ -267,33 +252,11 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     }
     yylval->string = content;
     expecting_value = 0;
-    last_was_value = 1;  /* Mark that we just parsed a value */
     return QSCALAR;
 }
-\'(\'\'|[^\'])*\'  { 
-    /* Single-quoted string: '' is escaped quote, [^'] is any char except quote */
-    int len = strlen(yytext);
-    char *content = malloc(len);  /* Temp buffer to process escapes */
-    int j = 0;
-    
-    /* Copy content (between quotes), handling '' -> ' */
-    for (int i = 1; i < len - 1; i++) {
-        if (yytext[i] == '\'' && yytext[i+1] == '\'') {
-            content[j++] = '\'';
-            i++;  /* Skip next quote */
-        } else {
-            content[j++] = yytext[i];
-        }
-    }
-    content[j] = '\0';
-    
-    yylval->string = content;
-    expecting_value = 0;
-    last_was_value = 1;
-    return SSCALAR;
-}
-"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar('|'); expecting_value = 0; last_was_value = 0; BEGIN(BLOCK_SCALAR); }
-">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar('>'); expecting_value = 0; last_was_value = 0; BEGIN(BLOCK_SCALAR); }
+\'[^\']*\'       { yylval->string = strndup(yytext+1, strlen(yytext)-2); expecting_value = 0; return SSCALAR; }
+"|"[1-9]*[-+]*[ \t]*(\n|#.*)      { init_block_scalar('|'); expecting_value = 0; BEGIN(BLOCK_SCALAR); }
+">"[1-9]*[-+]*[ \t]*(\n|#.*)      { init_block_scalar('>'); expecting_value = 0; BEGIN(BLOCK_SCALAR); }
 
 <BLOCK_SCALAR>^[ \t]*\n {
     /* Empty line - keep it */
@@ -406,14 +369,8 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(INITIAL);
     return SCALAR;
 }
-"#".*            { 
-    /* Validate comment has proper spacing */
-    if (!validate_comment_context()) {
-        exit(1);
-    }
-    /* Valid comment - ignore it */ 
-}
-[ \t\r]+       { last_was_value = 0; /* skip whitespace */ }
+"#".*            { /* ignore comments */ }
+[ \t\r]+       { /* skip whitespace */ }
 .                { return yytext[0]; }
 
 <<EOF>> {
