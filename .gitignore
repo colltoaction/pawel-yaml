@@ -8,12 +8,14 @@
 !Makefile
 !README.md
 
+# Agent Documentation
+!.agent/
+!.agent/**
+!**/*.md
+!**/*.prompt.md
+
 # Analysis and logs
 *.txt
-*.md
-!README.md
-!./.agent/TDD.md
-!./.agent/TEST_FAILURES_WORKFLOW.md
 *.log
 !build/tmp/
 !build/log/

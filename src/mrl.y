@@ -550,46 +550,44 @@ void alphabet_free(Alphabet *a) {
     free(a);
 }
 
-void alphabet_add_scalar(Alphabet *a, const char *value) {
-    if (a->count >= a->capacity) {
-        a->capacity *= 2;
-        a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
-    }
-    Generator *g = malloc(sizeof(Generator));
-    g->type = GEN_TYPE_SCALAR;
-    g->value = strdup(value);
-    g->tag = NULL;
-    g->anchor = NULL;
-    g->quote = 0;
-    a->generators[a->count++] = g;
+static int alphabet_ensure_capacity(Alphabet *a) {
+    if (a->count < a->capacity) return 1;
+    a->capacity *= 2;
+    a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
+    return a->generators != NULL;
 }
 
-void alphabet_add_quoted_scalar(Alphabet *a, const char *value, char quote) {
-    if (a->count >= a->capacity) {
-        a->capacity *= 2;
-        a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
-    }
+static Generator *generator_new(GeneratorType type, const char *value, char quote) {
     Generator *g = malloc(sizeof(Generator));
-    g->type = GEN_TYPE_SCALAR;
-    g->value = strdup(value);
+    if (!g) return NULL;
+    g->type = type;
+    g->value = value ? strdup(value) : NULL;
     g->tag = NULL;
     g->anchor = NULL;
     g->quote = quote;
+    return g;
+}
+
+static void alphabet_append_generator(Alphabet *a, Generator *g) {
+    if (!a || !g) return;
+    if (!alphabet_ensure_capacity(a)) {
+        if (g->value) free(g->value);
+        free(g);
+        return;
+    }
     a->generators[a->count++] = g;
 }
 
+void alphabet_add_scalar(Alphabet *a, const char *value) {
+    alphabet_append_generator(a, generator_new(GEN_TYPE_SCALAR, value, 0));
+}
+
+void alphabet_add_quoted_scalar(Alphabet *a, const char *value, char quote) {
+    alphabet_append_generator(a, generator_new(GEN_TYPE_SCALAR, value, quote));
+}
+
 void alphabet_add_alias(Alphabet *a, const char *value) {
-    if (a->count >= a->capacity) {
-        a->capacity *= 2;
-        a->generators = realloc(a->generators, sizeof(Generator*) * a->capacity);
-    }
-    Generator *g = malloc(sizeof(Generator));
-    g->type = GEN_TYPE_ALIAS;
-    g->value = strdup(value);
-    g->tag = NULL;
-    g->anchor = NULL;
-    g->quote = 0;
-    a->generators[a->count++] = g;
+    alphabet_append_generator(a, generator_new(GEN_TYPE_ALIAS, value, 0));
 }
 
 void alphabet_set_tag(Alphabet *a, const char *tag) {

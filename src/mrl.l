@@ -56,6 +56,24 @@ static void append_block_line(const char *line, int len) {
     append_scalar(line, len);
     append_scalar("\n", 1);
 }
+
+static void enter_flow_context(void) {
+    flow_level++;
+    expecting_value = 1;
+}
+
+static void exit_flow_context(void) {
+    if (flow_level > 0) flow_level--;
+    expecting_value = 0;
+}
+
+static char *finalize_block_scalar_value(void) {
+    char *final = malloc(scalar_content_len + 2);
+    final[0] = block_type;
+    memcpy(final + 1, scalar_content, scalar_content_len);
+    final[scalar_content_len + 1] = '\0';
+    return final;
+}
 %}
 
 %option noyywrap
@@ -165,10 +183,10 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 "!"{NSCAL}+      { yylval->string = strdup(yytext); return TAG; }
 "&"{NSCAL}+      { yylval->string = strdup(yytext); return ANCHOR; }
 "*"{NSCAL}+      { yylval->string = strdup(yytext); expecting_value = 0; return ALIAS; }
-"["              { flow_level++; expecting_value = 1; return LBRACK; }
-"]"              { if (flow_level > 0) flow_level--; expecting_value = 0; return RBRACK; }
-"{"              { flow_level++; expecting_value = 1; return LBRACE; }
-"}"              { if (flow_level > 0) flow_level--; expecting_value = 0; return RBRACE; }
+"["              { enter_flow_context(); return LBRACK; }
+"]"              { exit_flow_context(); return RBRACK; }
+"{"              { enter_flow_context(); return LBRACE; }
+"}"              { exit_flow_context(); return RBRACE; }
 ":"              { 
     if (expecting_value && flow_level > 0) {
          /* Colon starting a value in flow context = Scalar */
@@ -225,12 +243,8 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     } else {
         /* End of block scalar - line is less indented */
         /* We need to return this line to the lexer */
-        yyless(0); 
-        char *final = malloc(scalar_content_len + 2);
-        final[0] = block_type;
-        memcpy(final + 1, scalar_content, scalar_content_len);
-        final[scalar_content_len+1] = '\0';
-        yylval->string = final;
+        yyless(0);
+        yylval->string = finalize_block_scalar_value();
         BEGIN(INITIAL);
         return BSCALAR;
     }
@@ -239,21 +253,13 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 <BLOCK_SCALAR>. {
     /* Non-indented line starts with a character */
     yyless(0);
-    char *final = malloc(scalar_content_len + 2);
-    final[0] = block_type;
-    memcpy(final + 1, scalar_content, scalar_content_len);
-    final[scalar_content_len+1] = '\0';
-    yylval->string = final;
+    yylval->string = finalize_block_scalar_value();
     BEGIN(INITIAL);
     return BSCALAR;
 }
 
 <BLOCK_SCALAR><<EOF>> {
-    char *final = malloc(scalar_content_len + 2);
-    final[0] = block_type;
-    memcpy(final + 1, scalar_content, scalar_content_len);
-    final[scalar_content_len+1] = '\0';
-    yylval->string = final;
+    yylval->string = finalize_block_scalar_value();
     BEGIN(INITIAL);
     return BSCALAR;
 }
