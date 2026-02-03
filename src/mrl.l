@@ -156,25 +156,18 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     }
     
     BEGIN(INITIAL);
-    
-    /* In flow context ({...} or [...]), ignore indentation changes */
-    if (flow_level > 0) {
-        /* Just go back to INITIAL without emitting INDENT/DEDENT */
-        /* yyless(0) doesn't work here, so we just continue */
-    } else {
-        int cur = current_indent();
-        if (indent > cur) {
-            push_indent(indent);
-            return INDENT;
-        } else if (indent < cur) {
-            while (indent < current_indent()) {
-                pop_indent();
-                pending_dedents++;
-            }
-            if (pending_dedents > 0) {
-                pending_dedents--;
-                return DEDENT;
-            }
+    int cur = current_indent();
+    if (indent > cur) {
+        push_indent(indent);
+        return INDENT;
+    } else if (indent < cur) {
+        while (indent < current_indent()) {
+            pop_indent();
+            pending_dedents++;
+        }
+        if (pending_dedents > 0) {
+            pending_dedents--;
+            return DEDENT;
         }
     }
 }
@@ -211,7 +204,11 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 }
 
 \n {
-    BEGIN(INDENT_CHECK);
+    /* In flow context, newlines are just whitespace, don't check indentation */
+    if (flow_level == 0) {
+        BEGIN(INDENT_CHECK);
+    }
+    /* Otherwise skip the newline in flow context */
 }
 
 
