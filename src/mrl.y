@@ -189,10 +189,14 @@ directive:
          /* Handle case where !e! is lexed as TAG */
          free($t); free($s);
     }
+    | TAG_DIRECTIVE TAG[t1] TAG[t2] {
+         /* Handle case where prefix is lexed as TAG (e.g. !my-) */
+         free($t1); free($t2);
+    }
     ;
 
 explicit_document:
-    DOC_START nodes[n] {
+    DOC_START nodes[n] optional_doc_end {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
@@ -207,7 +211,7 @@ explicit_document:
 
         $$ = sd_compose(sd_generator(gs), sd_compose($n, sd_generator(ge)));
     }
-    | directives DOC_START nodes[n] {
+    | directives DOC_START nodes[n] optional_doc_end {
         Generator *gs = malloc(sizeof(Generator));
         gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
         Generator *ge = malloc(sizeof(Generator));
@@ -222,6 +226,11 @@ explicit_document:
 
         $$ = sd_compose(sd_generator(gs), sd_compose($n, sd_generator(ge)));
     }
+    ;
+
+optional_doc_end:
+    /* empty */
+    | DOC_END
     ;
 
 implicit_document:
