@@ -1,7 +1,14 @@
 %{
-#include "parser.tab.h"
+#include "yaml.tab.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+
+#define YYSTYPE YAML_STYPE
+#define YYLTYPE YAML_LTYPE
+
+/* Forward declaration for error handling */
+void yaml_error(void *yylloc, void *scanner, const char *msg);
 
 static int indent_stack[100] = {0};
 static int indent_sp = 0;
@@ -9,10 +16,25 @@ static int flow_level = 0;
 static int expecting_value = 0;
 static int pending_dedents = 0;
 static int first_line = 1;
+/* Track if last token was a value token (quoted string, scalar, block indicator)
+ * Used to enforce YAML spec: comments require whitespace before them */
+static int last_was_value = 0;
 
 /* Check if UTF-8 bytes represent visible space U+2423 */
 static int is_visible_space(const unsigned char *s) {
     return s[0] == 0xE2 && s[1] == 0x90 && s[2] == 0xA3;
+}
+
+/* Validate that a comment has proper spacing before it
+ * Comments require whitespace (space/tab) before them (or start of line)
+ * This prevents invalid YAML like: "value"# comment or ># comment
+ */
+static int validate_comment_context() {
+    if (last_was_value) {
+        fprintf(stderr, "syntax error, comment without preceding whitespace\n");
+        return 0;
+    }
+    return 1;
 }
 
 
@@ -80,11 +102,35 @@ static char *finalize_block_scalar_value(void) {
     final[scalar_content_len + 1] = '\0';
     return final;
 }
+
+/* Validate escape sequences in double-quoted strings. 
+   Valid YAML escapes: \\ \" \/ \n \t \r \0 \a \b \f \v \e \N{...} \uXXXX \UXXXXXXXX \xXX
+   Returns 1 if valid, 0 if invalid (error message printed to stderr) */
+static int validate_dquote_escapes(const char *str, int len) {
+    for (int i = 0; i < len; i++) {
+        if (str[i] == '\\' && i + 1 < len) {
+            char next = str[i+1];
+            /* Check if escape sequence is valid */
+            if (next != '\\' && next != '"' && next != '/' && next != 'n' && next != 't' && 
+                next != 'r' && next != '0' && next != 'a' && next != 'b' && 
+                next != 'f' && next != 'v' && next != 'e' &&
+                next != 'N' && next != 'u' && next != 'U' && next != 'x') {
+                fprintf(stderr, "syntax error, invalid escape sequence\n");
+                return 0;
+            }
+            /* Skip the escape sequence (backslash + next char) */
+            i += 1;
+        }
+    }
+    return 1;
+}
 %}
 
 %option noyywrap
 %option reentrant
 %option bison-bridge
+%option bison-locations
+%option prefix="yaml_"
 
 %x BLOCK_SCALAR
 %x BLOCK_CONTENT
@@ -163,7 +209,11 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 }
 
 \n {
-    BEGIN(INDENT_CHECK);
+    /* In flow context, newlines are just whitespace, don't check indentation */
+    if (flow_level == 0) {
+        BEGIN(INDENT_CHECK);
+    }
+    /* Otherwise skip the newline in flow context */
 }
 
 
@@ -201,6 +251,11 @@ NSCAL [a-zA-Z0-9\-\._%:/]
          append_scalar(":", 1);
          expecting_value = 0;
          BEGIN(SIMPLE_SCALAR);
+    } else if (expecting_value && flow_level == 0) {
+         /* In block context, when expecting value, : not followed by space = scalar */
+         init_scalar();
+         append_scalar(":", 1);
+         BEGIN(SIMPLE_SCALAR);
     } else if (flow_level > 0) {
          expecting_value = 1;
          return COLON; 
@@ -209,10 +264,45 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     }
 }
 ","              { expecting_value = 1; return COMMA; }
-\"[^\"]*\"       { yylval->string = strndup(yytext+1, strlen(yytext)-2); expecting_value = 0; return QSCALAR; }
-\'[^\']*\'       { yylval->string = strndup(yytext+1, strlen(yytext)-2); expecting_value = 0; return SSCALAR; }
-"|"[1-9]*[-+]*[ \t]*(\n|#.*)      { init_block_scalar('|'); expecting_value = 0; BEGIN(BLOCK_SCALAR); }
-">"[1-9]*[-+]*[ \t]*(\n|#.*)      { init_block_scalar('>'); expecting_value = 0; BEGIN(BLOCK_SCALAR); }
+\"([^\"\\]|\\.)*\" {
+    /* Double-quoted string - validate escape sequences */
+    int len = strlen(yytext) - 2;
+    char *content = strndup(yytext + 1, len);
+    if (!validate_dquote_escapes(content, len)) {
+        /* Invalid escape detected - error already printed by validate_dquote_escapes */
+        free(content);
+        /* In Bison GLR parser, we must exit cleanly to signal parse failure */
+        exit(1);
+    }
+    yylval->string = content;
+    expecting_value = 0;
+    last_was_value = 1;  /* Mark that we just parsed a value */
+    return QSCALAR;
+}
+\'(\'\'|[^\'])*\'  { 
+    /* Single-quoted string: '' is escaped quote, [^'] is any char except quote */
+    int len = strlen(yytext);
+    char *content = malloc(len);  /* Temp buffer to process escapes */
+    int j = 0;
+    
+    /* Copy content (between quotes), handling '' -> ' */
+    for (int i = 1; i < len - 1; i++) {
+        if (yytext[i] == '\'' && yytext[i+1] == '\'') {
+            content[j++] = '\'';
+            i++;  /* Skip next quote */
+        } else {
+            content[j++] = yytext[i];
+        }
+    }
+    content[j] = '\0';
+    
+    yylval->string = content;
+    expecting_value = 0;
+    last_was_value = 1;
+    return SSCALAR;
+}
+"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar('|'); expecting_value = 0; last_was_value = 0; BEGIN(BLOCK_SCALAR); }
+">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar('>'); expecting_value = 0; last_was_value = 0; BEGIN(BLOCK_SCALAR); }
 
 <BLOCK_SCALAR>^[ \t]*\n {
     /* Empty line - keep it */
@@ -325,8 +415,14 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(INITIAL);
     return SCALAR;
 }
-"#".*            { /* ignore comments */ }
-[ \t\r]+       { /* skip whitespace */ }
+"#".*            { 
+    /* Validate comment has proper spacing */
+    if (!validate_comment_context()) {
+        exit(1);
+    }
+    /* Valid comment - ignore it */ 
+}
+[ \t\r]+       { last_was_value = 0; /* skip whitespace */ }
 .                { return yytext[0]; }
 
 <<EOF>> {

@@ -1,106 +1,48 @@
-/*
- * Regular Monoidal Language (RML) Driver
- * 
- * This is the main entry point for the "pawel-yaml" binary.
- * It invokes the parser (which constructs the RML objects) and then
- * traverses the resulting StringDiagram to emit the YAML event stream.
- */
-
-#include "yaml_parser.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "yaml.tab.h"
+#include "rml.tab.h"
 
-/* Recursive function to traverse the diagram and print events */
-void traverse_diagram(StringDiagram *sd, Alphabet *alphabet) {
-    if (!sd) return;
+/* Globals for IR exchange */
+char *rml_ir_buf = NULL;
+size_t rml_ir_size = 0;
 
-    if (sd->type == SD_TYPE_GENERATOR) {
-        Generator *g = sd->data.gen;
-        switch (g->type) {
-            case GEN_TYPE_SCALAR:
-                /* Validating against 27NA and 2AUY requirements */
-                if (g->tag) {
-                    const char *tag_val = g->tag;
-                    if (strcmp(tag_val, "!!str") == 0) tag_val = "tag:yaml.org,2002:str";
-                    else if (strcmp(tag_val, "!!int") == 0) tag_val = "tag:yaml.org,2002:int";
-                    
-                    printf("  =VAL <%s> %c%s\n", tag_val, g->quote ? g->quote : ':', g->value);
-                } else {
-                    printf("  =VAL %c%s\n", g->quote ? g->quote : ':', g->value);
-                }
-                break;
-            case GEN_TYPE_SEQ_START:
-                printf("  +SEQ\n");
-                break;
-            case GEN_TYPE_SEQ_END:
-                printf("  -SEQ\n");
-                break;
-            case GEN_TYPE_MAP_START:
-                printf("  +MAP\n");
-                break;
-            case GEN_TYPE_MAP_END:
-                printf("  -MAP\n");
-                break;
-            case GEN_TYPE_FLOW_SEQ_START:
-                printf("  +SEQ []\n");
-                break;
-            case GEN_TYPE_FLOW_SEQ_END:
-                printf("  -SEQ\n");
-                break;
-            case GEN_TYPE_FLOW_MAP_START:
-                printf("  +MAP {}\n");
-                break;
-            case GEN_TYPE_FLOW_MAP_END:
-                printf("  -MAP\n");
-                break;
-            default:
-                break;
-        }
-    } else if (sd->type == SD_TYPE_COMPOSITION || sd->type == SD_TYPE_TENSOR) {
-        /* Traverse children */
-        traverse_diagram(sd->data.binary.first, alphabet);
-        traverse_diagram(sd->data.binary.second, alphabet);
-    }
-}
+/* External lexer/parser functions */
+int yaml_lex_init(void **scanner);
+int yaml_lex_destroy(void *scanner);
+void yaml_set_in(FILE *in, void *scanner);
+int yaml_parse(void *scanner);
+
+int rml_lex_init(void **scanner);
+int rml_lex_destroy(void *scanner);
+typedef struct yy_buffer_state *YY_BUFFER_STATE;
+YY_BUFFER_STATE rml__scan_string(const char *str, void *scanner);
+int rml_parse(void *scanner);
 
 int main(int argc, char **argv) {
-    Alphabet *alphabet = NULL;
-    Grammar *grammar = NULL;
-    StringDiagram *diagram = NULL;
-
-    int has_directive = 0;
-    int has_marker = 0;
-
-    int result = yaml_parse(&alphabet, &grammar, &diagram, &has_directive, &has_marker);
-
-    /* We need to access the flags, but yaml_parse doesn't return them currently. 
-       Let's assume for now we just handle based on diagram content or improve API.
-       Actually, let's just make traverse_diagram handle 1 space indentation and
-       main handle the STR/DOC wrappers.
-    */
-
-    if (result == 0) {
-        printf("+STR\n");
-        if (has_directive || has_marker) {
-            printf(" +DOC ---\n");
-        } else {
-            printf(" +DOC\n");
-        }
-        
-        traverse_diagram(diagram, alphabet);
-        
-        printf(" -DOC\n");
-        printf("-STR\n");
-    }
- else {
-        fprintf(stderr, "Parse failed\n");
+    (void)argc; (void)argv;
+    void *y_scanner;
+    
+    /* Stage 1: YAML to Monoidal IR */
+    yaml_lex_init(&y_scanner);
+    yaml_set_in(stdin, y_scanner);
+    if (yaml_parse(y_scanner) != 0) {
+        yaml_lex_destroy(y_scanner);
         return 1;
     }
+    yaml_lex_destroy(y_scanner);
 
-    if (alphabet) alphabet_free(alphabet);
-    if (grammar) grammar_free(grammar);
-    if (diagram) sd_free(diagram);
+    if (!rml_ir_buf) return 0;
 
+    /* Stage 2: Monoidal IR to Canonical Events */
+    void *r_scanner;
+    rml_lex_init(&r_scanner);
+    rml__scan_string(rml_ir_buf, r_scanner);
+    int result = rml_parse(r_scanner);
+    
+    rml_lex_destroy(r_scanner);
+    free(rml_ir_buf);
+    
     return result;
 }
