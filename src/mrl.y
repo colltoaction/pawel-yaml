@@ -382,6 +382,47 @@ const char* expand_tag(const char *tag) {
     return tag;
 }
 
+/* Apply line folding to double-quoted string values
+ * YAML spec: newline + leading spaces -> single space
+ * This matches the expected folding behavior for double-quoted strings
+ */
+static char* apply_line_folding(const char *value) {
+    if (!value) return NULL;
+    
+    /* Count space needed for folded string */
+    int result_len = 0;
+    for (int i = 0; value[i]; i++) {
+        if (value[i] == '\n') {
+            /* Replace newline + spaces with single space */
+            int j = i + 1;
+            while (value[j] && (value[j] == ' ' || value[j] == '\t')) j++;
+            result_len += 1;  /* Single space replaces newline + spaces */
+            i = j - 1;        /* Continue from after spaces */
+        } else {
+            result_len++;
+        }
+    }
+    
+    /* Build folded string */
+    char *folded = malloc(result_len + 1);
+    int out_idx = 0;
+    
+    for (int i = 0; value[i]; i++) {
+        if (value[i] == '\n') {
+            /* Replace newline + spaces with single space */
+            int j = i + 1;
+            while (value[j] && (value[j] == ' ' || value[j] == '\t')) j++;
+            folded[out_idx++] = ' ';
+            i = j - 1;  /* Continue from after spaces */
+        } else {
+            folded[out_idx++] = value[i];
+        }
+    }
+    folded[out_idx] = '\0';
+    
+    return folded;
+}
+
 void emit_events(struct Event *head) {
     static int depth = 1;
     while (head) {
@@ -393,7 +434,18 @@ void emit_events(struct Event *head) {
                 if (head->anchor) printf("&%s ", head->anchor + 1);
                 if (head->tag) printf("<%s> ", expand_tag(head->tag));
                 fputc(head->quote ? head->quote : ':', stdout);
-                if (head->value) fputs(head->value, stdout);
+                if (head->value) {
+                    /* For double-quoted strings, apply line folding per YAML spec */
+                    if (head->quote == '"') {
+                        char *folded = apply_line_folding(head->value);
+                        if (folded) {
+                            fputs(folded, stdout);
+                            free(folded);
+                        }
+                    } else {
+                        fputs(head->value, stdout);
+                    }
+                }
                 fputc('\n', stdout);
                 break;
             case EVT_ALIAS:
