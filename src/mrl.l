@@ -178,7 +178,11 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 }
 
 \n {
-    BEGIN(INDENT_CHECK);
+    /* In flow context, newlines are just whitespace, don't check indentation */
+    if (flow_level == 0) {
+        BEGIN(INDENT_CHECK);
+    }
+    /* Otherwise skip the newline in flow context */
 }
 
 
