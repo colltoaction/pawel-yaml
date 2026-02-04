@@ -498,11 +498,8 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return SCALAR;
 }
 
-<PLAIN_SCALAR_CONT>[ \t]+ { append_scalar(yytext, yyleng); }
-<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { append_scalar(yytext, yyleng); }
-<PLAIN_SCALAR_CONT>":" { append_scalar(":", 1); }
-
 <PLAIN_SCALAR_CONT>":"/[ \t\n\r] {
+    /* Colon followed by space/tab/newline ends the scalar */
     char *s = strdup(scalar_content);
     int len = strlen(s);
     while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
@@ -511,6 +508,10 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(INITIAL);
     return SCALAR;
 }
+
+<PLAIN_SCALAR_CONT>[ \t]+ { append_scalar(yytext, yyleng); }
+<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { append_scalar(yytext, yyleng); }
+<PLAIN_SCALAR_CONT>":" { append_scalar(":", 1); }
 
 <PLAIN_SCALAR_CONT>"\n" {
     /* For plain scalars, newline ends the scalar in block context */
@@ -548,6 +549,17 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     int len = strlen(s);
     while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
     yylval->string = s;
+    BEGIN(INITIAL);
+    return SCALAR;
+}
+
+<PLAIN_SCALAR_CONT>. {
+    /* Unmatched character in plain scalar - end the scalar */
+    char *s = strdup(scalar_content);
+    int len = strlen(s);
+    while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
+    yylval->string = s;
+    yyless(0);
     BEGIN(INITIAL);
     return SCALAR;
 }
