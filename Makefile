@@ -39,7 +39,10 @@ PARSER_OBJS = $(BUILD_DIR)/yaml.tab.o $(BUILD_DIR)/yaml.lex.o \
 TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
-OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o
+# Custom C source files (Stage 2: Event parser)
+CUSTOM_OBJS = $(BUILD_DIR)/yaml_event_parser.o
+
+OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o $(CUSTOM_OBJS)
 
 TARGET = $(BIN_DIR)/pawel-yaml
 
@@ -69,6 +72,9 @@ $(BUILD_DIR)/%.o: $(GEN_SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(YAML_TAB_H) $(RML_TAB_H)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/yaml_event_parser.o: $(SRC_DIR)/yaml_event_parser.c $(SRC_DIR)/yaml_event_parser.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================================
