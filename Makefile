@@ -83,10 +83,30 @@ clean-build:
 deepclean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all clean clean-build deepclean directories yaml-test-suite tdd
+# TDD Targets
+test-event: directories
+	@echo "Compiling yaml_event unit tests..."
+	$(BISON) -d -o $(BUILD_DIR)/src/yaml_event.tab.c --defines=$(GEN_INC_DIR)/yaml_event.tab.h src/yaml_event.y
+	$(CC) $(CFLAGS) -c $(BUILD_DIR)/src/yaml_event.tab.c -o $(BUILD_DIR)/yaml_event.tab.o
+	$(CC) $(CFLAGS) -g test_yaml_event.c $(BUILD_DIR)/yaml_event.tab.o -o test_yaml_event
+
+test-unit: test-event
+	@echo "Running unit tests..."
+	@./test_yaml_event
+
+test-integration: $(TARGET) $(SUITE_DIR)
+	@echo "Running integration tests against YAML test suite..."
+	@python3 test_yaml_suite.py
+
+test-discover:
+	@$(AGENT_DIR)/tdd_harness.sh discover
+
+tdd: test-unit test-integration
+	@echo ""
+	@echo "✓ All TDD cycles complete!"
 
 yaml-test-suite: $(SUITE_DIR) $(TARGET)
-	@PATH=$(BIN_DIR):$$PATH $(AGENT_DIR)/test_yaml_suite.sh
+	@echo "Running YAML test suite..."
+	@$(AGENT_DIR)/test_yaml_suite.sh
 
-tdd: $(TARGET) $(SUITE_DIR)
-	@./tdd_harness.sh discover | head -20
+.PHONY: all clean clean-build deepclean directories yaml-test-suite tdd test-event test-unit test-integration test-discover
