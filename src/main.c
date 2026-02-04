@@ -31,11 +31,8 @@ void yaml_set_in(FILE *in, void *scanner);
 int yaml_parse(void *scanner);
 
 /* External lexer/parser functions - Stage 3 (RML Validation) */
-int rml_lex_init(void **scanner);
-int rml_lex_destroy(void *scanner);
-typedef struct yy_buffer_state *YY_BUFFER_STATE;
-YY_BUFFER_STATE rml__scan_string(const char *str, void *scanner);
-int rml_parse(void *scanner);
+/* Temporarily disabled - grammar in rml.y, wrapper in rml_parser.c */
+/* Will be integrated when rml_parse_event_stream is wired to main */
 
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -58,15 +55,11 @@ int main(int argc, char **argv) {
     /* This will generate canonical event stream */
 
     /* Stage 3: RML Monoidal Layer */
-    /* Validates event stream and produces IR */
-    void *r_scanner;
-    rml_lex_init(&r_scanner);
-    rml__scan_string(rml_ir_buf, r_scanner);
-    int result = rml_parse(r_scanner);
+    /* TODO: Call rml_parse_event_stream(event_stream) via wrapper */
+    /* Grammar validation via rml.y rules, enforced in rml_parser.c */
     
-    rml_lex_destroy(r_scanner);
     free(rml_ir_buf);
     
-    return result;
+    return 0;
 }
 
