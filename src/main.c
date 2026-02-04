@@ -1,36 +1,82 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "yaml.tab.h"
+#include "yaml_event_parser.h"
+#include "rml_parser.h"
 
-/* YAML Pipeline Stages */
-extern int stream_parse(void);      /* Presentation -> Events (Stage 1) */
-extern int compose_events(void);    /* Events -> Representation (Stage 2) */
+/**
+ * Three-Stage Parser Pipeline (Grammar-Native)
+ * 
+ * Stage 1: YAML Presentation (yaml.y/yaml.l)
+ * - Input: Raw YAML text
+ * - Output: Tokens/AST
+ * 
+ * Stage 2: YAML Events (yaml_event.y/yaml_event.l)
+ * - Input: YAML tokens or event stream strings
+ * - Output: Canonical event stream (+STR, -STR, =VAL, etc.)
+ * 
+ * Stage 3: RML Monoidal (rml.y/rml.l)
+ * - Input: Event stream
+ * - Output: Validation result + IR
+ * 
+ * NOTE: All C logic has been moved into grammar files.
+ * main.c only orchestrates the three pipeline stages.
+ */
+
+/* Globals for IR exchange between stages */
+char *rml_ir_buf = NULL;
+size_t rml_ir_size = 0;
+
+/* External lexer/parser functions - Stage 1 (YAML Presentation) */
+int yaml_lex_init(void **scanner);
+int yaml_lex_destroy(void *scanner);
+void yaml_set_in(FILE *in, void *scanner);
+int yaml_parse(void *scanner);
 
 int main(int argc, char **argv) {
-    /* Mode selection via command-line flags */
-    if (argc > 1 && strcmp(argv[1], "-dump-tokens") == 0) {
-        /* Output event stream only */
-        return stream_parse();
-    }
+    (void)argc; (void)argv;
+    void *y_scanner;
     
-    if (argc > 1 && strcmp(argv[1], "-ast-dump") == 0) {
-        /* Output IR representation */
-        return stream_parse() || compose_events();
-    }
-    
-    if (argc > 1 && (strcmp(argv[1], "-help") == 0 || strcmp(argv[1], "-h") == 0)) {
-        fprintf(stderr, "Usage: %s [OPTIONS]\n", argv[0]);
-        fprintf(stderr, "  -dump-tokens   Output event stream\n");
-        fprintf(stderr, "  -ast-dump      Output IR representation\n");
-        return 0;
-    }
-    
-    if (argc > 1) {
-        /* Unknown option */
-        fprintf(stderr, "Unknown option: %s\n", argv[1]);
+    /* Stage 1: YAML Presentation Layer */
+    /* Parses YAML text into token stream */
+    yaml_lex_init(&y_scanner);
+    yaml_set_in(stdin, y_scanner);
+    if (yaml_parse(y_scanner) != 0) {
+        yaml_lex_destroy(y_scanner);
         return 1;
     }
+    yaml_lex_destroy(y_scanner);
+
+    if (!rml_ir_buf) return 0;
+
+    /* Stage 2: YAML Events Layer */
+    /* Parse event stream string through yaml_event grammar */
+    yaml_event_parser_init();
+    EventStream *events = yaml_event_parse_string(rml_ir_buf);
+    yaml_event_parser_cleanup();
     
-    /* Default: full parse to representation */
-    return stream_parse() || compose_events();
+    if (!events) {
+        free(rml_ir_buf);
+        return 1;
+    }
+
+    /* Stage 3: RML Monoidal Layer */
+    /* Validate event stream through rml grammar rules */
+    ValidationResult *result = rml_parse_event_stream(events);
+    
+    if (result && result->is_valid) {
+        if (result->intermediate_representation) {
+            printf("%s", result->intermediate_representation);
+        }
+    } else if (result) {
+        fprintf(stderr, "Validation error: %s\n", result->error_message);
+    }
+    
+    event_stream_free(events);
+    validation_result_free(result);
+    free(rml_ir_buf);
+    
+    return 0;
 }
+
