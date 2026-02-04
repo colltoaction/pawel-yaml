@@ -414,6 +414,10 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return SCALAR;
 }
 
+<SIMPLE_SCALAR>[ \t]*\n([ \t]*\n)+ {
+    /* Multiple blank lines in scalar - continue parsing as multiline */
+    append_scalar(" ", 1);
+}
 <SIMPLE_SCALAR>"\n" {
     char *s = strdup(scalar_content);
     int len = strlen(s);
@@ -423,7 +427,6 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(INITIAL);
     return SCALAR;
 }
-
 <SIMPLE_SCALAR>[ \t]+ { append_scalar(yytext, yyleng); }
 <SIMPLE_SCALAR>[^:\n\r\t,\[\]{} ]+ { append_scalar(yytext, yyleng); }
 <SIMPLE_SCALAR>":" { append_scalar(":", 1); }

@@ -11,8 +11,21 @@ typedef struct {
 #include <stdio.h>
 #include "yaml_event_parser.h"
 
+/* Forward declarations */
 int yaml_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 void yaml_error(void *yylloc, void *scanner, const char *s);
+
+/* Enhanced error reporting - signature matches generated Bison parser */
+void yaml_error(void *yylloc, void *scanner, const char *s) {
+    fprintf(stderr, "YAML Error: %s\n", s);
+    
+    /* Provide helpful hints for common errors */
+    if (s && strstr(s, "ambiguous")) {
+        fprintf(stderr, "  Hint: Check for complex keys with indentation (? key\\n: value)\n");
+    } else if (s && strstr(s, "syntax")) {
+        fprintf(stderr, "  Hint: Check indentation, quotes, and special characters (:, ?, #)\n");
+    }
+}
 
 /* Output buffer for RML IR */
 extern char *rml_ir_buf;
@@ -115,6 +128,8 @@ static void add_alias_event(const char *name) {
 %glr-parser
 %expect 45
 %expect-rr 34
+%define parse.error detailed
+%locations
 
 %%
 
@@ -122,6 +137,8 @@ stream:
     { ir_out = open_memstream(&rml_ir_buf, &rml_ir_size); add_event(EVENT_STREAM_START); }
     documents
     { fclose(ir_out); add_event(EVENT_STREAM_END); }
+    | error
+    { fprintf(stderr, "YAML Error: Failed to parse document\n"); yyerrok; YYABORT; }
     ;
 
 documents:
@@ -255,9 +272,6 @@ flow_node: node ;
 
 %%
 
-void yaml_error(void *yylloc, void *scanner, const char *s) {
-    fprintf(stderr, "YAML Error: %s\n", s);
-}
 /* Option 2: Public API for direct EventStream building */
 EventStream* yaml_parse_to_event_stream(const char *input) {
     /* Create new event stream */
