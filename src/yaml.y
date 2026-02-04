@@ -1,319 +1,285 @@
-%{
-#include "yaml_parser.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-void yyerror(ParserContext *ctx, void *scanner, const char *s);
-%}
-
 %code requires {
-    #include "yaml_parser.h"
-    #include "mrl.h"
+typedef struct {
+    char *anchor;
+    char *tag;
+} NodeProps;
 }
 
-%define api.pure full
-%parse-param {ParserContext *ctx}
+%{
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include "yaml_event_parser.h"
+
+int yaml_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
+void yaml_error(void *yylloc, void *scanner, const char *s);
+
+/* Output buffer for RML IR */
+extern char *rml_ir_buf;
+extern size_t rml_ir_size;
+static FILE *ir_out;
+
+#define EMIT(...) fprintf(ir_out, __VA_ARGS__)
+
+/* Option 2: EventStream accumulator for direct building */
+static EventStream *current_event_stream = NULL;
+
+/* Helper: Add event to stream */
+static void add_event(YAMLEventType type) {
+    if (!current_event_stream) return;
+    
+    YAMLEvent *evt = (YAMLEvent*)malloc(sizeof(YAMLEvent));
+    evt->type = type;
+    evt->quote_style = 0;
+    evt->value = NULL;
+    evt->anchor = NULL;
+    evt->tag = NULL;
+    evt->explicit_start = 0;
+    evt->alias_name = NULL;
+    
+    if (current_event_stream->count >= current_event_stream->capacity) {
+        current_event_stream->capacity = (current_event_stream->capacity + 1) * 2;
+        current_event_stream->events = (YAMLEvent**)realloc(current_event_stream->events, 
+                                        current_event_stream->capacity * sizeof(YAMLEvent*));
+    }
+    current_event_stream->events[current_event_stream->count++] = evt;
+}
+
+/* Helper: Add scalar event */
+static void add_scalar_event(const char *value, char quote_style) {
+    if (!current_event_stream || !value) return;
+    
+    YAMLEvent *evt = (YAMLEvent*)malloc(sizeof(YAMLEvent));
+    evt->type = EVENT_SCALAR;
+    evt->quote_style = quote_style;
+    evt->value = (char*)malloc(strlen(value) + 1);
+    strcpy(evt->value, value);
+    evt->anchor = NULL;
+    evt->tag = NULL;
+    evt->explicit_start = 0;
+    evt->alias_name = NULL;
+    
+    if (current_event_stream->count >= current_event_stream->capacity) {
+        current_event_stream->capacity = (current_event_stream->capacity + 1) * 2;
+        current_event_stream->events = (YAMLEvent**)realloc(current_event_stream->events,
+                                        current_event_stream->capacity * sizeof(YAMLEvent*));
+    }
+    current_event_stream->events[current_event_stream->count++] = evt;
+}
+
+/* Helper: Add alias event */
+static void add_alias_event(const char *name) {
+    if (!current_event_stream || !name) return;
+    
+    YAMLEvent *evt = (YAMLEvent*)malloc(sizeof(YAMLEvent));
+    evt->type = EVENT_ALIAS;
+    evt->quote_style = 0;
+    evt->value = NULL;
+    evt->anchor = NULL;
+    evt->tag = NULL;
+    evt->explicit_start = 0;
+    evt->alias_name = (char*)malloc(strlen(name) + 1);
+    strcpy(evt->alias_name, name);
+    
+    if (current_event_stream->count >= current_event_stream->capacity) {
+        current_event_stream->capacity = (current_event_stream->capacity + 1) * 2;
+        current_event_stream->events = (YAMLEvent**)realloc(current_event_stream->events,
+                                        current_event_stream->capacity * sizeof(YAMLEvent*));
+    }
+    current_event_stream->events[current_event_stream->count++] = evt;
+}
+
+%}
+
+%define api.pure true
+%define api.prefix {yaml_}
+%locations
 %parse-param {void *scanner}
 %lex-param {void *scanner}
 
 %union {
     char *string;
-    StringDiagram *sd;
+    NodeProps props;
 }
 
-%token <string> SCALAR
-%token <string> BSCALAR
-%token <string> QSCALAR
-%token <string> SSCALAR
-%token <string> TAG
-%token <string> ANCHOR
-%token <string> ALIAS
-%token YAML_DIRECTIVE
-%token DOC_START
-%token BULLET
-%token COLON
-%token QUESTION
-%token LBRACK RBRACK LBRACE RBRACE COMMA
+%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS
+%token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET COLON QUESTION
+%token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
 
-%type <sd> document_list
-%type <sd> document
-%type <sd> nodes node node_body scalar
-%type <sd> seq seq_entries seq_entry
-%type <sd> map map_entries map_entry
-%type <sd> flow_seq flow_map flow_seq_entries flow_map_entries flow_node
+%type <props> node_props
+
+/* Destructors for memory safety */
+%destructor { free($$); } <string>
+%destructor { free($$.anchor); free($$.tag); } <props>
+
+%glr-parser
+%expect 28
+%expect-rr 28
 
 %%
 
 stream:
-    document_list {
-        ctx->diagram = $1;
-    }
+    { ir_out = open_memstream(&rml_ir_buf, &rml_ir_size); add_event(EVENT_STREAM_START); }
+    documents
+    { fclose(ir_out); add_event(EVENT_STREAM_END); }
     ;
 
-document_list:
-    document { $$ = $1; }
-    | document_list document { $$ = sd_compose($1, $2); }
+documents:
+    implicit_document
+    | explicit_documents
+    | implicit_document explicit_documents
+    | DOC_END
     ;
 
-document:
-    nodes {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_DOC_START; gs->value = NULL; gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        $$ = sd_compose(sd_generator(gs), sd_compose($1, sd_generator(ge)));
-    }
-    | DOC_START nodes {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
-    }
-    | YAML_DIRECTIVE DOC_START nodes {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_DOC_START; gs->value = strdup("---"); gs->tag = NULL; gs->anchor = NULL; gs->quote = 0;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_DOC_END; ge->value = NULL; ge->tag = NULL; ge->anchor = NULL; ge->quote = 0;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        $$ = sd_compose(sd_generator(gs), sd_compose($3, sd_generator(ge)));
-    }
+explicit_documents:
+    explicit_document
+    | explicit_documents explicit_document
     ;
 
-nodes:
-    node { $$ = $1; }
+explicit_document:
+    DOC_START { EMIT("D+\n"); add_event(EVENT_DOCUMENT_START); } document_body { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | DOC_START { EMIT("D+\nS::\n"); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { EMIT("D+\n"); add_event(EVENT_DOCUMENT_START); } document_body { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | directives DOC_START { EMIT("D+\nS::\n"); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); }
+    ;
+
+directives: directive | directives directive ;
+directive: YAML_DIRECTIVE | TAG_DIRECTIVE SCALAR SCALAR { free($2); free($3); } ;
+
+optional_doc_end: /* empty */ | DOC_END ;
+
+implicit_document:
+    document_body { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    ;
+
+document_body:
+    { EMIT("D+\n"); } node
+    | { EMIT("D+\nM+\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("M-\n"); add_event(EVENT_MAPPING_END); } %dprec 3
+    | { EMIT("D+\nQ+\n"); add_event(EVENT_SEQUENCE_START); } seq_entries { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); } %dprec 2
+    | node_props[p] { EMIT("D+\nP&%s<%s>\nM+\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); add_event(EVENT_MAPPING_START); } 
+      map_entries { EMIT("M-\n"); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); } %dprec 4
+    | node_props[p] { EMIT("D+\nP&%s<%s>\nQ+\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); add_event(EVENT_SEQUENCE_START); } 
+      seq_entries { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); } %dprec 3
     ;
 
 node:
-    node_body { $$ = $1; }
-    | TAG node_body {
-        sd_set_tag($2, $1);
-        $$ = $2;
-        free($1);
-    }
-    | ANCHOR node_body {
-        sd_set_anchor($2, $1);
-        $$ = $2;
-        free($1);
-    }
-    | ANCHOR TAG node_body {
-        sd_set_anchor($3, $1);
-        sd_set_tag($3, $2);
-        $$ = $3;
-        free($1); free($2);
-    }
-    | TAG seq {
-        sd_set_tag($2, $1);
-        $$ = $2;
-        free($1);
-    }
-    | TAG map {
-        sd_set_tag($2, $1);
-        $$ = $2;
-        free($1);
-    }
+    node_body %dprec 2
+    | node_props[p] { EMIT("P&%s<%s>\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } node_body %dprec 3
+    | node_props[p] { EMIT("P&%s<%s>\nS::\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } %dprec 1
     ;
 
 node_body:
-    scalar { $$ = $1; }
-    | ALIAS {
-        alphabet_add_alias(ctx->alphabet, $1);
-        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
-        $$ = sd_generator(g);
-        free($1);
-    }
-    | seq { $$ = $1; }
-    | map { $$ = $1; }
-    | flow_seq { $$ = $1; }
-    | flow_map { $$ = $1; }
+    scalar
+    | ALIAS[a] { EMIT("A:%s\n", $a+1); add_alias_event($a+1); free($a); }
+    | flow_seq
+    | flow_map
+    | collection
+    ;
+
+node_props:
+    TAG[t] { $$.anchor = NULL; $$.tag = $t; }
+    | ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
+    | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
+    | TAG[t] ANCHOR[a] { $$.anchor = $a; $$.tag = $t; }
     ;
 
 scalar:
-    SCALAR {
-        alphabet_add_scalar(ctx->alphabet, $1);
-        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
-        $$ = sd_generator(g);
-        free($1);
-    }
-    | QSCALAR {
-        alphabet_add_quoted_scalar(ctx->alphabet, $1, '"');
-        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
-        $$ = sd_generator(g);
-        free($1);
-    }
-    | SSCALAR {
-        alphabet_add_quoted_scalar(ctx->alphabet, $1, '\'');
-        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
-        $$ = sd_generator(g);
-        free($1);
-    }
-    | BSCALAR {
-        /* BSCALAR value starts with indicator char | or > */
-        char indicator = $1[0];
-        alphabet_add_quoted_scalar(ctx->alphabet, $1 + 1, indicator);
-        Generator *g = ctx->alphabet->generators[ctx->alphabet->count - 1];
-        $$ = sd_generator(g);
-        free($1);
-    }
+    SCALAR[s] { EMIT("S:%s\n", $s); add_scalar_event($s, ':'); free($s); }
+    | QSCALAR[s] { EMIT("S\":%s\n", $s); add_scalar_event($s, '"'); free($s); }
+    | SSCALAR[s] { EMIT("S\':%s\n", $s); add_scalar_event($s, '\''); free($s); }
+    | BSCALAR[s] { EMIT("S%c:%s\n", $s[0], $s+1); add_scalar_event($s+1, $s[0]); free($s); }
     ;
 
-seq:
-    seq_entries {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_SEQ_START;
-        gs->value = NULL;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_SEQ_END;
-        ge->value = NULL;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
+collection: map | seq ;
 
-        StringDiagram *start = sd_generator(gs);
-        StringDiagram *end = sd_generator(ge);
-        
-        $$ = sd_compose(start, sd_compose($1, end));
-    }
+seq:
+    INDENT { EMIT("Q+\n"); add_event(EVENT_SEQUENCE_START); } seq_entries DEDENT { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); }
     ;
 
 seq_entries:
-    seq_entry { $$ = $1; }
-    | seq_entries seq_entry { $$ = sd_compose($1, $2); }
+    seq_entry
+    | seq_entries seq_entry
     ;
 
 seq_entry:
-    BULLET node { $$ = $2; }
+    BULLET node %dprec 2
+    | BULLET { EMIT("M+\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("M-\n"); add_event(EVENT_MAPPING_END); } %dprec 3
+    | BULLET { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 1
     ;
 
 map:
-    map_entries {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_MAP_START;
-        gs->value = NULL;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_MAP_END;
-        ge->value = NULL;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        StringDiagram *start = sd_generator(gs);
-        StringDiagram *end = sd_generator(ge);
-        
-        $$ = sd_compose(start, sd_compose($1, end));
-    }
+    INDENT { EMIT("M+\n"); add_event(EVENT_MAPPING_START); } map_entries DEDENT { EMIT("M-\n"); add_event(EVENT_MAPPING_END); }
     ;
 
 map_entries:
-    map_entry { $$ = $1; }
-    | map_entries map_entry { $$ = sd_compose($1, $2); }
+    map_entry
+    | map_entries map_entry
     ;
 
 map_entry:
-    node COLON node { $$ = sd_compose($1, $3); }
-    | QUESTION node COLON node { $$ = sd_compose($2, $4); }
+    entry_key COLON node %dprec 3
+    | QUESTION node COLON node %dprec 5
+    | entry_key COLON { EMIT("S::\n"); } %dprec 1
+    | QUESTION node COLON { EMIT("S::\n"); } %dprec 1
+    | QUESTION node { EMIT("S::\n"); } %dprec 2
+    | COLON node %dprec 2 { EMIT("S::\n"); }
     ;
 
+entry_key: scalar | ALIAS[a] { EMIT("A:%s\n", $a+1); add_alias_event($a+1); free($a); } | flow_seq | flow_map ;
+
 flow_seq:
-    LBRACK RBRACK {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_FLOW_SEQ_START; gs->value = NULL; gs->tag = NULL; gs->quote = 0;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_FLOW_SEQ_END; ge->value = NULL; ge->tag = NULL; ge->quote = 0;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        $$ = sd_compose(sd_generator(gs), sd_generator(ge));
-    }
-    | LBRACK flow_seq_entries RBRACK {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_FLOW_SEQ_START; gs->value = NULL; gs->tag = NULL; gs->quote = 0;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_FLOW_SEQ_END; ge->value = NULL; ge->tag = NULL; ge->quote = 0;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
-    }
+    LBRACK { EMIT("Q+\n"); add_event(EVENT_SEQUENCE_START); } flow_seq_entries RBRACK { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); }
+    | LBRACK RBRACK { EMIT("Q+\nQ-\n"); add_event(EVENT_SEQUENCE_START); add_event(EVENT_SEQUENCE_END); }
     ;
 
 flow_seq_entries:
-    flow_node { $$ = $1; }
-    | flow_seq_entries COMMA flow_node { $$ = sd_compose($1, $3); }
-    | flow_seq_entries COMMA { $$ = $1; }
+    flow_node
+    | flow_seq_entries COMMA flow_node
+    | flow_seq_entries COMMA
+    | flow_node COLON node { /* simplified */ }
     ;
 
 flow_map:
-    LBRACE flow_map_entries RBRACE {
-        Generator *gs = malloc(sizeof(Generator));
-        gs->type = GEN_TYPE_FLOW_MAP_START; gs->value = NULL; gs->tag = NULL; gs->quote = 0;
-        Generator *ge = malloc(sizeof(Generator));
-        ge->type = GEN_TYPE_FLOW_MAP_END; ge->value = NULL; ge->tag = NULL; ge->quote = 0;
-        
-        if (ctx->alphabet->count + 2 >= ctx->alphabet->capacity) {
-            ctx->alphabet->capacity *= 2;
-            ctx->alphabet->generators = realloc(ctx->alphabet->generators, sizeof(Generator*) * ctx->alphabet->capacity);
-        }
-        ctx->alphabet->generators[ctx->alphabet->count++] = gs;
-        ctx->alphabet->generators[ctx->alphabet->count++] = ge;
-
-        $$ = sd_compose(sd_generator(gs), sd_compose($2, sd_generator(ge)));
-    }
+    LBRACE { EMIT("M+\n"); add_event(EVENT_MAPPING_START); } flow_map_entries RBRACE { EMIT("M-\n"); add_event(EVENT_MAPPING_END); }
+    | LBRACE RBRACE { EMIT("M+\nM-\n"); add_event(EVENT_MAPPING_START); add_event(EVENT_MAPPING_END); }
     ;
 
 flow_map_entries:
-    node COLON node { $$ = sd_compose($1, $3); }
-    | flow_map_entries COMMA node COLON node { $$ = sd_compose($1, sd_compose($3, $5)); }
+    node COLON node
+    | flow_map_entries COMMA node COLON node
+    | flow_map_entries COMMA
     ;
 
-flow_node:
-    node { $$ = $1; }
-    ;
+flow_node: node ;
 
 %%
 
-void yyerror(ParserContext *ctx, void *scanner, const char *s) {
-    fprintf(stderr, "Bison error: %s\n", s);
+void yaml_error(void *yylloc, void *scanner, const char *s) {
+    fprintf(stderr, "YAML Error: %s\n", s);
+}
+/* Option 2: Public API for direct EventStream building */
+EventStream* yaml_parse_to_event_stream(const char *input) {
+    /* Create new event stream */
+    current_event_stream = (EventStream*)malloc(sizeof(EventStream));
+    current_event_stream->capacity = 128;
+    current_event_stream->count = 0;
+    current_event_stream->events = (YAMLEvent**)malloc(current_event_stream->capacity * sizeof(YAMLEvent*));
+    
+    /* Initialize lexer with input */
+    extern int yaml_lex_init_extra(void *user_defined, void **scanner);
+    extern int yaml_lex_destroy(void *scanner);
+    
+    void *scanner;
+    yaml_lex_init_extra((void*)input, &scanner);
+    
+    /* Parse */
+    int ret = yaml_parse(scanner);
+    
+    /* Cleanup */
+    yaml_lex_destroy(scanner);
+    
+    EventStream *result = current_event_stream;
+    current_event_stream = NULL;
+    
+    return result;
 }
