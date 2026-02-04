@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 
+void yyerror(const char *msg);
+
 /**
  * YAML Event Stream (Test-Suite Canonical Format)
  * 
@@ -312,6 +314,9 @@ void event_stream_free(EventStream *stream) {
 %token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
 %token <cval> CHAR                       /* : " ' | > */
 
+%define parse.error detailed
+%locations
+
 %%
 
 /* TOP-LEVEL: Parse a stream of events */
@@ -359,8 +364,11 @@ collection_end : "-SEQ"
 
 %%
 
-/* Error handler - can be overridden by tests */
-__attribute__((weak))
+/* Bison's detailed error messages via %define parse.error detailed
+   are passed as 'msg' parameter to this function.
+   Simply printing them ensures all error information reaches stderr. */
 void yyerror(const char *msg) {
-    fprintf(stderr, "Parse error: %s\n", msg);
+    if (msg) {
+        fprintf(stderr, "YAML Parse Error: %s\n", msg);
+    }
 }
