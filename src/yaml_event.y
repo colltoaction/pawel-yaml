@@ -139,8 +139,71 @@ void event_print(FILE *out, const YAMLEvent *e) {
 }
 %}
 
+/* Lexer value types */
+%union {
+    char *sval;   /* String values */
+    char cval;    /* Character values */
+}
+
+/* Token declarations */
+%token STREAM_START STREAM_END          /* +STR, -STR */
+%token DOC_START DOC_END                /* +DOC, -DOC */
+%token SEQ_START SEQ_END                /* +SEQ, -SEQ */
+%token MAP_START MAP_END                /* +MAP, -MAP */
+%token SCALAR ALIAS                     /* =VAL, =ALI */
+%token ANCHOR TAG                       /* &anchor, <tag> */
+%token <sval> QUOTED_STRING IDENTIFIER  /* "value", plain_value */
+%token <cval> CHAR                      /* : " ' | > */
+
 %%
-/* Placeholder for grammar - to be added in GREEN phase */
-start : { }
+
+/* TOP-LEVEL: Parse a stream of events */
+stream : events
+       {
+           /* Document parsed successfully */
+       }
+       ;
+
+/* Sequence of zero or more events */
+events : %empty
+       | events event
+       ;
+
+/* Individual event */
+event : STREAM_START
+      | STREAM_END
+      | doc_event
+      | collection_start
+      | collection_end
+      | SCALAR CHAR QUOTED_STRING
+      | SCALAR CHAR IDENTIFIER
+      | ALIAS IDENTIFIER
       ;
+
+/* Document events */
+doc_event : DOC_START
+          | DOC_END
+          ;
+
+/* Collection events with optional anchor/tag */
+collection_start : SEQ_START
+                 | SEQ_START ANCHOR
+                 | SEQ_START TAG
+                 | SEQ_START ANCHOR TAG
+                 | MAP_START
+                 | MAP_START ANCHOR
+                 | MAP_START TAG
+                 | MAP_START ANCHOR TAG
+                 ;
+
+collection_end : SEQ_END
+               | MAP_END
+               ;
+
 %%
+
+/* Error handler - can be overridden by tests */
+__attribute__((weak))
+void yyerror(const char *msg) {
+    fprintf(stderr, "Parse error: %s\n", msg);
+}

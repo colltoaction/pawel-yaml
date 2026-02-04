@@ -19,7 +19,7 @@ PLAY_DIR = $(LIB_DIR)/yaml-play
 SUITE_DIR = $(LIB_DIR)/yaml-test-suite
 
 # Parser definitions: PARSERS = name1 name2
-PARSERS = yaml rml
+PARSERS = yaml yaml_event rml
 
 # Generated parser files (derived from PARSERS)
 YAML_TAB_C = $(GEN_SRC_DIR)/yaml.tab.c
@@ -32,6 +32,7 @@ RML_LEX_C = $(GEN_SRC_DIR)/rml.lex.c
 
 # Object files (derived from PARSERS)
 PARSER_OBJS = $(BUILD_DIR)/yaml.tab.o $(BUILD_DIR)/yaml.lex.o \
+              $(BUILD_DIR)/yaml_event.tab.o $(BUILD_DIR)/yaml_event.lex.o \
               $(BUILD_DIR)/rml.tab.o $(BUILD_DIR)/rml.lex.o
 
 # TDD & testing artifacts
@@ -98,7 +99,7 @@ test-event: directories
 	@echo "Compiling yaml_event unit tests..."
 	$(BISON) -d -o $(BUILD_DIR)/src/yaml_event.tab.c --defines=$(GEN_INC_DIR)/yaml_event.tab.h src/yaml_event.y
 	$(CC) $(CFLAGS) -c $(BUILD_DIR)/src/yaml_event.tab.c -o $(BUILD_DIR)/yaml_event.tab.o
-	$(CC) $(CFLAGS) -g test_yaml_event.c $(BUILD_DIR)/yaml_event.tab.o -o test_yaml_event
+	$(CC) $(CFLAGS) -g test_yaml_event.c test_yaml_event_stubs.c $(BUILD_DIR)/yaml_event.tab.o -o test_yaml_event
 
 test-unit: test-event
 	@echo "Running unit tests..."
