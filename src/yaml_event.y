@@ -332,9 +332,9 @@ event : "+STR"
       | doc_event
       | collection_start
       | collection_end
-      | "=VAL" CHAR QUOTED_STRING
-      | "=VAL" CHAR IDENTIFIER
-      | "=ALI" IDENTIFIER
+      | "=VAL" char:CHAR value:QUOTED_STRING
+      | "=VAL" char:CHAR value:IDENTIFIER
+      | "=ALI" name:IDENTIFIER
       ;
 
 /* Document events */
@@ -344,13 +344,13 @@ doc_event : "+DOC"
 
 /* Collection events with optional anchor/tag */
 collection_start : "+SEQ"
-                 | "+SEQ" ANCHOR
-                 | "+SEQ" TAG
-                 | "+SEQ" ANCHOR TAG
+                 | "+SEQ" anchor:ANCHOR
+                 | "+SEQ" tag:TAG
+                 | "+SEQ" anchor:ANCHOR tag:TAG
                  | "+MAP"
-                 | "+MAP" ANCHOR
-                 | "+MAP" TAG
-                 | "+MAP" ANCHOR TAG
+                 | "+MAP" anchor:ANCHOR
+                 | "+MAP" tag:TAG
+                 | "+MAP" anchor:ANCHOR tag:TAG
                  ;
 
 collection_end : "-SEQ"
