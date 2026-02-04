@@ -4,6 +4,7 @@
 #include "yaml.tab.h"
 #include "yaml_event_parser.h"
 #include "rml_parser.h"
+#include "lexer_context.h"
 
 /**
  * Three-Stage Parser Pipeline (Grammar-Native)
@@ -86,14 +87,24 @@ int main(int argc, char **argv) {
     
     /* Stage 1: YAML Presentation Layer */
     /* Parses YAML text into token stream */
+    LexerContext *ctx = lexer_context_new();
+    if (!ctx) {
+        fprintf(stderr, "Failed to create lexer context\n");
+        fclose(input_temp);
+        return 1;
+    }
+    
     yaml_lex_init(&y_scanner);
+    yaml_set_extra(ctx, y_scanner);
     yaml_set_in(input_temp, y_scanner);
     if (yaml_parse(y_scanner) != 0) {
         yaml_lex_destroy(y_scanner);
+        lexer_context_free(ctx);
         fclose(input_temp);
         return 1;
     }
     yaml_lex_destroy(y_scanner);
+    lexer_context_free(ctx);
     fclose(input_temp);
 
     if (!rml_ir_buf) return 0;

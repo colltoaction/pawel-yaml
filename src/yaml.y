@@ -10,6 +10,7 @@ typedef struct {
 #include <string.h>
 #include <stdio.h>
 #include "yaml_event_parser.h"
+#include "ir_builder.h"
 
 int yaml_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 void yaml_error(void *yylloc, void *scanner, const char *s);
@@ -17,9 +18,10 @@ void yaml_error(void *yylloc, void *scanner, const char *s);
 /* Output buffer for RML IR */
 extern char *rml_ir_buf;
 extern size_t rml_ir_size;
-static FILE *ir_out;
+static IRBuilder *ir;
 
-#define EMIT(...) fprintf(ir_out, __VA_ARGS__)
+/* Legacy EMIT macro for gradual migration - will be removed */
+#define EMIT(...) do { if (ir) ir_write(ir, __VA_ARGS__); } while(0)
 
 /* Option 2: EventStream accumulator for direct building */
 static EventStream *current_event_stream = NULL;
@@ -126,9 +128,9 @@ static void add_alias_event(const char *name) {
 %%
 
 stream:
-    { ir_out = open_memstream(&rml_ir_buf, &rml_ir_size); EMIT("+STR\n"); add_event(EVENT_STREAM_START); }
+    { ir = ir_builder_new_memory(); ir_write(ir, "+STR\n"); add_event(EVENT_STREAM_START); }
     documents
-    { EMIT("-STR\n"); fclose(ir_out); add_event(EVENT_STREAM_END); }
+    { ir_write(ir, "-STR\n"); rml_ir_buf = ir_builder_finalize(ir); rml_ir_size = strlen(rml_ir_buf); ir_builder_free(ir); ir = NULL; add_event(EVENT_STREAM_END); }
     ;
 
 documents:
@@ -144,10 +146,10 @@ explicit_documents:
     ;
 
 explicit_document:
-    DOC_START { EMIT("+DOC\n"); add_event(EVENT_DOCUMENT_START); } document_body { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | DOC_START { EMIT("+DOC\n=VAL ::\n"); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); }
-    | directives DOC_START { EMIT("+DOC\n"); add_event(EVENT_DOCUMENT_START); } document_body { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | directives DOC_START { EMIT("+DOC\n=VAL ::\n"); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); }
+    DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); } document_body { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | DOC_START { ir_doc_start(ir); ir_scalar_empty(ir); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); } document_body { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | directives DOC_START { ir_doc_start(ir); ir_scalar_empty(ir); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     ;
 
 directives: directive | directives directive ;
@@ -156,29 +158,29 @@ directive: YAML_DIRECTIVE | TAG_DIRECTIVE SCALAR SCALAR { free($2); free($3); } 
 optional_doc_end: /* empty */ | DOC_END ;
 
 implicit_document:
-    document_body { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    document_body { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
     ;
 
 document_body:
-    { EMIT("+DOC\n"); } node
-    | { EMIT("+DOC\n+MAP\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); } %dprec 3
-    | { EMIT("+DOC\n+SEQ\n"); add_event(EVENT_SEQUENCE_START); } seq_entries { EMIT("-SEQ\n"); add_event(EVENT_SEQUENCE_END); } %dprec 2
-    | node_props[p] { EMIT("+DOC\nP&%s<%s>\n+MAP\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); add_event(EVENT_MAPPING_START); } 
-      map_entries { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); } %dprec 4
-    | node_props[p] { EMIT("+DOC\nP&%s<%s>\n+SEQ\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); add_event(EVENT_SEQUENCE_START); } 
-      seq_entries { EMIT("-SEQ\n"); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); } %dprec 3
+    { ir_doc_start(ir); } node
+    | { ir_doc_start(ir); ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 3
+    | { ir_doc_start(ir); ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 2
+    | node_props[p] { ir_doc_start(ir); ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } 
+      map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); } %dprec 4
+    | node_props[p] { ir_doc_start(ir); ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } 
+      seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); } %dprec 3
     ;
 
 node:
     node_body %dprec 2
-    | TAG[t] node_body { EMIT("P&<%s>\n", $t); free($t); } %dprec 4
-    | node_props[p] { EMIT("P&%s<%s>\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } node_body %dprec 3
-    | node_props[p] { EMIT("P&%s<%s>\n=VAL ::\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } %dprec 1
+    | TAG[t] node_body { ir_prop_tag(ir, $t); free($t); } %dprec 4
+    | node_props[p] { ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } node_body %dprec 3
+    | node_props[p] { ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); ir_scalar_empty(ir); free($p.anchor); free($p.tag); } %dprec 1
     ;
 
 node_body:
     scalar
-    | ALIAS[a] { EMIT("A:%s\n", $a+1); add_alias_event($a+1); free($a); }
+    | ALIAS[a] { ir_alias(ir, $a+1); add_alias_event($a+1); free($a); }
     | flow_seq
     | flow_map
     | collection
@@ -192,16 +194,16 @@ node_props:
     ;
 
 scalar:
-    SCALAR[s] { EMIT("=VAL :%s\n", $s); add_scalar_event($s, ':'); free($s); }
-    | QSCALAR[s] { EMIT("=VAL \":%s\n", $s); add_scalar_event($s, '"'); free($s); }
-    | SSCALAR[s] { EMIT("=VAL \':%s\n", $s); add_scalar_event($s, '\''); free($s); }
-    | BSCALAR[s] { EMIT("=VAL %c:%s\n", $s[0], $s+1); add_scalar_event($s+1, $s[0]); free($s); }
+    SCALAR[s] { ir_scalar_plain(ir, $s); add_scalar_event($s, ':'); free($s); }
+    | QSCALAR[s] { ir_scalar_quoted(ir, $s, '"'); add_scalar_event($s, '"'); free($s); }
+    | SSCALAR[s] { ir_scalar_quoted(ir, $s, '\''); add_scalar_event($s, '\''); free($s); }
+    | BSCALAR[s] { ir_scalar_block(ir, $s+1, $s[0]); add_scalar_event($s+1, $s[0]); free($s); }
     ;
 
 collection: map | seq ;
 
 seq:
-    INDENT { EMIT("+SEQ\n"); add_event(EVENT_SEQUENCE_START); } seq_entries DEDENT { EMIT("-SEQ\n"); add_event(EVENT_SEQUENCE_END); }
+    INDENT { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } seq_entries DEDENT { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
     ;
 
 seq_entries:
@@ -212,12 +214,12 @@ seq_entries:
 seq_entry:
     BULLET node %dprec 2
     | BULLET INDENT seq_entries DEDENT %dprec 4
-    | BULLET { EMIT("+MAP\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); } %dprec 3
-    | BULLET { EMIT("=VAL ::\n"); add_scalar_event("", ':'); } %dprec 1
+    | BULLET { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 3
+    | BULLET { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
     ;
 
 map:
-    INDENT { EMIT("+MAP\n"); add_event(EVENT_MAPPING_START); } map_entries DEDENT { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); }
+    INDENT { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
     ;
 
 map_entries:
@@ -229,17 +231,17 @@ map_entry:
     entry_key COLON node %dprec 3
     | entry_key COLON INDENT node DEDENT %dprec 3
     | QUESTION node COLON node %dprec 5
-    | QUESTION node COLON { EMIT("=VAL ::\n"); add_scalar_event("", ':'); } %dprec 4
-    | entry_key COLON { EMIT("=VAL ::\n"); add_scalar_event("", ':'); } %dprec 1
-    | QUESTION node { EMIT("=VAL ::\n"); add_scalar_event("", ':'); } %dprec 2
-    | COLON node %dprec 2 { EMIT("=VAL ::\n"); add_scalar_event("", ':'); }
+    | QUESTION node COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 4
+    | entry_key COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
+    | QUESTION node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | COLON node %dprec 2 { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     ;
 
-entry_key: scalar | ALIAS[a] { EMIT("A:%s\n", $a+1); add_alias_event($a+1); free($a); } | flow_seq | flow_map | node_props[p] scalar { EMIT("P&%s<%s>\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } ;
+entry_key: scalar | ALIAS[a] { ir_alias(ir, $a+1); add_alias_event($a+1); free($a); } | flow_seq | flow_map | node_props[p] scalar { ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } ;
 
 flow_seq:
-    LBRACK { EMIT("+SEQ\n"); add_event(EVENT_SEQUENCE_START); } flow_seq_entries RBRACK { EMIT("-SEQ\n"); add_event(EVENT_SEQUENCE_END); }
-    | LBRACK RBRACK { EMIT("+SEQ\n-SEQ\n"); add_event(EVENT_SEQUENCE_START); add_event(EVENT_SEQUENCE_END); }
+    LBRACK { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } flow_seq_entries RBRACK { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
+    | LBRACK RBRACK { ir_seq_start(ir, NULL, NULL); ir_seq_end(ir); add_event(EVENT_SEQUENCE_START); add_event(EVENT_SEQUENCE_END); }
     ;
 
 flow_seq_entries:
@@ -250,8 +252,8 @@ flow_seq_entries:
     ;
 
 flow_map:
-    LBRACE { EMIT("+MAP\n"); add_event(EVENT_MAPPING_START); } flow_map_entries RBRACE { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); }
-    | LBRACE RBRACE { EMIT("+MAP\n-MAP\n"); add_event(EVENT_MAPPING_START); add_event(EVENT_MAPPING_END); }
+    LBRACE { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } flow_map_entries RBRACE { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
+    | LBRACE RBRACE { ir_map_start(ir, NULL, NULL); ir_map_end(ir); add_event(EVENT_MAPPING_START); add_event(EVENT_MAPPING_END); }
     ;
 
 flow_map_entries:

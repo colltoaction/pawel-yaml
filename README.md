@@ -38,3 +38,27 @@ make setup
 # Run full project health check
 ./.agent/tooling.sh check
 ```
+
+## Memory Validation
+
+The project includes Makefile targets for automated memory leak detection using Valgrind:
+
+### Quick Check
+```bash
+make valgrind          # Simple test with detailed output
+make valgrind-summary  # Quick pass/fail check
+```
+
+### Comprehensive Checks
+```bash
+make valgrind-full   # Multiple test cases (recommended)
+make valgrind-suite  # Test against yaml-test-suite samples
+```
+
+All valgrind targets:
+- Use `--leak-check=full` for comprehensive analysis
+- Distinguish memory leaks from validation errors
+- Generate logs in `build/log/valgrind_*.log`
+- Exit with error code only on actual memory leaks
+
+**Current Status**: ✓ All memory leaks resolved (30 allocs, 30 frees)
