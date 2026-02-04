@@ -372,6 +372,22 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(SIMPLE_SCALAR);
 }
 
+"?"[a-zA-Z0-9\-\._]+ {
+    /* Question mark followed by alphanumeric - treat as scalar */
+    init_scalar();
+    append_scalar(yytext, yyleng);
+    expecting_value = 0;
+    BEGIN(SIMPLE_SCALAR);
+}
+
+":"[a-zA-Z0-9\-\._]+ {
+    /* Colon followed by alphanumeric - treat as scalar */
+    init_scalar();
+    append_scalar(yytext, yyleng);
+    expecting_value = 0;
+    BEGIN(SIMPLE_SCALAR);
+}
+
 <SIMPLE_SCALAR>":"/[ \t\n\r] {
     char *s = strdup(scalar_content);
     int len = strlen(s);
