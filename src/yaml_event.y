@@ -3,6 +3,9 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Forward declaration for standard Bison non-reentrant parser */
+void yyerror(const char *msg);
+
 /**
  * YAML Event Stream (Test-Suite Canonical Format)
  * 
@@ -359,8 +362,21 @@ collection_end : "-SEQ"
 
 %%
 
-/* Error handler - can be overridden by tests */
+/* Enhanced error reporting with context */
 __attribute__((weak))
 void yyerror(const char *msg) {
-    fprintf(stderr, "Parse error: %s\n", msg);
+    extern int yylineno;
+    extern char *yytext;
+    
+    /* Print detailed error information */
+    fprintf(stderr, "YAML Error: %s at line %d", msg, yylineno);
+    if (yytext && yytext[0]) {
+        fprintf(stderr, " near '%s'", yytext);
+    }
+    fprintf(stderr, "\n");
+    
+    /* Provide suggestion if this looks like a syntax error */
+    if (strstr(msg, "syntax") || strstr(msg, "ambiguous")) {
+        fprintf(stderr, "  Hint: Check for proper indentation, quoted strings, or complex key syntax\n");
+    }
 }
