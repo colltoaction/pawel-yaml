@@ -3,13 +3,6 @@
 #include <string.h>
 #include <stdio.h>
 
-/* Bison's detailed error messages via %define parse.error detailed
-   are passed as 'msg' parameter to this function.
-   Simply printing them ensures all error information reaches stderr. */
-void yyerror(const char *msg) {
-    fprintf(stderr, "%s\n", msg);
-}
-
 /**
  * YAML Event Stream (Test-Suite Canonical Format)
  * 
@@ -23,8 +16,35 @@ void yyerror(const char *msg) {
  * - Aliases: =ALI *name
  */
 
-#include "tokens.tab.h"
-#include "yaml_event_parser.h"
+/* Event type enumeration */
+typedef enum {
+    EVENT_STREAM_START,
+    EVENT_STREAM_END,
+    EVENT_DOCUMENT_START,
+    EVENT_DOCUMENT_END,
+    EVENT_SEQUENCE_START,
+    EVENT_SEQUENCE_END,
+    EVENT_MAPPING_START,
+    EVENT_MAPPING_END,
+    EVENT_SCALAR,
+    EVENT_ALIAS,
+} YAMLEventType;
+
+typedef struct {
+    YAMLEventType type;
+    char quote_style;        /* ':' plain, '"' double, '\'' single, '|' literal, '>' folded */
+    char *value;
+    char *anchor;
+    char *tag;
+    int explicit_start;
+    char *alias_name;
+} YAMLEvent;
+
+typedef struct {
+    YAMLEvent **events;
+    int count;
+    int capacity;
+} EventStream;
 
 /* Constructor helpers */
 YAMLEvent *event_create(YAMLEventType type) {
@@ -136,8 +156,6 @@ int yaml_event_parser_init(void) {
 
 /* Parse event stream from string - moved from yaml_event_parser.c */
 EventStream* yaml_event_parse_string(const char *input) {
-    yaml_event_parser_init();
-    
     if (!input) return NULL;
     
     /* Create event stream */
@@ -278,13 +296,21 @@ void event_stream_free(EventStream *stream) {
     char cval;    /* Character values */
 }
 
+/* Token declarations with string literal aliases */
+%token STR_START   "+STR"
+%token STR_END     "-STR"
+%token DOC_START   "+DOC"
+%token DOC_END     "-DOC"
+%token SEQ_START   "+SEQ"
+%token SEQ_END     "-SEQ"
+%token MAP_START   "+MAP"
+%token MAP_END     "-MAP"
+%token VALUE_MARK  "=VAL"
+%token ALIAS_MARK  "=ALI"
 %token <sval> ANCHOR                     /* &anchor */
 %token <sval> TAG                        /* <tag> */
 %token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
 %token <cval> CHAR                       /* : " ' | > */
-
-%define parse.error detailed
-%locations
 
 %%
 
@@ -306,9 +332,42 @@ event : "+STR"
       | doc_event
       | collection_start
       | collection_end
-      | "=VAL" CHAR[style] QUOTED_STRING[content]
-      | "=VAL" CHAR[style] IDENTIFIER[content]
-      | "=ALI" IDENTIFIER[target]
+      | "=VAL" CHAR QUOTED_STRING  /* $2=char, $3=value */
+        {
+            YAMLEvent *e = event_scalar_new($2, $3);
+            if (e && current_stream) {
+                if (current_stream->count >= current_stream->capacity) {
+                    current_stream->capacity = current_stream->capacity * 2 + 10;
+                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
+                                                                   current_stream->capacity * sizeof(YAMLEvent *));
+                }
+                current_stream->events[current_stream->count++] = e;
+            }
+        }
+      | "=VAL" CHAR IDENTIFIER  /* $2=char, $3=value */
+        {
+            YAMLEvent *e = event_scalar_new($2, $3);
+            if (e && current_stream) {
+                if (current_stream->count >= current_stream->capacity) {
+                    current_stream->capacity = current_stream->capacity * 2 + 10;
+                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
+                                                                   current_stream->capacity * sizeof(YAMLEvent *));
+                }
+                current_stream->events[current_stream->count++] = e;
+            }
+        }
+      | "=ALI" IDENTIFIER  /* $2=name */
+        {
+            YAMLEvent *e = event_alias_new($2);
+            if (e && current_stream) {
+                if (current_stream->count >= current_stream->capacity) {
+                    current_stream->capacity = current_stream->capacity * 2 + 10;
+                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
+                                                                   current_stream->capacity * sizeof(YAMLEvent *));
+                }
+                current_stream->events[current_stream->count++] = e;
+            }
+        }
       ;
 
 /* Document events */
@@ -318,13 +377,13 @@ doc_event : "+DOC"
 
 /* Collection events with optional anchor/tag */
 collection_start : "+SEQ"
-                 | "+SEQ" ANCHOR[name]
-                 | "+SEQ" TAG[uri]
-                 | "+SEQ" ANCHOR[name] TAG[uri]
+                 | "+SEQ" ANCHOR
+                 | "+SEQ" TAG
+                 | "+SEQ" ANCHOR TAG
                  | "+MAP"
-                 | "+MAP" ANCHOR[name]
-                 | "+MAP" TAG[uri]
-                 | "+MAP" ANCHOR[name] TAG[uri]
+                 | "+MAP" ANCHOR
+                 | "+MAP" TAG
+                 | "+MAP" ANCHOR TAG
                  ;
 
 collection_end : "-SEQ"
@@ -332,3 +391,9 @@ collection_end : "-SEQ"
                ;
 
 %%
+
+/* Error handler - can be overridden by tests */
+__attribute__((weak))
+void yyerror(const char *msg) {
+    fprintf(stderr, "Parse error: %s\n", msg);
+}
