@@ -11,30 +11,30 @@ int rml_lex(void);
 
 %%
 
-stream: RML_STR_START docs RML_STR_END ;
+stream: start:RML_STR_START docs:docs end:RML_STR_END ;
 
 docs: 
-    | docs doc
+    | docs:docs doc:doc
     ;
 
 doc: 
-    RML_DOC_START node RML_DOC_END
-    | node
+    start:RML_DOC_START node:node end:RML_DOC_END
+    | node:node
     ;
 
 node: 
-    RML_SCALAR
-    | RML_ALIAS
-    | RML_SEQ_START seq_items RML_SEQ_END
-    | RML_MAP_START map_pairs RML_MAP_END
+    scalar:RML_SCALAR
+    | alias:RML_ALIAS
+    | start:RML_SEQ_START items:seq_items end:RML_SEQ_END
+    | start:RML_MAP_START pairs:map_pairs end:RML_MAP_END
     ;
 
 seq_items:
-    | seq_items node
+    | items:seq_items node:node
     ;
 
 map_pairs:
-    | map_pairs node node
+    | pairs:map_pairs key:node value:node
     ;
 
 %%
