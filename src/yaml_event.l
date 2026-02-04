@@ -7,16 +7,16 @@
 
 %%
 
-\+STR           return STREAM_START;
-\-STR           return STREAM_END;
-\+DOC           return DOC_START;
-\-DOC           return DOC_END;
-\+SEQ           return SEQ_START;
-\-SEQ           return SEQ_END;
-\+MAP           return MAP_START;
-\-MAP           return MAP_END;
-=VAL            return SCALAR;
-=ALI            return ALIAS;
+"+STR"          return STR_START;
+"-STR"          return STR_END;
+"+DOC"          return DOC_START;
+"-DOC"          return DOC_END;
+"+SEQ"          return SEQ_START;
+"-SEQ"          return SEQ_END;
+"+MAP"          return MAP_START;
+"-MAP"          return MAP_END;
+"=VAL"          return VALUE_MARK;
+"=ALI"          return ALIAS_MARK;
 
 "&"[a-zA-Z0-9_]+ {
     yylval.sval = strdup(yytext + 1);

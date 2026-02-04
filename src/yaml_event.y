@@ -296,15 +296,15 @@ void event_stream_free(EventStream *stream) {
     char cval;    /* Character values */
 }
 
-/* Token declarations */
-%token STREAM_START STREAM_END          /* +STR, -STR */
-%token DOC_START DOC_END                /* +DOC, -DOC */
-%token SEQ_START SEQ_END                /* +SEQ, -SEQ */
-%token MAP_START MAP_END                /* +MAP, -MAP */
-%token SCALAR ALIAS                     /* =VAL, =ALI */
-%token ANCHOR TAG                       /* &anchor, <tag> */
-%token <sval> QUOTED_STRING IDENTIFIER  /* "value", plain_value */
-%token <cval> CHAR                      /* : " ' | > */
+/* Token declarations - string literal aliases map to token names */
+%token STR_START STR_END                 /* "+STR", "-STR" */
+%token DOC_START DOC_END                 /* "+DOC", "-DOC" */
+%token SEQ_START SEQ_END                 /* "+SEQ", "-SEQ" */
+%token MAP_START MAP_END                 /* "+MAP", "-MAP" */
+%token VALUE_MARK ALIAS_MARK             /* "=VAL", "=ALI" */
+%token ANCHOR TAG                        /* &anchor, <tag> */
+%token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
+%token <cval> CHAR                       /* : " ' | > */
 
 %%
 
@@ -321,14 +321,14 @@ events : %empty
        ;
 
 /* Individual event */
-event : STREAM_START
-      | STREAM_END
+event : STR_START
+      | STR_END
       | doc_event
       | collection_start
       | collection_end
-      | SCALAR CHAR QUOTED_STRING
-      | SCALAR CHAR IDENTIFIER
-      | ALIAS IDENTIFIER
+      | VALUE_MARK CHAR QUOTED_STRING
+      | VALUE_MARK CHAR IDENTIFIER
+      | ALIAS_MARK IDENTIFIER
       ;
 
 /* Document events */
