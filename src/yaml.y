@@ -248,9 +248,15 @@ flow_map:
     ;
 
 flow_map_entries:
-    node COLON node
-    | flow_map_entries COMMA node COLON node
+    flow_map_entry
+    | flow_map_entries COMMA flow_map_entry
     | flow_map_entries COMMA
+    ;
+
+flow_map_entry:
+    node COLON node
+    | node COLON                    %dprec 1
+    | node                          %dprec 2
     ;
 
 flow_node: node ;
