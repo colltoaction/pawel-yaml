@@ -307,8 +307,8 @@ void event_stream_free(EventStream *stream) {
 %token MAP_END     "-MAP"
 %token VALUE_MARK  "=VAL"
 %token ALIAS_MARK  "=ALI"
-%token ANCHOR                            /* &anchor */
-%token TAG                               /* <tag> */
+%token <sval> ANCHOR                     /* &anchor */
+%token <sval> TAG                        /* <tag> */
 %token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
 %token <cval> CHAR                       /* : " ' | > */
 
@@ -332,9 +332,42 @@ event : "+STR"
       | doc_event
       | collection_start
       | collection_end
-      | "=VAL" char:CHAR value:QUOTED_STRING
-      | "=VAL" char:CHAR value:IDENTIFIER
-      | "=ALI" name:IDENTIFIER
+      | "=VAL" CHAR QUOTED_STRING  /* $2=char, $3=value */
+        {
+            YAMLEvent *e = event_scalar_new($2, $3);
+            if (e && current_stream) {
+                if (current_stream->count >= current_stream->capacity) {
+                    current_stream->capacity = current_stream->capacity * 2 + 10;
+                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
+                                                                   current_stream->capacity * sizeof(YAMLEvent *));
+                }
+                current_stream->events[current_stream->count++] = e;
+            }
+        }
+      | "=VAL" CHAR IDENTIFIER  /* $2=char, $3=value */
+        {
+            YAMLEvent *e = event_scalar_new($2, $3);
+            if (e && current_stream) {
+                if (current_stream->count >= current_stream->capacity) {
+                    current_stream->capacity = current_stream->capacity * 2 + 10;
+                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
+                                                                   current_stream->capacity * sizeof(YAMLEvent *));
+                }
+                current_stream->events[current_stream->count++] = e;
+            }
+        }
+      | "=ALI" IDENTIFIER  /* $2=name */
+        {
+            YAMLEvent *e = event_alias_new($2);
+            if (e && current_stream) {
+                if (current_stream->count >= current_stream->capacity) {
+                    current_stream->capacity = current_stream->capacity * 2 + 10;
+                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
+                                                                   current_stream->capacity * sizeof(YAMLEvent *));
+                }
+                current_stream->events[current_stream->count++] = e;
+            }
+        }
       ;
 
 /* Document events */
@@ -344,13 +377,13 @@ doc_event : "+DOC"
 
 /* Collection events with optional anchor/tag */
 collection_start : "+SEQ"
-                 | "+SEQ" anchor:ANCHOR
-                 | "+SEQ" tag:TAG
-                 | "+SEQ" anchor:ANCHOR tag:TAG
+                 | "+SEQ" ANCHOR
+                 | "+SEQ" TAG
+                 | "+SEQ" ANCHOR TAG
                  | "+MAP"
-                 | "+MAP" anchor:ANCHOR
-                 | "+MAP" tag:TAG
-                 | "+MAP" anchor:ANCHOR tag:TAG
+                 | "+MAP" ANCHOR
+                 | "+MAP" TAG
+                 | "+MAP" ANCHOR TAG
                  ;
 
 collection_end : "-SEQ"
