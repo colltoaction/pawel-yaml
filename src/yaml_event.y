@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdio.h>
 
-/* Forward declaration for standard Bison non-reentrant parser */
 void yyerror(const char *msg);
 
 /**
@@ -315,6 +314,9 @@ void event_stream_free(EventStream *stream) {
 %token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
 %token <cval> CHAR                       /* : " ' | > */
 
+%define parse.error detailed
+%locations
+
 %%
 
 /* TOP-LEVEL: Parse a stream of events */
@@ -362,21 +364,11 @@ collection_end : "-SEQ"
 
 %%
 
-/* Enhanced error reporting with context */
-__attribute__((weak))
+/* Bison's detailed error messages via %define parse.error detailed
+   are passed as 'msg' parameter to this function.
+   Simply printing them ensures all error information reaches stderr. */
 void yyerror(const char *msg) {
-    extern int yylineno;
-    extern char *yytext;
-    
-    /* Print detailed error information */
-    fprintf(stderr, "YAML Error: %s at line %d", msg, yylineno);
-    if (yytext && yytext[0]) {
-        fprintf(stderr, " near '%s'", yytext);
-    }
-    fprintf(stderr, "\n");
-    
-    /* Provide suggestion if this looks like a syntax error */
-    if (strstr(msg, "syntax") || strstr(msg, "ambiguous")) {
-        fprintf(stderr, "  Hint: Check for proper indentation, quoted strings, or complex key syntax\n");
+    if (msg) {
+        fprintf(stderr, "YAML Parse Error: %s\n", msg);
     }
 }
