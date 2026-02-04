@@ -296,19 +296,13 @@ void event_stream_free(EventStream *stream) {
     char cval;    /* Character values */
 }
 
-/* Token declarations with string literal aliases */
-%token STR_START   "+STR"
-%token STR_END     "-STR"
-%token DOC_START   "+DOC"
-%token DOC_END     "-DOC"
-%token SEQ_START   "+SEQ"
-%token SEQ_END     "-SEQ"
-%token MAP_START   "+MAP"
-%token MAP_END     "-MAP"
-%token VALUE_MARK  "=VAL"
-%token ALIAS_MARK  "=ALI"
-%token ANCHOR                            /* &anchor */
-%token TAG                               /* <tag> */
+/* Token declarations - string literal aliases map to token names */
+%token STR_START STR_END                 /* "+STR", "-STR" */
+%token DOC_START DOC_END                 /* "+DOC", "-DOC" */
+%token SEQ_START SEQ_END                 /* "+SEQ", "-SEQ" */
+%token MAP_START MAP_END                 /* "+MAP", "-MAP" */
+%token VALUE_MARK ALIAS_MARK             /* "=VAL", "=ALI" */
+%token ANCHOR TAG                        /* &anchor, <tag> */
 %token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
 %token <cval> CHAR                       /* : " ' | > */
 
@@ -327,34 +321,34 @@ events : %empty
        ;
 
 /* Individual event */
-event : "+STR"
-      | "-STR"
+event : STR_START
+      | STR_END
       | doc_event
       | collection_start
       | collection_end
-      | "=VAL" char:CHAR value:QUOTED_STRING
-      | "=VAL" char:CHAR value:IDENTIFIER
-      | "=ALI" name:IDENTIFIER
+      | VALUE_MARK CHAR QUOTED_STRING
+      | VALUE_MARK CHAR IDENTIFIER
+      | ALIAS_MARK IDENTIFIER
       ;
 
 /* Document events */
-doc_event : "+DOC"
-          | "-DOC"
+doc_event : DOC_START
+          | DOC_END
           ;
 
 /* Collection events with optional anchor/tag */
-collection_start : "+SEQ"
-                 | "+SEQ" anchor:ANCHOR
-                 | "+SEQ" tag:TAG
-                 | "+SEQ" anchor:ANCHOR tag:TAG
-                 | "+MAP"
-                 | "+MAP" anchor:ANCHOR
-                 | "+MAP" tag:TAG
-                 | "+MAP" anchor:ANCHOR tag:TAG
+collection_start : SEQ_START
+                 | SEQ_START ANCHOR
+                 | SEQ_START TAG
+                 | SEQ_START ANCHOR TAG
+                 | MAP_START
+                 | MAP_START ANCHOR
+                 | MAP_START TAG
+                 | MAP_START ANCHOR TAG
                  ;
 
-collection_end : "-SEQ"
-               | "-MAP"
+collection_end : SEQ_END
+               | MAP_END
                ;
 
 %%
