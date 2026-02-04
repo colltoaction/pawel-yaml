@@ -8,9 +8,6 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 SUITE_DIR="build/lib/yaml-test-suite/src"
-if [[ ! -d "$SUITE_DIR" ]]; then
-    SUITE_DIR=".agent/lib/yaml-test-suite/src"
-fi
 PARSER="./build/bin/pawel-yaml"
 WORK_DIR="build/tmp"
 LOG_DIR="build/log"
@@ -31,7 +28,7 @@ echo ""
 
 # Check prerequisites
 if [[ ! -d "$SUITE_DIR" ]]; then
-    echo -e "${RED}ERROR: yaml-test-suite not found at build/lib/yaml-test-suite/src or .agent/lib/yaml-test-suite/src${NC}"
+    echo -e "${RED}ERROR: yaml-test-suite not found at $SUITE_DIR${NC}"
     exit 1
 fi
 
@@ -102,7 +99,7 @@ EOF
     if [[ $? -ne 0 ]]; then
         echo -e "${YELLOW}SKIP${NC}: $test_id (extraction failed)"
         echo "SKIP: $test_id - Extraction failed" >> "$RESULTS_FILE"
-        SKIP_COUNT=$((SKIP_COUNT + 1))
+        ((SKIP_COUNT++))
         continue
     fi
     
@@ -125,11 +122,11 @@ EOF
         if $parser_failed; then
             echo -e "${GREEN}✓${NC} PASS: $test_id (correctly rejected)"
             echo "PASS: $test_id - Expected failure" >> "$RESULTS_FILE"
-            PASS_COUNT=$((PASS_COUNT + 1))
+            ((PASS_COUNT++))
         else
             echo -e "${RED}✗${NC} FAIL: $test_id (should have failed)"
             echo "FAIL: $test_id - Should have been rejected" >> "$RESULTS_FILE"
-            FAIL_COUNT=$((FAIL_COUNT + 1))
+            ((FAIL_COUNT++))
         fi
     else
         # Test should pass
@@ -138,11 +135,11 @@ EOF
             echo "FAIL: $test_id - Unexpected parse error" >> "$RESULTS_FILE"
             # Log first few lines of error
             echo "$parser_output" | head -n 3 >> "$RESULTS_FILE"
-            FAIL_COUNT=$((FAIL_COUNT + 1))
+            ((FAIL_COUNT++))
         else
             echo -e "${GREEN}✓${NC} PASS: $test_id"
             echo "PASS: $test_id" >> "$RESULTS_FILE"
-            PASS_COUNT=$((PASS_COUNT + 1))
+            ((PASS_COUNT++))
         fi
     fi
 done

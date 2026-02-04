@@ -1,41 +1,17 @@
 %{
-<<<<<<<< HEAD:src/yaml.l
 #include "yaml.tab.h"
-========
-#include "stream.tab.h"
 #include "lexer_context.h"
->>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/presentation.l
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
 
-#define YYSTYPE STREAM_YY_STYPE
-#define YYLTYPE STREAM_YY_LTYPE
+#define YYSTYPE YAML_STYPE
+#define YYLTYPE YAML_LTYPE
 
 /* Forward declaration for error handling */
-void stream_error(void *yylloc, void *scanner, const char *msg);
+void yaml_error(void *yylloc, void *scanner, const char *msg);
 
-static int indent_stack[100] = {0};
-static int indent_sp = 0;
-static int flow_level = 0;
-static int expecting_value = 0;
-static int pending_dedents = 0;
-static int first_line = 1;
-/* Track if last token was a value token (quoted string, scalar, block indicator)
- * Used to enforce YAML spec: comments require whitespace before them */
-static int last_was_value = 0;
-
-/* Indentation context for multiline scalars */
-typedef struct {
-    int level;
-    int is_flow;
-    char context_type;  /* 'M' map, 'S' seq, 'F' flow */
-} IndentContext;
-
-static IndentContext indent_context_stack[100];
-static int indent_context_sp = 0;
-static int scalar_base_indent = 0;
-static char scalar_type = '\0';  /* ':' plain, '"' quoted, '|' literal, '>' folded */
+/* Lexer context - replaces all global variables */
+#define CTX yyextra
 
 /* Check if UTF-8 bytes represent visible space U+2423 */
 static int is_visible_space(const unsigned char *s) {
@@ -46,8 +22,8 @@ static int is_visible_space(const unsigned char *s) {
  * Comments require whitespace (space/tab) before them (or start of line)
  * This prevents invalid YAML like: "value"# comment or ># comment
  */
-static int validate_comment_context() {
-    if (last_was_value) {
+static int validate_comment_context(LexerContext *ctx) {
+    if (ctx->last_was_value) {
         fprintf(stderr, "syntax error, comment without preceding whitespace\n");
         return 0;
     }
@@ -55,35 +31,28 @@ static int validate_comment_context() {
 }
 
 
-static void push_indent(int col) {
-    if (indent_sp < 99) indent_stack[++indent_sp] = col;
+static void push_indent(LexerContext *ctx, int col) {
+    ctx_push_indent(ctx, col);
 }
 
-static int pop_indent() {
-    return (indent_sp > 0) ? indent_stack[indent_sp--] : 0;
+static int pop_indent(LexerContext *ctx) {
+    return ctx_pop_indent(ctx);
 }
 
-static int current_indent() {
-    return indent_stack[indent_sp];
+static int current_indent(LexerContext *ctx) {
+    return ctx_current_indent(ctx);
 }
 
-static void push_indent_context(int level, int is_flow, char type) {
-    if (indent_context_sp < 99) {
-        indent_context_stack[indent_context_sp].level = level;
-        indent_context_stack[indent_context_sp].is_flow = is_flow;
-        indent_context_stack[indent_context_sp].context_type = type;
-        indent_context_sp++;
-    }
+static void push_indent_context(LexerContext *ctx, int level, int is_flow, char type) {
+    ctx_push_indent_context(ctx, level, is_flow, type);
 }
 
-static void pop_indent_context() {
-    if (indent_context_sp > 0) {
-        indent_context_sp--;
-    }
+static void pop_indent_context(LexerContext *ctx) {
+    ctx_pop_indent_context(ctx);
 }
 
-static int in_flow_context() {
-    return flow_level > 0 || (indent_context_sp > 0 && indent_context_stack[indent_context_sp - 1].is_flow);
+static int in_flow_context(LexerContext *ctx) {
+    return ctx_in_flow_context(ctx);
 }
 
 /* Simple lookahead - just check if we're at end of file or line */
@@ -92,57 +61,20 @@ static int check_scalar_continuation() {
     return 0;
 }
 
-static char block_type = '\0';
-static int block_indent = -1;
-static char *scalar_content = NULL;
-static int scalar_content_len = 0;
-static int scalar_content_cap = 0;
-
-static void init_scalar() {
-    if (scalar_content) free(scalar_content);
-    scalar_content = malloc(1024);
-    scalar_content_len = 0;
-    scalar_content_cap = 1024;
-    scalar_content[0] = '\0';
+static void init_scalar(LexerContext *ctx) {
+    ctx_scalar_init(ctx);
 }
 
-static void append_scalar(const char *str, int len) {
-    if (scalar_content_len + len + 2 >= scalar_content_cap) {
-        scalar_content_cap *= 2;
-        scalar_content = realloc(scalar_content, scalar_content_cap);
-    }
-    memcpy(scalar_content + scalar_content_len, str, len);
-    scalar_content_len += len;
-    scalar_content[scalar_content_len] = '\0';
+static void append_scalar(LexerContext *ctx, const char *str, int len) {
+    ctx_scalar_append(ctx, str, len);
 }
 
-static void init_block_scalar(char type) {
-    block_type = type;
-    block_indent = -1;
-    init_scalar(); /* Reuse scalar buffer */
+static void init_block_scalar(LexerContext *ctx, char type) {
+    ctx_block_scalar_start(ctx, type);
 }
 
-static void append_block_line(const char *line, int len) {
-    append_scalar(line, len);
-    append_scalar("\n", 1);
-}
-
-static void enter_flow_context(void) {
-    flow_level++;
-    expecting_value = 1;
-}
-
-static void exit_flow_context(void) {
-    if (flow_level > 0) flow_level--;
-    expecting_value = 0;
-}
-
-static char *finalize_block_scalar_value(void) {
-    char *final = malloc(scalar_content_len + 2);
-    final[0] = block_type;
-    memcpy(final + 1, scalar_content, scalar_content_len);
-    final[scalar_content_len + 1] = '\0';
-    return final;
+static void append_block_line(LexerContext *ctx, const char *line, int len) {
+    ctx_block_scalar_append(ctx, line, len);
 }
 
 /* Validate escape sequences in double-quoted strings. 
@@ -172,12 +104,8 @@ static int validate_dquote_escapes(const char *str, int len) {
 %option reentrant
 %option bison-bridge
 %option bison-locations
-<<<<<<<< HEAD:src/yaml.l
 %option prefix="yaml_"
-========
-%option prefix="presentation_"
 %option extra-type="LexerContext *"
->>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/presentation.l
 
 %x BLOCK_SCALAR
 %x BLOCK_CONTENT
@@ -193,14 +121,14 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 %%
 
-    if (first_line) {
-        first_line = 0;
+    if (CTX->first_line) {
+        CTX->first_line = 0;
         BEGIN(INDENT_CHECK);
     }
 
     /* Handle pending dedents first */
-    if (pending_dedents > 0) {
-        pending_dedents--;
+    if (CTX->pending_dedents > 0) {
+        CTX->pending_dedents--;
         return DEDENT;
     }
 
@@ -227,17 +155,17 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     }
     
     BEGIN(INITIAL);
-    int cur = current_indent();
+    int cur = current_indent(CTX);
     if (indent > cur) {
-        push_indent(indent);
+        push_indent(CTX, indent);
         return INDENT;
     } else if (indent < cur) {
-        while (indent < current_indent()) {
-            pop_indent();
-            pending_dedents++;
+        while (indent < current_indent(CTX)) {
+            pop_indent(CTX);
+            CTX->pending_dedents++;
         }
-        if (pending_dedents > 0) {
-            pending_dedents--;
+        if (CTX->pending_dedents > 0) {
+            CTX->pending_dedents--;
             return DEDENT;
         }
     }
@@ -247,14 +175,14 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     /* Not an indent - likely at column 0 */
     yyless(0);
     BEGIN(INITIAL);
-    int cur = current_indent();
+    int cur = current_indent(CTX);
     if (0 < cur) {
-        while (0 < current_indent()) {
-            pop_indent();
-            pending_dedents++;
+        while (0 < current_indent(CTX)) {
+            pop_indent(CTX);
+            CTX->pending_dedents++;
         }
-        if (pending_dedents > 0) {
-            pending_dedents--;
+        if (CTX->pending_dedents > 0) {
+            CTX->pending_dedents--;
             return DEDENT;
         }
     }
@@ -262,13 +190,13 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 <INDENT_CHECK><<EOF>> {
     BEGIN(INITIAL);
-    int cur = current_indent();
-    while (0 < current_indent()) {
-        pop_indent();
-        pending_dedents++;
+    int cur = current_indent(CTX);
+    while (0 < current_indent(CTX)) {
+        pop_indent(CTX);
+        CTX->pending_dedents++;
     }
-    if (pending_dedents > 0) {
-        pending_dedents--;
+    if (CTX->pending_dedents > 0) {
+        CTX->pending_dedents--;
         return DEDENT;
     }
     yyterminate();
@@ -276,7 +204,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 \n {
     /* In flow context, newlines are just whitespace, don't check indentation */
-    if (flow_level == 0) {
+    if (CTX->flow_level == 0) {
         BEGIN(INDENT_CHECK);
     }
     /* Otherwise skip the newline in flow context */
@@ -287,8 +215,8 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 "%TAG"           { BEGIN(DIRECTIVE_MODE); return TAG_DIRECTIVE; }
 "%YAML"[ ]?"1"[.,][0-9]  { return YAML_DIRECTIVE; }
 "%"[a-zA-Z][^\n]* { /* Unknown directive - skip */ }
-"---"            { expecting_value = 1; last_was_value = 0; return DOC_START; }
-"..."            { expecting_value = 1; return DOC_END; }
+"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; return DOC_START; }
+"..."            { CTX->expecting_value = 1; return DOC_END; }
 
 <DIRECTIVE_MODE>{
     [ \t]+          { /* skip space */ }
@@ -298,40 +226,39 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     "!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
     [^ \t\n]+       { yylval->string = strdup(yytext); return SCALAR; }
 }
-"-"/[ \t\n]      { expecting_value = 1; return BULLET; }
-":"/[ \t\n]      { expecting_value = 1; return COLON; }
-"?"/[ \t\n]      { expecting_value = 1; return QUESTION; }
+"-"/[ \t\n]      { CTX->expecting_value = 1; return BULLET; }
+":"/[ \t\n]      { CTX->expecting_value = 1; return COLON; }
+"?"/[ \t\n]      { CTX->expecting_value = 1; return QUESTION; }
 "!"              { yylval->string = strdup("!"); return TAG; }
 "!!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+"!"{NSCAL}* { yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+      { yylval->string = strdup(yytext); return TAG; }
 "&"{NSCAL}+      { yylval->string = strdup(yytext); return ANCHOR; }
-"*"{NSCAL}+      { yylval->string = strdup(yytext); expecting_value = 0; return ALIAS; }
-"["              { enter_flow_context(); return LBRACK; }
-"]"              { exit_flow_context(); return RBRACK; }
-"{"              { enter_flow_context(); return LBRACE; }
-"}"              { exit_flow_context(); return RBRACE; }
+"*"{NSCAL}+      { yylval->string = strdup(yytext); CTX->expecting_value = 0; return ALIAS; }
+"["              { CTX->flow_level++; CTX->expecting_value = 1; return LBRACK; }
+"]"              { if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACK; }
+"{"              { CTX->flow_level++; CTX->expecting_value = 1; return LBRACE; }
+"}"              { if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACE; }
 ":"              { 
-    if (expecting_value && flow_level > 0) {
+    if (CTX->expecting_value && CTX->flow_level > 0) {
          /* Colon starting a value in flow context = Scalar */
-         init_scalar();
-         append_scalar(":", 1);
-         expecting_value = 0;
+         init_scalar(CTX);
+         append_scalar(CTX, ":", 1);
+         CTX->expecting_value = 0;
          BEGIN(SIMPLE_SCALAR);
-    } else if (expecting_value && flow_level == 0) {
+    } else if (CTX->expecting_value && CTX->flow_level == 0) {
          /* In block context, when expecting value, : not followed by space = scalar */
-         init_scalar();
-         append_scalar(":", 1);
+         init_scalar(CTX);
+         append_scalar(CTX, ":", 1);
          BEGIN(SIMPLE_SCALAR);
-    } else if (flow_level > 0) {
-         expecting_value = 1;
+    } else if (CTX->flow_level > 0) {
+         CTX->expecting_value = 1;
          return COLON; 
     } else {
          return ':'; 
     }
 }
-<<<<<<<< HEAD:src/yaml.l
-","              { expecting_value = 1; return COMMA; }
+","              { CTX->expecting_value = 1; return COMMA; }
 \"([^\"\\]|\\.|[\n])*\" {
     /* Double-quoted string - supports multiline and validates escape sequences */
     int len = strlen(yytext) - 2;
@@ -341,56 +268,10 @@ NSCAL [a-zA-Z0-9\-\._%:/]
         free(content);
         /* In Bison GLR parser, we must exit cleanly to signal parse failure */
         exit(1);
-========
-","              { CTX->expecting_value = 1; return COMMA; }
-\" {
-    BEGIN(QUOTED);
-    init_scalar(CTX);
-}
-
-<QUOTED>{
-    \"/[ ]*":"[ \t\n] {
-        BEGIN(INITIAL);
-        yylval->string = strdup(CTX->scalar.content);
-        CTX->expecting_value = 0;
-        CTX->last_was_value = 1;
-        return QMAP_KEY;
-    }
-
-    \" {
-        BEGIN(INITIAL);
-        yylval->string = strdup(CTX->scalar.content);
-        CTX->expecting_value = 0;
-        CTX->last_was_value = 1;
-        return QSCALAR;
-    }
-    
-    \\n { append_scalar(CTX, "\n", 1); }
-    \\t { append_scalar(CTX, "\t", 1); }
-    \\r { append_scalar(CTX, "\r", 1); }
-    \\\\ { append_scalar(CTX, "\\", 1); }
-    \\\" { append_scalar(CTX, "\"", 1); }
-    \\\/ { append_scalar(CTX, "/", 1); }
-    \\0 { append_scalar(CTX, "\0", 1); }
-    
-    \\[^ntr\\\"\/0] {
-        stream_error(NULL, yyscanner, "syntax error, invalid escape sequence");
-        /* Return something that triggers an error in parser */
-        return SCALAR; 
-    }
-    
-    [^\\\"\n]+ { append_scalar(CTX, yytext, yyleng); }
-    \n { append_scalar(CTX, "\n", 1); }
-    
-    <<EOF>> {
-        stream_error(NULL, yyscanner, "syntax error, unterminated quoted string");
-        BEGIN(INITIAL);
-        return SCALAR;
->>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/presentation.l
     }
     yylval->string = content;
-    expecting_value = 0;
-    last_was_value = 1;  /* Mark that we just parsed a value */
+    CTX->expecting_value = 0;
+    CTX->last_was_value = 1;  /* Mark that we just parsed a value */
     return QSCALAR;
 }
 \'(\'\'|[^\'])*\'  { 
@@ -411,32 +292,32 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     content[j] = '\0';
     
     yylval->string = content;
-    expecting_value = 0;
-    last_was_value = 1;
+    CTX->expecting_value = 0;
+    CTX->last_was_value = 1;
     return SSCALAR;
 }
-"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar('|'); expecting_value = 0; last_was_value = 0; BEGIN(BLOCK_SCALAR); }
-">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar('>'); expecting_value = 0; last_was_value = 0; BEGIN(BLOCK_SCALAR); }
+"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar(CTX, '|'); CTX->expecting_value = 0; CTX->last_was_value = 0; BEGIN(BLOCK_SCALAR); }
+">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { init_block_scalar(CTX, '>'); CTX->expecting_value = 0; CTX->last_was_value = 0; BEGIN(BLOCK_SCALAR); }
 
 <BLOCK_SCALAR>^[ \t]*\n {
     /* Empty line - keep it */
-    append_block_line("", 0);
+    append_block_line(CTX, "", 0);
 }
 
 <BLOCK_SCALAR>^[ \t]+ {
     int indent = yyleng;
-    if (block_indent == -1) {
-        block_indent = indent;
+    if (CTX->block_scalar.indent == -1) {
+        CTX->block_scalar.indent = indent;
     }
     
-    if (indent >= block_indent) {
+    if (indent >= CTX->block_scalar.indent) {
         /* This is content */
         /* Read the rest of the line */
         int c;
         int line_len = 0;
         char line_buf[1024];
         /* Skip the indent */
-        int skip = block_indent;
+        int skip = CTX->block_scalar.indent;
         /* We already matched 'yyleng' spaces. 
            We need to skip 'block_indent' spaces.
         */
@@ -450,12 +331,16 @@ NSCAL [a-zA-Z0-9\-\._%:/]
         while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0) {
             line_buf[line_len++] = c;
         }
-        append_block_line(line_buf, line_len);
+        append_block_line(CTX, line_buf, line_len);
     } else {
         /* End of block scalar - line is less indented */
         /* We need to return this line to the lexer */
-        yyless(0);
-        yylval->string = finalize_block_scalar_value();
+        yyless(0); 
+        char *final = malloc(CTX->scalar.len + 2);
+        final[0] = CTX->block_scalar.type;
+        memcpy(final + 1, CTX->scalar.content, CTX->scalar.len);
+        final[CTX->scalar.len+1] = '\0';
+        yylval->string = final;
         BEGIN(INITIAL);
         return BSCALAR;
     }
@@ -464,13 +349,21 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 <BLOCK_SCALAR>. {
     /* Non-indented line starts with a character */
     yyless(0);
-    yylval->string = finalize_block_scalar_value();
+    char *final = malloc(CTX->scalar.len + 2);
+    final[0] = CTX->block_scalar.type;
+    memcpy(final + 1, CTX->scalar.content, CTX->scalar.len);
+    final[CTX->scalar.len+1] = '\0';
+    yylval->string = final;
     BEGIN(INITIAL);
     return BSCALAR;
 }
 
 <BLOCK_SCALAR><<EOF>> {
-    yylval->string = finalize_block_scalar_value();
+    char *final = malloc(CTX->scalar.len + 2);
+    final[0] = CTX->block_scalar.type;
+    memcpy(final + 1, CTX->scalar.content, CTX->scalar.len);
+    final[CTX->scalar.len+1] = '\0';
+    yylval->string = final;
     BEGIN(INITIAL);
     return BSCALAR;
 }
@@ -478,47 +371,38 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 
 
-[a-zA-Z0-9\-\._][a-zA-Z0-9\-\._ ]*/[ ]*":"[ \t\n] {
-    yylval->string = strdup(yytext);
-    CTX->expecting_value = 0;
-    return MAP_KEY;
-}
-
 [a-zA-Z0-9\-\._]+ {
     /* Start simple scalar */
-    init_scalar();
-    append_scalar(yytext, yyleng);
-    expecting_value = 0;
-    scalar_base_indent = current_indent();
-    scalar_type = ':';  /* Plain scalar */
+    init_scalar(CTX);
+    append_scalar(CTX, yytext, yyleng);
+    CTX->expecting_value = 0;
+    CTX->scalar_base_indent = current_indent(CTX);
+    CTX->scalar_type = ':';  /* Plain scalar */
     BEGIN(PLAIN_SCALAR_CONT);
 }
 
-<<<<<<<< HEAD:src/yaml.l
 "?"[a-zA-Z0-9\-\._]+ {
     /* Question mark followed by alphanumeric - treat as scalar */
-    init_scalar();
-    append_scalar(yytext, yyleng);
-    expecting_value = 0;
-    scalar_base_indent = current_indent();
-    scalar_type = ':';
+    init_scalar(CTX);
+    append_scalar(CTX, yytext, yyleng);
+    CTX->expecting_value = 0;
+    CTX->scalar_base_indent = current_indent(CTX);
+    CTX->scalar_type = ':';
     BEGIN(PLAIN_SCALAR_CONT);
 }
 
-========
->>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/presentation.l
 ":"[a-zA-Z0-9\-\._]+ {
     /* Colon followed by alphanumeric - treat as scalar */
-    init_scalar();
-    append_scalar(yytext, yyleng);
-    expecting_value = 0;
-    scalar_base_indent = current_indent();
-    scalar_type = ':';
+    init_scalar(CTX);
+    append_scalar(CTX, yytext, yyleng);
+    CTX->expecting_value = 0;
+    CTX->scalar_base_indent = current_indent(CTX);
+    CTX->scalar_type = ':';
     BEGIN(PLAIN_SCALAR_CONT);
 }
 
 <SIMPLE_SCALAR>":"/[ \t\n\r] {
-    char *s = strdup(scalar_content);
+    char *s = strdup(CTX->scalar.content);
     int len = strlen(s);
     while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
     yylval->string = s;
@@ -529,10 +413,10 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 <SIMPLE_SCALAR>[ \t]*\n([ \t]*\n)+ {
     /* Multiple blank lines in scalar - continue parsing as multiline */
-    append_scalar(" ", 1);
+    append_scalar(CTX, " ", 1);
 }
 <SIMPLE_SCALAR>"\n" {
-    char *s = strdup(scalar_content);
+    char *s = strdup(CTX->scalar.content);
     int len = strlen(s);
     while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
     yylval->string = s;
@@ -540,23 +424,23 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(INITIAL);
     return SCALAR;
 }
-<SIMPLE_SCALAR>[ \t]+ { append_scalar(yytext, yyleng); }
-<SIMPLE_SCALAR>[^:\n\r\t,\[\]{} ]+ { append_scalar(yytext, yyleng); }
-<SIMPLE_SCALAR>":" { append_scalar(":", 1); }
+<SIMPLE_SCALAR>[ \t]+ { append_scalar(CTX, yytext, yyleng); }
+<SIMPLE_SCALAR>[^:\n\r\t,\[\]{} ]+ { append_scalar(CTX, yytext, yyleng); }
+<SIMPLE_SCALAR>":" { append_scalar(CTX, ":", 1); }
 <SIMPLE_SCALAR>[\{\}\[\],] {
-    if (flow_level > 0) {
+    if (CTX->flow_level > 0) {
         yyless(0);
-        char *s = strdup(scalar_content);
+        char *s = strdup(CTX->scalar.content);
         int len = strlen(s);
         while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
         yylval->string = s;
         BEGIN(INITIAL);
         return SCALAR;
     }
-    append_scalar(yytext, yyleng);
+    append_scalar(CTX, yytext, yyleng);
 }
 <SIMPLE_SCALAR><<EOF>> {
-    char *s = strdup(scalar_content);
+    char *s = strdup(CTX->scalar.content);
     int len = strlen(s);
     while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
     yylval->string = s;
@@ -564,12 +448,9 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return SCALAR;
 }
 
-<PLAIN_SCALAR_CONT>[ \t]+ { append_scalar(yytext, yyleng); }
-<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { append_scalar(yytext, yyleng); }
-<PLAIN_SCALAR_CONT>":" { append_scalar(":", 1); }
-
 <PLAIN_SCALAR_CONT>":"/[ \t\n\r] {
-    char *s = strdup(scalar_content);
+    /* Colon followed by space/tab/newline ends the scalar */
+    char *s = strdup(CTX->scalar.content);
     int len = strlen(s);
     while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
     yylval->string = s;
@@ -578,12 +459,16 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return SCALAR;
 }
 
+<PLAIN_SCALAR_CONT>[ \t]+ { append_scalar(CTX, yytext, yyleng); }
+<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { append_scalar(CTX, yytext, yyleng); }
+<PLAIN_SCALAR_CONT>":" { append_scalar(CTX, ":", 1); }
+
 <PLAIN_SCALAR_CONT>"\n" {
     /* For plain scalars, newline ends the scalar in block context */
     /* In flow context, we might continue */
-    if (flow_level == 0) {
+    if (CTX->flow_level == 0) {
         /* Block context - end scalar */
-        char *s = strdup(scalar_content);
+        char *s = strdup(CTX->scalar.content);
         int len = strlen(s);
         while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
         yylval->string = s;
@@ -592,25 +477,25 @@ NSCAL [a-zA-Z0-9\-\._%:/]
         return SCALAR;
     } else {
         /* Flow context - fold to space and continue */
-        append_scalar(" ", 1);
+        append_scalar(CTX, " ", 1);
     }
 }
 
 <PLAIN_SCALAR_CONT>[\{\}\[\],] {
-    if (flow_level > 0) {
+    if (CTX->flow_level > 0) {
         yyless(0);
-        char *s = strdup(scalar_content);
+        char *s = strdup(CTX->scalar.content);
         int len = strlen(s);
         while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
         yylval->string = s;
         BEGIN(INITIAL);
         return SCALAR;
     }
-    append_scalar(yytext, yyleng);
+    append_scalar(CTX, yytext, yyleng);
 }
 
 <PLAIN_SCALAR_CONT><<EOF>> {
-    char *s = strdup(scalar_content);
+    char *s = strdup(CTX->scalar.content);
     int len = strlen(s);
     while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
     yylval->string = s;
@@ -618,12 +503,6 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return SCALAR;
 }
 
-<<<<<<<< HEAD:src/yaml.l
-"#".*            { 
-    /* Validate comment has proper spacing */
-    if (!validate_comment_context()) {
-        exit(1);
-========
 <PLAIN_SCALAR_CONT>. {
     /* Unmatched character in plain scalar - end the scalar */
     char *s = strdup(CTX->scalar.content);
@@ -635,21 +514,19 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return SCALAR;
 }
 
-"#" {
-    if (!check_comment_valid(CTX)) {
-        stream_error(NULL, yyscanner, "syntax error, comment without preceding whitespace");
-        /* Triggering error */
-        return SCALAR;
->>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/presentation.l
+"#".*            { 
+    /* Validate comment has proper spacing */
+    if (!validate_comment_context(CTX)) {
+        exit(1);
     }
     /* Valid comment - ignore it */ 
 }
-[ \t\r]+       { last_was_value = 0; /* skip whitespace */ }
+[ \t\r]+       { CTX->last_was_value = 0; /* skip whitespace */ }
 .                { return yytext[0]; }
 
 <<EOF>> {
-    if (indent_sp > 0) {
-        indent_sp--;
+    if (CTX->indent_sp > 0) {
+        CTX->indent_sp--;
         return DEDENT;
     }
     yyterminate();

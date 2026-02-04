@@ -77,7 +77,7 @@ for test_path in "$SUITE_DIR"/*.yaml; do
     should_fail=$(cat "$meta_file" 2>/dev/null || echo "False")
     
     # Run parser and capture exit code
-    "$PARSER" < "$test_yaml" > "$BUILD_DIR/tmp/current_out.txt" 2> "$BUILD_DIR/tmp/current_err.txt"
+    "$PARSER" < "$test_yaml" >/dev/null 2>&1
     parser_exit=$?
     
     # Determine if parser succeeded (exit 0 = success)
@@ -88,10 +88,6 @@ for test_path in "$SUITE_DIR"/*.yaml; do
         else
             ((FAIL++))
             echo "FAIL: $test_id (should have been rejected)" >> "$LOG_FILE"
-            echo "--- OUTPUT ---" >> "$LOG_FILE"
-            cat "$BUILD_DIR/tmp/current_out.txt" >> "$LOG_FILE"
-            echo "--- ERRORS ---" >> "$LOG_FILE"
-            cat "$BUILD_DIR/tmp/current_err.txt" >> "$LOG_FILE"
         fi
     else
         # Test expects parser to succeed
@@ -100,8 +96,6 @@ for test_path in "$SUITE_DIR"/*.yaml; do
         else
             ((FAIL++))
             echo "FAIL: $test_id (unexpected parse error)" >> "$LOG_FILE"
-            echo "--- ERRORS ---" >> "$LOG_FILE"
-            cat "$BUILD_DIR/tmp/current_err.txt" >> "$LOG_FILE"
         fi
     fi
     
