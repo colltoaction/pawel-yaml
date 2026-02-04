@@ -18,7 +18,10 @@ RUNTIMES_DIR = $(LIB_DIR)/yaml-runtimes
 PLAY_DIR = $(LIB_DIR)/yaml-play
 SUITE_DIR = $(LIB_DIR)/yaml-test-suite
 
-# Generated parser files
+# Parser definitions: PARSERS = name1 name2
+PARSERS = yaml rml
+
+# Generated parser files (derived from PARSERS)
 YAML_TAB_C = $(GEN_SRC_DIR)/yaml.tab.c
 YAML_TAB_H = $(GEN_INC_DIR)/yaml.tab.h
 YAML_LEX_C = $(GEN_SRC_DIR)/yaml.lex.c
@@ -27,13 +30,15 @@ RML_TAB_C = $(GEN_SRC_DIR)/rml.tab.c
 RML_TAB_H = $(GEN_INC_DIR)/rml.tab.h
 RML_LEX_C = $(GEN_SRC_DIR)/rml.lex.c
 
+# Object files (derived from PARSERS)
+PARSER_OBJS = $(BUILD_DIR)/yaml.tab.o $(BUILD_DIR)/yaml.lex.o \
+              $(BUILD_DIR)/rml.tab.o $(BUILD_DIR)/rml.lex.o
+
 # TDD & testing artifacts
 TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
-OBJS = $(BUILD_DIR)/yaml.tab.o $(BUILD_DIR)/yaml.lex.o \
-       $(BUILD_DIR)/rml.tab.o $(BUILD_DIR)/rml.lex.o \
-       $(BUILD_DIR)/main.o
+OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o
 
 TARGET = $(BIN_DIR)/pawel-yaml
 
@@ -42,37 +47,39 @@ all: directories $(TARGET)
 directories:
 	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR) $(TMP_DIR) $(LOG_DIR)
 
-# Stage 1: YAML Parser
-$(YAML_TAB_C) $(YAML_TAB_H): $(SRC_DIR)/yaml.y
-	$(BISON) -d -o $(YAML_TAB_C) --defines=$(YAML_TAB_H) $(SRC_DIR)/yaml.y
+# ============================================================================
+# Parser Generation: Bison & Flex
+# Pattern: Each parser NAME produces:
+#   - $(GEN_SRC_DIR)/NAME.tab.c + $(GEN_INC_DIR)/NAME.tab.h (from NAME.y)
+#   - $(GEN_SRC_DIR)/NAME.lex.c (from NAME.l, depends on .tab.h)
+# ============================================================================
 
-$(YAML_LEX_C): $(SRC_DIR)/yaml.l $(YAML_TAB_H)
-	$(FLEX) -o $(YAML_LEX_C) $(SRC_DIR)/yaml.l
+$(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y
+	$(BISON) -d -o $(GEN_SRC_DIR)/$*.tab.c --defines=$(GEN_INC_DIR)/$*.tab.h $<
 
-# Stage 2: RML Parser
-$(RML_TAB_C) $(RML_TAB_H): $(SRC_DIR)/rml.y
-	$(BISON) -d -o $(RML_TAB_C) --defines=$(RML_TAB_H) $(SRC_DIR)/rml.y
+$(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h
+	$(FLEX) -o $@ $<
 
-$(RML_LEX_C): $(SRC_DIR)/rml.l $(RML_TAB_H)
-	$(FLEX) -o $(RML_LEX_C) $(SRC_DIR)/rml.l
+# ============================================================================
+# Object Compilation: Generic pattern rule
+# ============================================================================
+
+$(BUILD_DIR)/%.o: $(GEN_SRC_DIR)/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(YAML_TAB_H) $(RML_TAB_H)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================================
+# Linking
+# ============================================================================
 
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $(TARGET)
 
-$(BUILD_DIR)/yaml.tab.o: $(YAML_TAB_C)
-	$(CC) $(CFLAGS) -c $(YAML_TAB_C) -o $@
-
-$(BUILD_DIR)/yaml.lex.o: $(YAML_LEX_C)
-	$(CC) $(CFLAGS) -c $(YAML_LEX_C) -o $@
-
-$(BUILD_DIR)/rml.tab.o: $(RML_TAB_C)
-	$(CC) $(CFLAGS) -c $(RML_TAB_C) -o $@
-
-$(BUILD_DIR)/rml.lex.o: $(RML_LEX_C)
-	$(CC) $(CFLAGS) -c $(RML_LEX_C) -o $@
-
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(YAML_TAB_H) $(RML_TAB_H)
-	$(CC) $(CFLAGS) -c $(SRC_DIR)/main.c -o $@
+# ============================================================================
+# Cleanup
+# ============================================================================
 
 clean: clean-build
 
@@ -83,7 +90,10 @@ clean-build:
 deepclean:
 	rm -rf $(BUILD_DIR)
 
-# TDD Targets
+# ============================================================================
+# TDD Targets: Red-Green-Refactor-Verify Test-Driven Development
+# ============================================================================
+
 test-event: directories
 	@echo "Compiling yaml_event unit tests..."
 	$(BISON) -d -o $(BUILD_DIR)/src/yaml_event.tab.c --defines=$(GEN_INC_DIR)/yaml_event.tab.h src/yaml_event.y
