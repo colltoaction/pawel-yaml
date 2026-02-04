@@ -50,11 +50,26 @@ int main(int argc, char **argv) {
 
     if (!rml_ir_buf) return 0;
 
+    /* DEBUG: Print event stream */
+    #ifdef DEBUG_EVENTS
+    fprintf(stderr, "=== Event Stream ===\n%s\n===================\n", rml_ir_buf);
+    #endif
+
     /* Stage 2: YAML Events Layer */
     /* Parse event stream string through yaml_event grammar */
     yaml_event_parser_init();
     EventStream *events = yaml_event_parse_string(rml_ir_buf);
     yaml_event_parser_cleanup();
+    
+    #ifdef DEBUG_EVENTS
+    fprintf(stderr, "=== Parsed Events ===\n");
+    for (int i = 0; events && i < events->count; i++) {
+        YAMLEvent *e = events->events[i];
+        fprintf(stderr, "Event %d: type=%d, value=%s, quote=%c\n", 
+                i, e->type, e->value ? e->value : "(null)", e->quote_style);
+    }
+    fprintf(stderr, "====================\n");
+    #endif
     
     if (!events) {
         free(rml_ir_buf);
