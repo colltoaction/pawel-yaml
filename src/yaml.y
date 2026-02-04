@@ -113,8 +113,8 @@ static void add_alias_event(const char *name) {
 %destructor { free($$.anchor); free($$.tag); } <props>
 
 %glr-parser
-%expect 28
-%expect-rr 28
+%expect 45
+%expect-rr 34
 
 %%
 
@@ -218,6 +218,7 @@ map_entries:
 
 map_entry:
     entry_key COLON node %dprec 3
+    | entry_key COLON INDENT node DEDENT %dprec 3
     | QUESTION node COLON node %dprec 5
     | entry_key COLON { EMIT("S::\n"); } %dprec 1
     | QUESTION node COLON { EMIT("S::\n"); } %dprec 1
@@ -225,7 +226,7 @@ map_entry:
     | COLON node %dprec 2 { EMIT("S::\n"); }
     ;
 
-entry_key: scalar | ALIAS[a] { EMIT("A:%s\n", $a+1); add_alias_event($a+1); free($a); } | flow_seq | flow_map ;
+entry_key: scalar | ALIAS[a] { EMIT("A:%s\n", $a+1); add_alias_event($a+1); free($a); } | flow_seq | flow_map | node_props[p] scalar { EMIT("P&%s<%s>\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } ;
 
 flow_seq:
     LBRACK { EMIT("Q+\n"); add_event(EVENT_SEQUENCE_START); } flow_seq_entries RBRACK { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); }
