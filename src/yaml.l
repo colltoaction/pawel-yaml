@@ -20,6 +20,18 @@ static int first_line = 1;
  * Used to enforce YAML spec: comments require whitespace before them */
 static int last_was_value = 0;
 
+/* Indentation context for multiline scalars */
+typedef struct {
+    int level;
+    int is_flow;
+    char context_type;  /* 'M' map, 'S' seq, 'F' flow */
+} IndentContext;
+
+static IndentContext indent_context_stack[100];
+static int indent_context_sp = 0;
+static int scalar_base_indent = 0;
+static char scalar_type = '\0';  /* ':' plain, '"' quoted, '|' literal, '>' folded */
+
 /* Check if UTF-8 bytes represent visible space U+2423 */
 static int is_visible_space(const unsigned char *s) {
     return s[0] == 0xE2 && s[1] == 0x90 && s[2] == 0xA3;
@@ -48,6 +60,31 @@ static int pop_indent() {
 
 static int current_indent() {
     return indent_stack[indent_sp];
+}
+
+static void push_indent_context(int level, int is_flow, char type) {
+    if (indent_context_sp < 99) {
+        indent_context_stack[indent_context_sp].level = level;
+        indent_context_stack[indent_context_sp].is_flow = is_flow;
+        indent_context_stack[indent_context_sp].context_type = type;
+        indent_context_sp++;
+    }
+}
+
+static void pop_indent_context() {
+    if (indent_context_sp > 0) {
+        indent_context_sp--;
+    }
+}
+
+static int in_flow_context() {
+    return flow_level > 0 || (indent_context_sp > 0 && indent_context_stack[indent_context_sp - 1].is_flow);
+}
+
+/* Simple lookahead - just check if we're at end of file or line */
+static int check_scalar_continuation() {
+    /* For now, simple approach: plain scalars end at newline in block context */
+    return 0;
 }
 
 static char block_type = '\0';
@@ -137,6 +174,10 @@ static int validate_dquote_escapes(const char *str, int len) {
 %x DIRECTIVE_MODE
 %x SIMPLE_SCALAR
 %x INDENT_CHECK
+%x PLAIN_SCALAR_CONT
+%x QUOTED_SCALAR_CONT
+%x BLOCK_LITERAL_CONT
+%x BLOCK_FOLDED_CONT
 
 NSCAL [a-zA-Z0-9\-\._%:/]
 
@@ -152,6 +193,21 @@ NSCAL [a-zA-Z0-9\-\._%:/]
         pending_dedents--;
         return DEDENT;
     }
+
+<INDENT_CHECK>[ \t]*#[^\n]* {
+    /* Line with only whitespace and comment - skip it, stay in INDENT_CHECK */
+    BEGIN(INDENT_CHECK);
+}
+
+<INDENT_CHECK>[ \t]*\n {
+    /* Blank line - skip it, stay in INDENT_CHECK */
+    BEGIN(INDENT_CHECK);
+}
+
+<INDENT_CHECK>[ \t]*\n {
+    /* Blank line - skip it, stay in INDENT_CHECK */
+    BEGIN(INDENT_CHECK);
+}
 
 <INDENT_CHECK>[ \t]* {
     int indent = 0;
@@ -220,7 +276,8 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 "%TAG"           { BEGIN(DIRECTIVE_MODE); return TAG_DIRECTIVE; }
 "%YAML"[ ]?"1"[.,][0-9]  { return YAML_DIRECTIVE; }
-"---"            { expecting_value = 1; return DOC_START; }
+"%"[a-zA-Z][^\n]* { /* Unknown directive - skip */ }
+"---"            { expecting_value = 1; last_was_value = 0; return DOC_START; }
 "..."            { expecting_value = 1; return DOC_END; }
 
 <DIRECTIVE_MODE>{
@@ -264,8 +321,8 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     }
 }
 ","              { expecting_value = 1; return COMMA; }
-\"([^\"\\]|\\.)*\" {
-    /* Double-quoted string - validate escape sequences */
+\"([^\"\\]|\\.|[\n])*\" {
+    /* Double-quoted string - supports multiline and validates escape sequences */
     int len = strlen(yytext) - 2;
     char *content = strndup(yytext + 1, len);
     if (!validate_dquote_escapes(content, len)) {
@@ -369,7 +426,29 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     init_scalar();
     append_scalar(yytext, yyleng);
     expecting_value = 0;
-    BEGIN(SIMPLE_SCALAR);
+    scalar_base_indent = current_indent();
+    scalar_type = ':';  /* Plain scalar */
+    BEGIN(PLAIN_SCALAR_CONT);
+}
+
+"?"[a-zA-Z0-9\-\._]+ {
+    /* Question mark followed by alphanumeric - treat as scalar */
+    init_scalar();
+    append_scalar(yytext, yyleng);
+    expecting_value = 0;
+    scalar_base_indent = current_indent();
+    scalar_type = ':';
+    BEGIN(PLAIN_SCALAR_CONT);
+}
+
+":"[a-zA-Z0-9\-\._]+ {
+    /* Colon followed by alphanumeric - treat as scalar */
+    init_scalar();
+    append_scalar(yytext, yyleng);
+    expecting_value = 0;
+    scalar_base_indent = current_indent();
+    scalar_type = ':';
+    BEGIN(PLAIN_SCALAR_CONT);
 }
 
 <SIMPLE_SCALAR>":"/[ \t\n\r] {
@@ -382,6 +461,10 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return SCALAR;
 }
 
+<SIMPLE_SCALAR>[ \t]*\n([ \t]*\n)+ {
+    /* Multiple blank lines in scalar - continue parsing as multiline */
+    append_scalar(" ", 1);
+}
 <SIMPLE_SCALAR>"\n" {
     char *s = strdup(scalar_content);
     int len = strlen(s);
@@ -391,7 +474,6 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(INITIAL);
     return SCALAR;
 }
-
 <SIMPLE_SCALAR>[ \t]+ { append_scalar(yytext, yyleng); }
 <SIMPLE_SCALAR>[^:\n\r\t,\[\]{} ]+ { append_scalar(yytext, yyleng); }
 <SIMPLE_SCALAR>":" { append_scalar(":", 1); }
@@ -415,6 +497,61 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(INITIAL);
     return SCALAR;
 }
+
+<PLAIN_SCALAR_CONT>[ \t]+ { append_scalar(yytext, yyleng); }
+<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { append_scalar(yytext, yyleng); }
+<PLAIN_SCALAR_CONT>":" { append_scalar(":", 1); }
+
+<PLAIN_SCALAR_CONT>":"/[ \t\n\r] {
+    char *s = strdup(scalar_content);
+    int len = strlen(s);
+    while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
+    yylval->string = s;
+    yyless(0);
+    BEGIN(INITIAL);
+    return SCALAR;
+}
+
+<PLAIN_SCALAR_CONT>"\n" {
+    /* For plain scalars, newline ends the scalar in block context */
+    /* In flow context, we might continue */
+    if (flow_level == 0) {
+        /* Block context - end scalar */
+        char *s = strdup(scalar_content);
+        int len = strlen(s);
+        while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
+        yylval->string = s;
+        unput('\n');
+        BEGIN(INITIAL);
+        return SCALAR;
+    } else {
+        /* Flow context - fold to space and continue */
+        append_scalar(" ", 1);
+    }
+}
+
+<PLAIN_SCALAR_CONT>[\{\}\[\],] {
+    if (flow_level > 0) {
+        yyless(0);
+        char *s = strdup(scalar_content);
+        int len = strlen(s);
+        while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
+        yylval->string = s;
+        BEGIN(INITIAL);
+        return SCALAR;
+    }
+    append_scalar(yytext, yyleng);
+}
+
+<PLAIN_SCALAR_CONT><<EOF>> {
+    char *s = strdup(scalar_content);
+    int len = strlen(s);
+    while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
+    yylval->string = s;
+    BEGIN(INITIAL);
+    return SCALAR;
+}
+
 "#".*            { 
     /* Validate comment has proper spacing */
     if (!validate_comment_context()) {
