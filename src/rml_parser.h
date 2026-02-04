@@ -1,8 +1,7 @@
 /**
- * rml_parser.h - RML Monoidal Language Parser (Stage 3)
+ * rml_parser.h - RML Parser API
  * 
- * Validates EventStream against RML grammar constraints.
- * Implementation moved to rml.y grammar file.
+ * Public interface for RML validation via Bison grammar.
  */
 
 #ifndef RML_PARSER_H
@@ -17,8 +16,15 @@ typedef struct {
     char *intermediate_representation;
 } ValidationResult;
 
-/* Stage 3 API */
+/**
+ * rml_parse_event_stream - Validate EventStream against RML grammar
+ * Returns: ValidationResult* (caller must free)
+ */
 ValidationResult* rml_parse_event_stream(const EventStream *stream);
+
+/**
+ * validation_result_free - Free ValidationResult
+ */
 void validation_result_free(ValidationResult *result);
 
-#endif
+#endif /* RML_PARSER_H */

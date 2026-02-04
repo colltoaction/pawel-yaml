@@ -11,30 +11,30 @@ int rml_lex(void);
 
 %%
 
-stream: RML_STR_START[start] docs[list] RML_STR_END[end] ;
+stream: RML_STR_START docs RML_STR_END ;
 
 docs: 
-    | docs[head] doc[tail]
+    | docs doc
     ;
 
 doc: 
-    RML_DOC_START[start] node[body] RML_DOC_END[end]
-    | node[content]
+    RML_DOC_START node RML_DOC_END
+    | node
     ;
 
 node: 
-    RML_SCALAR[val]
-    | RML_ALIAS[ref]
-    | RML_SEQ_START[start] seq_items[items] RML_SEQ_END[end]
-    | RML_MAP_START[start] map_pairs[pairs] RML_MAP_END[end]
+    RML_SCALAR
+    | RML_ALIAS
+    | RML_SEQ_START seq_items RML_SEQ_END
+    | RML_MAP_START map_pairs RML_MAP_END
     ;
 
 seq_items:
-    | seq_items[head] node[item]
+    | seq_items node
     ;
 
 map_pairs:
-    | map_pairs[head] node[key] node[value]
+    | map_pairs node node
     ;
 
 %%
