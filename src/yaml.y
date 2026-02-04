@@ -126,9 +126,9 @@ static void add_alias_event(const char *name) {
 %%
 
 stream:
-    { ir_out = open_memstream(&rml_ir_buf, &rml_ir_size); add_event(EVENT_STREAM_START); }
+    { ir_out = open_memstream(&rml_ir_buf, &rml_ir_size); EMIT("+STR\n"); add_event(EVENT_STREAM_START); }
     documents
-    { fclose(ir_out); add_event(EVENT_STREAM_END); }
+    { EMIT("-STR\n"); fclose(ir_out); add_event(EVENT_STREAM_END); }
     ;
 
 documents:
@@ -144,10 +144,10 @@ explicit_documents:
     ;
 
 explicit_document:
-    DOC_START { EMIT("D+\n"); add_event(EVENT_DOCUMENT_START); } document_body { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | DOC_START { EMIT("D+\nS::\n"); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); }
-    | directives DOC_START { EMIT("D+\n"); add_event(EVENT_DOCUMENT_START); } document_body { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | directives DOC_START { EMIT("D+\nS::\n"); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); }
+    DOC_START { EMIT("+DOC\n"); add_event(EVENT_DOCUMENT_START); } document_body { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | DOC_START { EMIT("+DOC\n=VAL ::\n"); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { EMIT("+DOC\n"); add_event(EVENT_DOCUMENT_START); } document_body { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | directives DOC_START { EMIT("+DOC\n=VAL ::\n"); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); }
     ;
 
 directives: directive | directives directive ;
@@ -156,24 +156,24 @@ directive: YAML_DIRECTIVE | TAG_DIRECTIVE SCALAR SCALAR { free($2); free($3); } 
 optional_doc_end: /* empty */ | DOC_END ;
 
 implicit_document:
-    document_body { EMIT("D-\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    document_body { EMIT("-DOC\n"); add_event(EVENT_DOCUMENT_END); } optional_doc_end
     ;
 
 document_body:
-    { EMIT("D+\n"); } node
-    | { EMIT("D+\nM+\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("M-\n"); add_event(EVENT_MAPPING_END); } %dprec 3
-    | { EMIT("D+\nQ+\n"); add_event(EVENT_SEQUENCE_START); } seq_entries { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); } %dprec 2
-    | node_props[p] { EMIT("D+\nP&%s<%s>\nM+\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); add_event(EVENT_MAPPING_START); } 
-      map_entries { EMIT("M-\n"); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); } %dprec 4
-    | node_props[p] { EMIT("D+\nP&%s<%s>\nQ+\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); add_event(EVENT_SEQUENCE_START); } 
-      seq_entries { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); } %dprec 3
+    { EMIT("+DOC\n"); } node
+    | { EMIT("+DOC\n+MAP\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); } %dprec 3
+    | { EMIT("+DOC\n+SEQ\n"); add_event(EVENT_SEQUENCE_START); } seq_entries { EMIT("-SEQ\n"); add_event(EVENT_SEQUENCE_END); } %dprec 2
+    | node_props[p] { EMIT("+DOC\nP&%s<%s>\n+MAP\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); add_event(EVENT_MAPPING_START); } 
+      map_entries { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); } %dprec 4
+    | node_props[p] { EMIT("+DOC\nP&%s<%s>\n+SEQ\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); add_event(EVENT_SEQUENCE_START); } 
+      seq_entries { EMIT("-SEQ\n"); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); } %dprec 3
     ;
 
 node:
     node_body %dprec 2
     | TAG[t] node_body { EMIT("P&<%s>\n", $t); free($t); } %dprec 4
     | node_props[p] { EMIT("P&%s<%s>\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } node_body %dprec 3
-    | node_props[p] { EMIT("P&%s<%s>\nS::\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } %dprec 1
+    | node_props[p] { EMIT("P&%s<%s>\n=VAL ::\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } %dprec 1
     ;
 
 node_body:
@@ -192,16 +192,16 @@ node_props:
     ;
 
 scalar:
-    SCALAR[s] { EMIT("S:%s\n", $s); add_scalar_event($s, ':'); free($s); }
-    | QSCALAR[s] { EMIT("S\":%s\n", $s); add_scalar_event($s, '"'); free($s); }
-    | SSCALAR[s] { EMIT("S\':%s\n", $s); add_scalar_event($s, '\''); free($s); }
-    | BSCALAR[s] { EMIT("S%c:%s\n", $s[0], $s+1); add_scalar_event($s+1, $s[0]); free($s); }
+    SCALAR[s] { EMIT("=VAL :%s\n", $s); add_scalar_event($s, ':'); free($s); }
+    | QSCALAR[s] { EMIT("=VAL \":%s\n", $s); add_scalar_event($s, '"'); free($s); }
+    | SSCALAR[s] { EMIT("=VAL \':%s\n", $s); add_scalar_event($s, '\''); free($s); }
+    | BSCALAR[s] { EMIT("=VAL %c:%s\n", $s[0], $s+1); add_scalar_event($s+1, $s[0]); free($s); }
     ;
 
 collection: map | seq ;
 
 seq:
-    INDENT { EMIT("Q+\n"); add_event(EVENT_SEQUENCE_START); } seq_entries DEDENT { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); }
+    INDENT { EMIT("+SEQ\n"); add_event(EVENT_SEQUENCE_START); } seq_entries DEDENT { EMIT("-SEQ\n"); add_event(EVENT_SEQUENCE_END); }
     ;
 
 seq_entries:
@@ -212,12 +212,12 @@ seq_entries:
 seq_entry:
     BULLET node %dprec 2
     | BULLET INDENT seq_entries DEDENT %dprec 4
-    | BULLET { EMIT("M+\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("M-\n"); add_event(EVENT_MAPPING_END); } %dprec 3
-    | BULLET { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 1
+    | BULLET { EMIT("+MAP\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); } %dprec 3
+    | BULLET { EMIT("=VAL ::\n"); add_scalar_event("", ':'); } %dprec 1
     ;
 
 map:
-    INDENT { EMIT("M+\n"); add_event(EVENT_MAPPING_START); } map_entries DEDENT { EMIT("M-\n"); add_event(EVENT_MAPPING_END); }
+    INDENT { EMIT("+MAP\n"); add_event(EVENT_MAPPING_START); } map_entries DEDENT { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); }
     ;
 
 map_entries:
@@ -229,17 +229,17 @@ map_entry:
     entry_key COLON node %dprec 3
     | entry_key COLON INDENT node DEDENT %dprec 3
     | QUESTION node COLON node %dprec 5
-    | QUESTION node COLON { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 4
-    | entry_key COLON { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 1
-    | QUESTION node { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 2
-    | COLON node %dprec 2 { EMIT("S::\n"); add_scalar_event("", ':'); }
+    | QUESTION node COLON { EMIT("=VAL ::\n"); add_scalar_event("", ':'); } %dprec 4
+    | entry_key COLON { EMIT("=VAL ::\n"); add_scalar_event("", ':'); } %dprec 1
+    | QUESTION node { EMIT("=VAL ::\n"); add_scalar_event("", ':'); } %dprec 2
+    | COLON node %dprec 2 { EMIT("=VAL ::\n"); add_scalar_event("", ':'); }
     ;
 
 entry_key: scalar | ALIAS[a] { EMIT("A:%s\n", $a+1); add_alias_event($a+1); free($a); } | flow_seq | flow_map | node_props[p] scalar { EMIT("P&%s<%s>\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } ;
 
 flow_seq:
-    LBRACK { EMIT("Q+\n"); add_event(EVENT_SEQUENCE_START); } flow_seq_entries RBRACK { EMIT("Q-\n"); add_event(EVENT_SEQUENCE_END); }
-    | LBRACK RBRACK { EMIT("Q+\nQ-\n"); add_event(EVENT_SEQUENCE_START); add_event(EVENT_SEQUENCE_END); }
+    LBRACK { EMIT("+SEQ\n"); add_event(EVENT_SEQUENCE_START); } flow_seq_entries RBRACK { EMIT("-SEQ\n"); add_event(EVENT_SEQUENCE_END); }
+    | LBRACK RBRACK { EMIT("+SEQ\n-SEQ\n"); add_event(EVENT_SEQUENCE_START); add_event(EVENT_SEQUENCE_END); }
     ;
 
 flow_seq_entries:
@@ -250,8 +250,8 @@ flow_seq_entries:
     ;
 
 flow_map:
-    LBRACE { EMIT("M+\n"); add_event(EVENT_MAPPING_START); } flow_map_entries RBRACE { EMIT("M-\n"); add_event(EVENT_MAPPING_END); }
-    | LBRACE RBRACE { EMIT("M+\nM-\n"); add_event(EVENT_MAPPING_START); add_event(EVENT_MAPPING_END); }
+    LBRACE { EMIT("+MAP\n"); add_event(EVENT_MAPPING_START); } flow_map_entries RBRACE { EMIT("-MAP\n"); add_event(EVENT_MAPPING_END); }
+    | LBRACE RBRACE { EMIT("+MAP\n-MAP\n"); add_event(EVENT_MAPPING_START); add_event(EVENT_MAPPING_END); }
     ;
 
 flow_map_entries:
