@@ -1,9 +1,8 @@
 /**
- * yaml_event_parser.h - YAML Event Stream Layer (Stage 2)
+ * yaml_event_parser.h - YAML Event Stream Definitions (Stage 2)
  * 
- * Converts YAML token stream into canonical event format
- * Input: YAML tokens from Stage 1
- * Output: Event stream (+STR, -STR, +DOC, etc.)
+ * Defines structures for canonical event format.
+ * Implementation moved to yaml_event.y grammar file.
  */
 
 #ifndef YAML_EVENT_PARSER_H

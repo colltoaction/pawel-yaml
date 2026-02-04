@@ -19,6 +19,8 @@ PLAY_DIR = $(LIB_DIR)/yaml-play
 SUITE_DIR = $(LIB_DIR)/yaml-test-suite
 
 # Parser definitions: PARSERS = name1 name2
+# Note: RML parser logic is embedded in yaml_event.y and rml.y grammar files
+# but compiled as separate units with proper namespacing to avoid symbol conflicts
 PARSERS = yaml yaml_event
 
 # Generated parser files (derived from PARSERS)
@@ -38,8 +40,9 @@ PARSER_OBJS = $(BUILD_DIR)/yaml.tab.o $(BUILD_DIR)/yaml.lex.o \
 TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
-# Custom C source files (Stage 2: Event parser, Stage 3: Validator)
-CUSTOM_OBJS = $(BUILD_DIR)/yaml_event_parser.o $(BUILD_DIR)/rml_parser.o
+# No custom C source files - all logic moved to grammar files
+# Except: rml_validation.c contains validation functions (no parser/lexer)
+CUSTOM_OBJS = $(BUILD_DIR)/rml_validation.o
 
 OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o $(CUSTOM_OBJS)
 
@@ -70,13 +73,10 @@ $(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h
 $(BUILD_DIR)/%.o: $(GEN_SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(YAML_TAB_H) $(RML_TAB_H)
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(YAML_TAB_H)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/yaml_event_parser.o: $(SRC_DIR)/yaml_event_parser.c $(SRC_DIR)/yaml_event_parser.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/rml_parser.o: $(SRC_DIR)/rml_parser.c $(SRC_DIR)/rml_parser.h
+$(BUILD_DIR)/rml_validation.o: $(SRC_DIR)/rml_validation.c $(SRC_DIR)/rml_parser.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================================

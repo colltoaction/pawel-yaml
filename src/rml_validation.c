@@ -1,9 +1,8 @@
 /**
- * rml_parser.c - RML Parser Wrapper
+ * rml_validation.c - RML Monoidal Language Validation Functions
  * 
- * Validates EventStream against RML grammar constraints.
+ * Contains all validation logic moved from rml_parser.c wrapper.
  * Grammar rules are defined in rml.y (reference architecture).
- * Validation logic enforces RML structure here.
  */
 
 #include <stdio.h>

@@ -16,6 +16,7 @@
  * - Aliases: =ALI *name
  */
 
+/* Event type enumeration */
 typedef enum {
     EVENT_STREAM_START,
     EVENT_STREAM_END,
@@ -27,10 +28,10 @@ typedef enum {
     EVENT_MAPPING_END,
     EVENT_SCALAR,
     EVENT_ALIAS,
-} EventType;
+} YAMLEventType;
 
 typedef struct {
-    EventType type;
+    YAMLEventType type;
     char quote_style;        /* ':' plain, '"' double, '\'' single, '|' literal, '>' folded */
     char *value;
     char *anchor;
@@ -39,8 +40,14 @@ typedef struct {
     char *alias_name;
 } YAMLEvent;
 
+typedef struct {
+    YAMLEvent **events;
+    int count;
+    int capacity;
+} EventStream;
+
 /* Constructor helpers */
-YAMLEvent *event_create(EventType type) {
+YAMLEvent *event_create(YAMLEventType type) {
     YAMLEvent *e = (YAMLEvent *)malloc(sizeof(YAMLEvent));
     if (!e) return NULL;
     e->type = type;
@@ -61,7 +68,7 @@ YAMLEvent *event_scalar_new(char quote, const char *value) {
     return e;
 }
 
-YAMLEvent *event_collection_new(EventType type, const char *anchor, const char *tag) {
+YAMLEvent *event_collection_new(YAMLEventType type, const char *anchor, const char *tag) {
     YAMLEvent *e = event_create(type);
     if (!e) return NULL;
     e->anchor = anchor ? strdup(anchor) : NULL;
@@ -136,6 +143,150 @@ void event_print(FILE *out, const YAMLEvent *e) {
             fprintf(out, "=ALI *%s\n", e->alias_name ? e->alias_name : "");
             break;
     }
+}
+
+/* Global event stream (set by parser) */
+static EventStream *current_stream = NULL;
+
+/* Initialize parser */
+int yaml_event_parser_init(void) {
+    current_stream = NULL;
+    return 0;
+}
+
+/* Parse event stream from string - moved from yaml_event_parser.c */
+EventStream* yaml_event_parse_string(const char *input) {
+    if (!input) return NULL;
+    
+    /* Create event stream */
+    EventStream *stream = (EventStream *)malloc(sizeof(EventStream));
+    if (!stream) return NULL;
+    
+    stream->events = NULL;
+    stream->count = 0;
+    stream->capacity = 0;
+    
+    /* Parse input string line by line */
+    char *input_copy = strdup(input);
+    if (!input_copy) {
+        free(stream);
+        return NULL;
+    }
+    
+    char *line = strtok(input_copy, "\n");
+    while (line && *line) {
+        /* Expand capacity if needed */
+        if (stream->count >= stream->capacity) {
+            stream->capacity = stream->capacity * 2 + 10;
+            YAMLEvent **new_events = (YAMLEvent **)realloc(stream->events, 
+                                                           stream->capacity * sizeof(YAMLEvent *));
+            if (!new_events) {
+                free(input_copy);
+                event_stream_free(stream);
+                return NULL;
+            }
+            stream->events = new_events;
+        }
+        
+        /* Parse line into event */
+        YAMLEvent *event = (YAMLEvent *)malloc(sizeof(YAMLEvent));
+        if (!event) {
+            free(input_copy);
+            event_stream_free(stream);
+            return NULL;
+        }
+        
+        /* Initialize event */
+        event->type = EVENT_SCALAR;
+        event->quote_style = '\0';
+        event->value = NULL;
+        event->anchor = NULL;
+        event->tag = NULL;
+        event->explicit_start = 0;
+        event->alias_name = NULL;
+        
+        /* Parse event markers */
+        if (strcmp(line, "+STR") == 0) {
+            event->type = EVENT_STREAM_START;
+        } else if (strcmp(line, "-STR") == 0) {
+            event->type = EVENT_STREAM_END;
+        } else if (strcmp(line, "+DOC") == 0) {
+            event->type = EVENT_DOCUMENT_START;
+        } else if (strcmp(line, "-DOC") == 0) {
+            event->type = EVENT_DOCUMENT_END;
+        } else if (strcmp(line, "+SEQ") == 0) {
+            event->type = EVENT_SEQUENCE_START;
+        } else if (strcmp(line, "-SEQ") == 0) {
+            event->type = EVENT_SEQUENCE_END;
+        } else if (strcmp(line, "+MAP") == 0) {
+            event->type = EVENT_MAPPING_START;
+        } else if (strcmp(line, "-MAP") == 0) {
+            event->type = EVENT_MAPPING_END;
+        } else if (strncmp(line, "=VAL ", 5) == 0) {
+            /* Parse scalar: =VAL [quote_char][value]  or =VAL [quote]:[value] */
+            event->type = EVENT_SCALAR;
+            char *rest = line + 5;
+            
+            if (rest[0] == '"' || rest[0] == '\'') {
+                /* Quoted format: "value" or 'value' */
+                event->quote_style = rest[0];
+                char *end_quote = strchr(rest + 1, rest[0]);
+                if (end_quote) {
+                    size_t len = end_quote - (rest + 1);
+                    event->value = (char *)malloc(len + 1);
+                    strncpy(event->value, rest + 1, len);
+                    event->value[len] = '\0';
+                }
+            } else if (rest[0] == ':') {
+                /* Plain format: :value */
+                event->quote_style = ':';
+                event->value = strdup(rest + 1);
+            } else {
+                /* Format: [quote_char]:[value] where quote_char is literal */
+                char *colon = strchr(rest, ':');
+                if (colon && colon > rest) {
+                    event->quote_style = rest[0];
+                    event->value = strdup(colon + 1);
+                }
+            }
+        } else if (strncmp(line, "=ALI ", 5) == 0) {
+            /* Parse alias: =ALI *name */
+            event->type = EVENT_ALIAS;
+            char *rest = line + 5;
+            if (rest[0] == '*') {
+                event->alias_name = strdup(rest + 1);
+            }
+        }
+        
+        stream->events[stream->count++] = event;
+        line = strtok(NULL, "\n");
+    }
+    
+    free(input_copy);
+    return stream;
+}
+
+/* Cleanup parser */
+void yaml_event_parser_cleanup(void) {
+    current_stream = NULL;
+}
+
+/* Free event stream */
+void event_stream_free(EventStream *stream) {
+    if (!stream) return;
+    
+    for (int i = 0; i < stream->count; i++) {
+        if (stream->events[i]) {
+            free(stream->events[i]->value);
+            free(stream->events[i]->anchor);
+            free(stream->events[i]->tag);
+            free(stream->events[i]->alias_name);
+            free(stream->events[i]);
+        }
+    }
+    
+    free(stream->events);
+    free(stream);
 }
 %}
 
