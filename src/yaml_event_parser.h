@@ -1,26 +1,28 @@
 /**
- * yaml_event_parser.h - YAML Event Stream Definitions (Stage 2)
+ * yaml_event_parser.h - YAML Event Stream Layer (Stage 2)
+ * 
+ * Converts YAML token stream into canonical event format
+ * Input: YAML tokens from Stage 1
+ * Output: Event stream (+STR, -STR, +DOC, etc.)
  */
 
 #ifndef YAML_EVENT_PARSER_H
 #define YAML_EVENT_PARSER_H
 
 #include <stdio.h>
-#include "tokens.tab.h"
 
-/* YAMLEventType mapping to centralized tokens */
-typedef int YAMLEventType;
-
-#define EVENT_STREAM_START   TOK_EVENT_STREAM_START
-#define EVENT_STREAM_END     TOK_EVENT_STREAM_END
-#define EVENT_DOCUMENT_START TOK_EVENT_DOCUMENT_START
-#define EVENT_DOCUMENT_END   TOK_EVENT_DOCUMENT_END
-#define EVENT_SEQUENCE_START TOK_EVENT_SEQUENCE_START
-#define EVENT_SEQUENCE_END   TOK_EVENT_SEQUENCE_END
-#define EVENT_MAPPING_START  TOK_EVENT_MAPPING_START
-#define EVENT_MAPPING_END    TOK_EVENT_MAPPING_END
-#define EVENT_SCALAR         TOK_EVENT_SCALAR
-#define EVENT_ALIAS          TOK_EVENT_ALIAS
+typedef enum {
+    EVENT_STREAM_START,
+    EVENT_STREAM_END,
+    EVENT_DOCUMENT_START,
+    EVENT_DOCUMENT_END,
+    EVENT_SEQUENCE_START,
+    EVENT_SEQUENCE_END,
+    EVENT_MAPPING_START,
+    EVENT_MAPPING_END,
+    EVENT_SCALAR,
+    EVENT_ALIAS,
+} YAMLEventType;
 
 typedef struct {
     YAMLEventType type;
@@ -38,9 +40,13 @@ typedef struct {
     int capacity;
 } EventStream;
 
-/* Stage 2 API */
+/* Initialize event parser */
 int yaml_event_parser_init(void);
+
+/* Parse event stream from string */
 EventStream* yaml_event_parse_string(const char *input);
+
+/* Cleanup */
 void yaml_event_parser_cleanup(void);
 void event_stream_free(EventStream *stream);
 
