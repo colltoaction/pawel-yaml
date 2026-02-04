@@ -113,10 +113,15 @@ static void add_alias_event(const char *name) {
 %destructor { free($$.anchor); free($$.tag); } <props>
 
 %glr-parser
-%expect 45
+%expect 47
 %expect-rr 34
 %locations
 %define parse.error detailed
+
+/* Precedence declarations for disambiguation */
+%left COMMA RBRACE RBRACK
+%precedence COLON
+%precedence SCALAR QSCALAR SSCALAR BSCALAR
 
 %%
 
@@ -166,6 +171,7 @@ document_body:
 
 node:
     node_body %dprec 2
+    | TAG[t] node_body { EMIT("P&<%s>\n", $t); free($t); } %dprec 4
     | node_props[p] { EMIT("P&%s<%s>\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } node_body %dprec 3
     | node_props[p] { EMIT("P&%s<%s>\nS::\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } %dprec 1
     ;
@@ -205,6 +211,7 @@ seq_entries:
 
 seq_entry:
     BULLET node %dprec 2
+    | BULLET INDENT seq_entries DEDENT %dprec 4
     | BULLET { EMIT("M+\n"); add_event(EVENT_MAPPING_START); } map_entries { EMIT("M-\n"); add_event(EVENT_MAPPING_END); } %dprec 3
     | BULLET { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 1
     ;
@@ -222,10 +229,10 @@ map_entry:
     entry_key COLON node %dprec 3
     | entry_key COLON INDENT node DEDENT %dprec 3
     | QUESTION node COLON node %dprec 5
-    | entry_key COLON { EMIT("S::\n"); } %dprec 1
-    | QUESTION node COLON { EMIT("S::\n"); } %dprec 1
-    | QUESTION node { EMIT("S::\n"); } %dprec 2
-    | COLON node %dprec 2 { EMIT("S::\n"); }
+    | QUESTION node COLON { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 4
+    | entry_key COLON { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 1
+    | QUESTION node { EMIT("S::\n"); add_scalar_event("", ':'); } %dprec 2
+    | COLON node %dprec 2 { EMIT("S::\n"); add_scalar_event("", ':'); }
     ;
 
 entry_key: scalar | ALIAS[a] { EMIT("A:%s\n", $a+1); add_alias_event($a+1); free($a); } | flow_seq | flow_map | node_props[p] scalar { EMIT("P&%s<%s>\n", $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } ;
