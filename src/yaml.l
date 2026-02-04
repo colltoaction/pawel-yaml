@@ -153,6 +153,21 @@ NSCAL [a-zA-Z0-9\-\._%:/]
         return DEDENT;
     }
 
+<INDENT_CHECK>[ \t]*#[^\n]* {
+    /* Line with only whitespace and comment - skip it, stay in INDENT_CHECK */
+    BEGIN(INDENT_CHECK);
+}
+
+<INDENT_CHECK>[ \t]*\n {
+    /* Blank line - skip it, stay in INDENT_CHECK */
+    BEGIN(INDENT_CHECK);
+}
+
+<INDENT_CHECK>[ \t]*\n {
+    /* Blank line - skip it, stay in INDENT_CHECK */
+    BEGIN(INDENT_CHECK);
+}
+
 <INDENT_CHECK>[ \t]* {
     int indent = 0;
     for (int i=0; i<yyleng; i++) {
@@ -220,7 +235,8 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 "%TAG"           { BEGIN(DIRECTIVE_MODE); return TAG_DIRECTIVE; }
 "%YAML"[ ]?"1"[.,][0-9]  { return YAML_DIRECTIVE; }
-"---"            { expecting_value = 1; return DOC_START; }
+"%"[a-zA-Z][^\n]* { /* Unknown directive - skip */ }
+"---"            { expecting_value = 1; last_was_value = 0; return DOC_START; }
 "..."            { expecting_value = 1; return DOC_END; }
 
 <DIRECTIVE_MODE>{
