@@ -4,16 +4,33 @@
 #include "yaml.tab.h"
 #include "rml.tab.h"
 
-/* Globals for IR exchange */
+/**
+ * Three-Stage Parser Pipeline
+ * 
+ * Stage 1: YAML Presentation (yaml.y/yaml.l)
+ * - Input: Raw YAML text
+ * - Output: Tokens/AST
+ * 
+ * Stage 2: YAML Events (yaml_event.y/yaml_event.l)
+ * - Input: YAML tokens
+ * - Output: Canonical event stream (+STR, -STR, =VAL, etc.)
+ * 
+ * Stage 3: RML Monoidal (rml.y/rml.l)
+ * - Input: Event stream
+ * - Output: Validation result + IR
+ */
+
+/* Globals for IR exchange between stages */
 char *rml_ir_buf = NULL;
 size_t rml_ir_size = 0;
 
-/* External lexer/parser functions */
+/* External lexer/parser functions - Stage 1 (YAML Presentation) */
 int yaml_lex_init(void **scanner);
 int yaml_lex_destroy(void *scanner);
 void yaml_set_in(FILE *in, void *scanner);
 int yaml_parse(void *scanner);
 
+/* External lexer/parser functions - Stage 3 (RML Validation) */
 int rml_lex_init(void **scanner);
 int rml_lex_destroy(void *scanner);
 typedef struct yy_buffer_state *YY_BUFFER_STATE;
@@ -24,7 +41,8 @@ int main(int argc, char **argv) {
     (void)argc; (void)argv;
     void *y_scanner;
     
-    /* Stage 1: YAML to Monoidal IR */
+    /* Stage 1: YAML Presentation Layer */
+    /* Parses YAML text into token stream */
     yaml_lex_init(&y_scanner);
     yaml_set_in(stdin, y_scanner);
     if (yaml_parse(y_scanner) != 0) {
@@ -35,7 +53,12 @@ int main(int argc, char **argv) {
 
     if (!rml_ir_buf) return 0;
 
-    /* Stage 2: Monoidal IR to Canonical Events */
+    /* Stage 2: YAML Events Layer */
+    /* TODO: Process rml_ir_buf through yaml_event parser */
+    /* This will generate canonical event stream */
+
+    /* Stage 3: RML Monoidal Layer */
+    /* Validates event stream and produces IR */
     void *r_scanner;
     rml_lex_init(&r_scanner);
     rml__scan_string(rml_ir_buf, r_scanner);
@@ -46,3 +69,4 @@ int main(int argc, char **argv) {
     
     return result;
 }
+
