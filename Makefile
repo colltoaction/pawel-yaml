@@ -44,7 +44,8 @@ LOG_DIR = $(BUILD_DIR)/log
 # - rml_validation.c: validation functions (no parser/lexer)
 # - lexer_context.c: unified lexer state management
 # - ir_builder.c: IR generation API
-CUSTOM_OBJS = $(BUILD_DIR)/rml_validation.o $(BUILD_DIR)/lexer_context.o $(BUILD_DIR)/ir_builder.o
+# - pipeline.c: 3-stage pipeline driver
+CUSTOM_OBJS = $(BUILD_DIR)/rml_validation.o $(BUILD_DIR)/lexer_context.o $(BUILD_DIR)/ir_builder.o $(BUILD_DIR)/pipeline.o
 
 OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o $(CUSTOM_OBJS)
 
@@ -85,6 +86,9 @@ $(BUILD_DIR)/lexer_context.o: $(SRC_DIR)/lexer_context.c $(SRC_DIR)/lexer_contex
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/ir_builder.o: $(SRC_DIR)/ir_builder.c $(SRC_DIR)/ir_builder.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/pipeline.o: $(SRC_DIR)/pipeline.c $(SRC_DIR)/pipeline.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================================

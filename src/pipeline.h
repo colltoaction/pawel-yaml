@@ -5,12 +5,11 @@
 
 /**
  * Pawel-YAML 3-Stage Pipeline
- * Uses standard Bison return codes: YYACCEPT (0) for success, YYABORT (1) for error
  */
 int yaml_pipeline_run(FILE *input, FILE *output);
 
 /* Minimalist API */
-int parse(FILE *in, FILE *out);
+void parse(FILE *in, FILE *out);
 void lex(FILE *in, FILE *out);
 void validate(FILE *in, FILE *out);
 
