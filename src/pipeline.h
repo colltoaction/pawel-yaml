@@ -1,29 +1,26 @@
-/**
- * pipeline.h - Three-Stage Parser Pipeline Orchestrator
- * 
- * Coordinates the flow of data through all three parsing stages:
- * 1. YAML Presentation (yaml_parser.h)
- * 2. YAML Events (yaml_event_parser.h)
- * 3. RML Validation (rml_validator.h)
- */
-
 #ifndef PIPELINE_H
 #define PIPELINE_H
 
 #include <stdio.h>
-#include "yaml_event_parser.h"
-#include "rml_validator.h"
 
-typedef struct {
-    EventStream *events;           /* Output from Stage 2 */
-    ValidationResult *validation;  /* Output from Stage 3 */
-    int exit_code;                 /* Final pipeline result */
-} PipelineOutput;
+/**
+ * Bison-style return codes for pipeline stages
+ * Matches standard Bison parser return conventions
+ */
+typedef enum {
+    PARSER_SUCCESS = 0,        /* Parse succeeded (YYACCEPT) */
+    PARSER_ERROR = 1,          /* Parse failed (YYABORT) */
+    PARSER_MEMORY_ERROR = 2    /* Memory exhaustion */
+} parser_status_code_t;
 
-/* Execute full three-stage pipeline on file descriptor */
-PipelineOutput* pipeline_process_file(FILE *input);
+/**
+ * Pawel-YAML 3-Stage Pipeline
+ */
+int yaml_pipeline_run(FILE *input, FILE *output);
 
-/* Cleanup pipeline output */
-void pipeline_output_free(PipelineOutput *output);
+/* Minimalist API */
+int parse(FILE *in, FILE *out);
+int lex(FILE *in, FILE *out);
+int validate(FILE *in, FILE *out);
 
 #endif

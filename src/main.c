@@ -1,72 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include "yaml.tab.h"
-#include "rml.tab.h"
+#include "pipeline.h"
 
-/**
- * Three-Stage Parser Pipeline
- * 
- * Stage 1: YAML Presentation (yaml.y/yaml.l)
- * - Input: Raw YAML text
- * - Output: Tokens/AST
- * 
- * Stage 2: YAML Events (yaml_event.y/yaml_event.l)
- * - Input: YAML tokens
- * - Output: Canonical event stream (+STR, -STR, =VAL, etc.)
- * 
- * Stage 3: RML Monoidal (rml.y/rml.l)
- * - Input: Event stream
- * - Output: Validation result + IR
- */
+extern int parse(FILE *in, FILE *out);
+extern int lex(FILE *in, FILE *out);
+extern int validate(FILE *in, FILE *out);
 
-/* Globals for IR exchange between stages */
-char *rml_ir_buf = NULL;
-size_t rml_ir_size = 0;
-
-/* External lexer/parser functions - Stage 1 (YAML Presentation) */
-int yaml_lex_init(void **scanner);
-int yaml_lex_destroy(void *scanner);
-void yaml_set_in(FILE *in, void *scanner);
-int yaml_parse(void *scanner);
-
-/* External lexer/parser functions - Stage 3 (RML Validation) */
-int rml_lex_init(void **scanner);
-int rml_lex_destroy(void *scanner);
-typedef struct yy_buffer_state *YY_BUFFER_STATE;
-YY_BUFFER_STATE rml__scan_string(const char *str, void *scanner);
-int rml_parse(void *scanner);
-
-int main(int argc, char **argv) {
-    (void)argc; (void)argv;
-    void *y_scanner;
+int main(void) {
+    int parse_result = parse(stdin, stdout);
+    int lex_result = lex(stdin, stdout);
+    int validate_result = validate(stdin, stdout);
     
-    /* Stage 1: YAML Presentation Layer */
-    /* Parses YAML text into token stream */
-    yaml_lex_init(&y_scanner);
-    yaml_set_in(stdin, y_scanner);
-    if (yaml_parse(y_scanner) != 0) {
-        yaml_lex_destroy(y_scanner);
-        return 1;
+    /* Return success only if all stages succeed (Bison-style: 0 = success) */
+    if (parse_result == PARSER_SUCCESS && lex_result == PARSER_SUCCESS && validate_result == PARSER_SUCCESS) {
+        return EXIT_SUCCESS;
+    } else {
+        return EXIT_FAILURE;
     }
-    yaml_lex_destroy(y_scanner);
-
-    if (!rml_ir_buf) return 0;
-
-    /* Stage 2: YAML Events Layer */
-    /* TODO: Process rml_ir_buf through yaml_event parser */
-    /* This will generate canonical event stream */
-
-    /* Stage 3: RML Monoidal Layer */
-    /* Validates event stream and produces IR */
-    void *r_scanner;
-    rml_lex_init(&r_scanner);
-    rml__scan_string(rml_ir_buf, r_scanner);
-    int result = rml_parse(r_scanner);
-    
-    rml_lex_destroy(r_scanner);
-    free(rml_ir_buf);
-    
-    return result;
 }
-
