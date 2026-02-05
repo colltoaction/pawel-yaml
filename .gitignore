@@ -1,24 +1,37 @@
+# Exclusions
 *
 !.gitignore
-!./.agent/TDD.md
-!./src/
-!./src/**
+!src/
+!src/**
 !Dockerfile.alpine
 !Makefile
 !README.md
+!TEST_FAILURES.yaml
+!test_yaml_suite.py
+!extract_test_yaml.py
+!extract_test_info.py
 
-# Analysis and logs
-*.txt
-*.md
-!README.md
-!./.agent/TDD.md
-*.log
-TEST_FAILURES.yaml
-THEORY_ALIGNED_SOLUTION.md
+# Preservation
+!build/tmp/
+!build/tmp/**
+!build/log/
+!build/log/**
+!build/lib/
+!build/lib/yaml-test-suite/
+!build/lib/yaml-test-suite/**
+!build/lib/yaml-runtimes/
+!build/lib/yaml-runtimes/**
+!build/lib/yaml-play/
+!build/lib/yaml-play/**
 
 # Temporary files
+.agent/
 tmp_*
-build/
+build/src/
+build/inc/
+build/bin/
+
+# Local clones (redundant since they are in build/lib)
 yaml-play/
 yaml-reference-parser/
 yaml-runtimes/
