@@ -10,21 +10,24 @@ void stage2_lex(FILE *input, FILE *output);
 /* Pipeline stages */
 int parse(FILE *in, FILE *out);
 int lex(FILE *in, FILE *out);
-int validate(FILE *in, FILE *out);
 }
+
+%glr-parser
+%expect 15
+%expect-rr 14
 
 %{
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include "common.h"
-#include "yaml_event_parser.h"
+#include "event_parser.h"
 #include "ir_builder.h"
 #include "lexer_context.h"
-#include "pipeline.h"
 
-int yaml_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
-void yaml_error(void *yylloc, void *scanner, const char *s);
+int presentation_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
+#define yylex presentation_lex
+void stream_error(void *yylloc, void *scanner, const char *s);
 
 /* Output buffer for RML IR */
 char *rml_ir_buf = NULL;
@@ -100,7 +103,7 @@ static void add_alias_event(const char *name) {
 %}
 
 %define api.pure true
-%define api.prefix {yaml_}
+%define api.prefix {stream_yy_}
 %locations
 %parse-param {void *scanner}
 %lex-param {void *scanner}
@@ -110,7 +113,7 @@ static void add_alias_event(const char *name) {
     NodeProps props;
 }
 
-%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS
+%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY QMAP_KEY SMAP_KEY
 %token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET COLON QUESTION
 %token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
 
@@ -224,8 +227,11 @@ map_entries:
     | map_entries map_entry
     ;
 
+
 map_entry:
-    node COLON node
+    MAP_KEY[val] { ir_scalar_plain(ir, $val); add_scalar_event($val, ':'); free($val); } COLON node
+    | QMAP_KEY[val] { ir_scalar_quoted(ir, $val, '"'); add_scalar_event($val, '"'); free($val); } COLON node
+    | SMAP_KEY[val] { ir_scalar_quoted(ir, $val, '\''); add_scalar_event($val, '\''); free($val); } COLON node
     | QUESTION node COLON node
     ;
 
@@ -243,37 +249,18 @@ flow_map_entry:
 
 %%
 
-void yaml_error(void *yylloc, void *scanner, const char *s) {
+void stream_error(void *yylloc, void *scanner, const char *s) {
     if (s) {
-        fprintf(stderr, "YAML Error: %s\n", s);
+        fprintf(stderr, "Stream Parse Error: %s\n", s);
     }
 }
 
-EventStream* yaml_parse_to_event_stream(const char *input) {
-    current_event_stream = (EventStream*)malloc(sizeof(EventStream));
-    current_event_stream->capacity = 128;
-    current_event_stream->count = 0;
-    current_event_stream->events = (YAMLEvent**)malloc(current_event_stream->capacity * sizeof(YAMLEvent*));
-    
-    extern int yaml_lex_init_extra(void *user_defined, void **scanner);
-    extern int yaml_lex_destroy(void *scanner);
-    
-    void *scanner;
-    yaml_lex_init_extra(NULL, &scanner);
-    
-    yaml_parse(scanner);
-    yaml_lex_destroy(scanner);
-    
-    EventStream *result = current_event_stream;
-    current_event_stream = NULL;
-    return result;
-}
-
-int yaml_stage_parse(FILE *input_stream, char **ir_buf, size_t *ir_size) {
-    extern int yaml_lex_init(void **scanner);
-    extern int yaml_lex_destroy(void *scanner);
-    extern void yaml_set_in(FILE *in, void *scanner);
-    extern void yaml_set_extra(void *extra, void *scanner);
+int stream_stage_parse(FILE *input_stream, char **ir_buf, size_t *ir_size) {
+    extern int presentation_lex_init(void **scanner);
+    extern int presentation_lex_init_extra(void *user_defined, void **scanner);
+    extern int presentation_lex_destroy(void *scanner);
+    extern void presentation_set_in(FILE *in, void *scanner);
+    extern void presentation_set_extra(void *extra, void *scanner);
     
     FILE *input = tmpfile();
     int c;
@@ -284,13 +271,13 @@ int yaml_stage_parse(FILE *input_stream, char **ir_buf, size_t *ir_size) {
     
     LexerContext *ctx = lexer_context_new();
     void *scanner;
-    yaml_lex_init(&scanner);
-    yaml_set_extra(ctx, scanner);
-    yaml_set_in(input, scanner);
+    presentation_lex_init(&scanner);
+    presentation_set_extra(ctx, scanner);
+    presentation_set_in(input, scanner);
     
-    int result = yaml_parse(scanner);
+    int result = stream_yy_parse(scanner);
     
-    yaml_lex_destroy(scanner);
+    presentation_lex_destroy(scanner);
     lexer_context_free(ctx);
     fclose(input);
     
@@ -300,19 +287,6 @@ int yaml_stage_parse(FILE *input_stream, char **ir_buf, size_t *ir_size) {
     return result;
 }
 
-void stage1_parse(FILE *input, FILE *output) {
-    yaml_stage_parse(input, &(char*){NULL}, &(size_t){0});
-    fputs(rml_ir_buf ?: "", output);
-}
-
-void stage1_lex(FILE *input, FILE *output) {
-    stage1_parse(input, output);
-}
-
-void stage2_parse(FILE *input, FILE *output) {
-    parse(input, output);
-}
-
-void stage2_lex(FILE *input, FILE *output) {
-    lex(input, output);
+int stream_main_parse(void) {
+    return stream_stage_parse(stdin, &rml_ir_buf, &rml_ir_size);
 }

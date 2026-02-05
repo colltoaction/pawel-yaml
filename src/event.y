@@ -2,12 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include "yaml_event_parser.h"
-
-int yaml_event_lex(void);
-void yaml_event_error(const char *msg);
-#define yylex yaml_event_lex
-#define yyerror yaml_event_error
+#include "event_parser.h"
 
 /**
  * YAML Event Stream & RML Validation (Unified Stage 2 & 3)
@@ -72,7 +67,7 @@ static YAMLEvent* event_alias_new(const char *name) {
 
 %}
 
-%define api.prefix {yaml_event_}
+%define api.prefix {event_yy_}
 
 %union {
     char *sval;   /* String values */
@@ -98,6 +93,13 @@ static YAMLEvent* event_alias_new(const char *name) {
 
 %define parse.error detailed
 %locations
+
+%{
+int stream_lex(void);
+void event_error(const char *msg);
+#define yylex stream_lex
+#define yyerror event_error
+%}
 
 %%
 
@@ -125,10 +127,7 @@ node : scalar
      | mapping
      ;
 
-scalar : "=VAL" E_CHAR[style] E_CHAR    E_QUOTED_STRING[content] { push_event(event_scalar_new($style, $content)); free($content); }
-       | "=VAL" E_CHAR[style] E_CHAR    E_IDENTIFIER[content]    { push_event(event_scalar_new($style, $content)); free($content); }
-       | "=VAL" E_CHAR[style] E_CHAR                             { push_event(event_scalar_new($style, NULL)); }
-       | "=VAL" E_CHAR[style] E_QUOTED_STRING[content] { push_event(event_scalar_new($style, $content)); free($content); }
+scalar : "=VAL" E_CHAR[style] E_QUOTED_STRING[content] { push_event(event_scalar_new($style, $content)); free($content); }
        | "=VAL" E_CHAR[style] E_IDENTIFIER[content]    { push_event(event_scalar_new($style, $content)); free($content); }
        | "=VAL" E_CHAR[style]                          { push_event(event_scalar_new($style, NULL)); }
        ;
@@ -164,13 +163,13 @@ map_pairs : %empty
 
 %%
 
-void yaml_event_error(const char *msg) {
-    fprintf(stderr, "YAML Event Parse Error: %s\n", msg);
+void event_error(const char *msg) {
+    fprintf(stderr, "Event Parse Error: %s\n", msg);
 }
 
 /* Global state for string parsing */
-extern void *yaml_event__scan_string(const char *);
-extern void yaml_event__delete_buffer(void *);
+extern void *stream__scan_string(const char *);
+extern void stream__delete_buffer(void *);
 
 int yaml_event_parser_init(void) {
     return 0;
@@ -179,8 +178,8 @@ int yaml_event_parser_init(void) {
 void yaml_event_parser_cleanup(void) {
 }
 
-/* Updated Stage 2 API: Uses Bison to parse and build EventStream */
-EventStream* yaml_event_parse_string(const char *input) {
+/* Stage 3 API: Uses Bison to parse and build EventStream */
+EventStream* event_parse_string(const char *input) {
     if (!input) return NULL;
     
     current_stream = (EventStream *)malloc(sizeof(EventStream));
@@ -189,9 +188,9 @@ EventStream* yaml_event_parse_string(const char *input) {
     current_stream->capacity = 10;
     current_stream->events = (YAMLEvent **)malloc(current_stream->capacity * sizeof(YAMLEvent *));
 
-    void *buf = yaml_event__scan_string(input);
-    int res = yaml_event_parse();
-    yaml_event__delete_buffer(buf);
+    void *buf = stream__scan_string(input);
+    int res = event_yy_parse();
+    stream__delete_buffer(buf);
 
     if (res != 0) {
         event_stream_free(current_stream);
@@ -243,7 +242,10 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream) {
                 case EVENT_SEQUENCE_END: pos += sprintf(ir + pos, "-SEQ\n"); break;
                 case EVENT_MAPPING_START: pos += sprintf(ir + pos, "+MAP\n"); break;
                 case EVENT_MAPPING_END: pos += sprintf(ir + pos, "-MAP\n"); break;
-                case EVENT_SCALAR: pos += sprintf(ir + pos, "=VAL %c:%s\n", e->quote_style, e->value ? e->value : ""); break;
+                case EVENT_SCALAR: 
+                    if (e->quote_style == ':') pos += sprintf(ir + pos, "=VAL :%s\n", e->value ? e->value : "");
+                    else pos += sprintf(ir + pos, "=VAL %c:%s\n", e->quote_style, e->value ? e->value : "");
+                    break;
                 case EVENT_ALIAS: pos += sprintf(ir + pos, "=ALI *%s\n", e->alias_name); break;
             }
         }

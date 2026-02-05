@@ -1,11 +1,11 @@
 %{
 #include <string.h>
-#include "yaml_event.tab.h"
-#define yylval yaml_event_lval
+#include "event.tab.h"
+#define yylval event_yy_lval
 %}
 
 %option noyywrap yylineno
-%option prefix="yaml_event_"
+%option prefix="stream_"
 
 %%
 
