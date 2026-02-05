@@ -1,20 +1,30 @@
-%code requires {
-/* === TYPE DEFINITIONS (from common.h & event_parser.h) === */
+%{
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+<<<<<<<< HEAD:src/yaml_event.y
+
+void yyerror(const char *msg);
+========
+#include "event_parser.h"
+>>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/event.y
 
 /**
- * Node properties structure for anchor/tag pairs
+ * YAML Event Stream (Test-Suite Canonical Format)
+ * 
+ * RED Phase: Hardcoded C logic (no grammar yet)
+ * 
+ * Represents canonical event stream from YAML test suite:
+ * - Stream: +STR, -STR
+ * - Documents: +DOC, -DOC
+ * - Collections: +SEQ, -SEQ, +MAP, -MAP
+ * - Scalars: =VAL [quote]:[content]
+ * - Aliases: =ALI *name
  */
-typedef struct {
-    char *anchor;
-    char *tag;
-} NodeProps;
 
-/**
- * Stable Event Types (Alphabet for all stages)
- * Matches values expected in event stream (300+)
- */
+/* Event type enumeration */
 typedef enum {
-    EVENT_STREAM_START = 300,
+    EVENT_STREAM_START,
     EVENT_STREAM_END,
     EVENT_DOCUMENT_START,
     EVENT_DOCUMENT_END,
@@ -26,12 +36,9 @@ typedef enum {
     EVENT_ALIAS,
 } YAMLEventType;
 
-/**
- * Individual YAML event representation
- */
 typedef struct {
     YAMLEventType type;
-    char quote_style;
+    char quote_style;        /* ':' plain, '"' double, '\'' single, '|' literal, '>' folded */
     char *value;
     char *anchor;
     char *tag;
@@ -39,52 +46,14 @@ typedef struct {
     char *alias_name;
 } YAMLEvent;
 
-/**
- * Event stream container
- */
 typedef struct {
     YAMLEvent **events;
     int count;
     int capacity;
 } EventStream;
 
-/**
- * Validation result after RML parsing
- */
-typedef struct {
-    int is_valid;
-    char *error_message;
-    int error_line;
-    char *intermediate_representation;
-} ValidationResult;
-}
-
-%define api.prefix {composition_yy_}
-
-%{
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-#include "composition.tab.h"  /* Include for type definitions */
-
-/* Forward declaration for cleanup function */
-void event_stream_free(EventStream *stream);
-
-/* Intermediate EventStream being built */
-static EventStream *current_stream = NULL;
-
-/* Helper to add events to the stream during parsing */
-static void push_event(YAMLEvent *e) {
-    if (!current_stream) return;
-    if (current_stream->count >= current_stream->capacity) {
-        current_stream->capacity = current_stream->capacity * 2 + 10;
-        current_stream->events = (YAMLEvent **)realloc(current_stream->events, 
-                                                       current_stream->capacity * sizeof(YAMLEvent *));
-    }
-    current_stream->events[current_stream->count++] = e;
-}
-
-static YAMLEvent* event_create(YAMLEventType type) {
+/* Constructor helpers */
+YAMLEvent *event_create(YAMLEventType type) {
     YAMLEvent *e = (YAMLEvent *)malloc(sizeof(YAMLEvent));
     if (!e) return NULL;
     e->type = type;
@@ -97,15 +66,15 @@ static YAMLEvent* event_create(YAMLEventType type) {
     return e;
 }
 
-static YAMLEvent* event_scalar_new(char style, const char *val) {
+YAMLEvent *event_scalar_new(char quote, const char *value) {
     YAMLEvent *e = event_create(EVENT_SCALAR);
     if (!e) return NULL;
-    e->quote_style = style;
-    e->value = val ? strdup(val) : NULL;
+    e->quote_style = quote;
+    e->value = value ? strdup(value) : NULL;
     return e;
 }
 
-static YAMLEvent* event_collection_new(YAMLEventType type, const char *anchor, const char *tag) {
+YAMLEvent *event_collection_new(YAMLEventType type, const char *anchor, const char *tag) {
     YAMLEvent *e = event_create(type);
     if (!e) return NULL;
     e->anchor = anchor ? strdup(anchor) : NULL;
@@ -113,33 +82,82 @@ static YAMLEvent* event_collection_new(YAMLEventType type, const char *anchor, c
     return e;
 }
 
-static YAMLEvent* event_scalar_complex(char style, const char *val, const char *anchor, const char *tag) {
-    YAMLEvent *e = event_create(EVENT_SCALAR);
-    if (!e) return NULL;
-    e->quote_style = style;
-    e->value = val ? strdup(val) : NULL;
-    e->anchor = anchor ? strdup(anchor) : NULL;
-    e->tag = tag ? strdup(tag) : NULL;
-    return e;
-}
-
-static YAMLEvent* event_doc_new(int explicit) {
+YAMLEvent *event_doc_new(int explicit) {
     YAMLEvent *e = event_create(EVENT_DOCUMENT_START);
     if (!e) return NULL;
     e->explicit_start = explicit;
     return e;
 }
 
-static YAMLEvent* event_alias_new(const char *name) {
+YAMLEvent *event_alias_new(const char *name) {
     YAMLEvent *e = event_create(EVENT_ALIAS);
     if (!e) return NULL;
     e->alias_name = name ? strdup(name) : NULL;
     return e;
 }
 
+<<<<<<<< HEAD:src/yaml_event.y
+void event_free(YAMLEvent *e) {
+    if (!e) return;
+    free(e->value);
+    free(e->anchor);
+    free(e->tag);
+    free(e->alias_name);
+    free(e);
+}
+
+void event_print(FILE *out, const YAMLEvent *e) {
+    if (!e) return;
+    
+    switch (e->type) {
+        case EVENT_STREAM_START:
+            fprintf(out, "+STR\n");
+            break;
+        case EVENT_STREAM_END:
+            fprintf(out, "-STR\n");
+            break;
+        case EVENT_DOCUMENT_START:
+            if (e->explicit_start)
+                fprintf(out, "+DOC ---\n");
+            else
+                fprintf(out, "+DOC\n");
+            break;
+        case EVENT_DOCUMENT_END:
+            fprintf(out, "-DOC\n");
+            break;
+        case EVENT_SEQUENCE_START:
+            fprintf(out, "+SEQ");
+            if (e->anchor) fprintf(out, " &%s", e->anchor);
+            if (e->tag) fprintf(out, " <%s>", e->tag);
+            fprintf(out, "\n");
+            break;
+        case EVENT_SEQUENCE_END:
+            fprintf(out, "-SEQ\n");
+            break;
+        case EVENT_MAPPING_START:
+            fprintf(out, "+MAP");
+            if (e->anchor) fprintf(out, " &%s", e->anchor);
+            if (e->tag) fprintf(out, " <%s>", e->tag);
+            fprintf(out, "\n");
+            break;
+        case EVENT_MAPPING_END:
+            fprintf(out, "-MAP\n");
+            break;
+        case EVENT_SCALAR:
+            fprintf(out, "=VAL %c:%s\n", e->quote_style, e->value ? e->value : "");
+            break;
+        case EVENT_ALIAS:
+            fprintf(out, "=ALI *%s\n", e->alias_name ? e->alias_name : "");
+            break;
+    }
+}
+
+/* Global event stream (set by parser) */
+static EventStream *current_stream = NULL;
+========
 %}
 
-
+%define api.prefix {event_yy_}
 
 %union {
     char *sval;   /* String values */
@@ -161,19 +179,16 @@ static YAMLEvent* event_alias_new(const char *name) {
 %token <sval> E_ANCHOR                     /* &anchor */
 %token <sval> E_TAG                        /* <tag> */
 %token <sval> E_QUOTED_STRING E_IDENTIFIER /* "value", plain_value */
-%token <cval> E_STYLE                      /* : " ' | > */
-
-%type <sval> content
-%type <cval> style_val
+%token <cval> E_CHAR                       /* : " ' | > */
 
 %define parse.error detailed
 %locations
 
 %{
-int composition_lex(void);
-void composition_yy_error(const char *msg);
-#define yylex composition_lex
-#define yyerror composition_yy_error
+int stream_lex(void);
+void event_error(const char *msg);
+#define yylex stream_lex
+#define yyerror event_error
 %}
 
 %%
@@ -202,23 +217,10 @@ node : scalar
      | mapping
      ;
 
-scalar : "=VAL" style_val content { push_event(event_scalar_new($2, $3)); free($3); }
-       | "=VAL" style_val { push_event(event_scalar_new($2, NULL)); }
-       | "=VAL" E_ANCHOR[a] style_val content { push_event(event_scalar_complex($3, $4, $a, NULL)); free($4); free($a); }
-       | "=VAL" E_ANCHOR[a] style_val { push_event(event_scalar_complex($3, NULL, $a, NULL)); free($a); }
-       | "=VAL" E_TAG[t] style_val content { push_event(event_scalar_complex($3, $4, NULL, $t)); free($4); free($t); }
-       | "=VAL" E_TAG[t] style_val { push_event(event_scalar_complex($3, NULL, NULL, $t)); free($t); }
-       | "=VAL" E_ANCHOR[a] E_TAG[t] style_val content { push_event(event_scalar_complex($4, $5, $a, $t)); free($5); free($a); free($t); }
-       | "=VAL" E_ANCHOR[a] E_TAG[t] style_val { push_event(event_scalar_complex($4, NULL, $a, $t)); free($a); free($t); }
+scalar : "=VAL" E_CHAR[style] E_QUOTED_STRING[content] { push_event(event_scalar_new($style, $content)); free($content); }
+       | "=VAL" E_CHAR[style] E_IDENTIFIER[content]    { push_event(event_scalar_new($style, $content)); free($content); }
+       | "=VAL" E_CHAR[style]                          { push_event(event_scalar_new($style, NULL)); }
        ;
-
-style_val : E_STYLE ':' { $$ = $1; }
-          | ':'           { $$ = ':'; }
-          ;
-
-content : E_QUOTED_STRING
-        | E_IDENTIFIER
-        ;
 
 alias : "=ALI" E_IDENTIFIER[target] { push_event(event_alias_new($target)); free($target); }
       ;
@@ -256,13 +258,34 @@ void event_error(const char *msg) {
 }
 
 /* Global state for string parsing */
-extern void *composition__scan_string(const char *);
-extern void composition__delete_buffer(void *);
+extern void *stream__scan_string(const char *);
+extern void stream__delete_buffer(void *);
+>>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/event.y
 
+/* Initialize parser */
 int yaml_event_parser_init(void) {
+    current_stream = NULL;
     return 0;
 }
 
+<<<<<<<< HEAD:src/yaml_event.y
+/* Parse event stream from string - moved from yaml_event_parser.c */
+EventStream* yaml_event_parse_string(const char *input) {
+    if (!input) return NULL;
+    
+    /* Create event stream */
+    EventStream *stream = (EventStream *)malloc(sizeof(EventStream));
+    if (!stream) return NULL;
+    
+    stream->events = NULL;
+    stream->count = 0;
+    stream->capacity = 0;
+    
+    /* Parse input string line by line */
+    char *input_copy = strdup(input);
+    if (!input_copy) {
+        free(stream);
+========
 void yaml_event_parser_cleanup(void) {
 }
 
@@ -276,23 +299,119 @@ EventStream* event_parse_string(const char *input) {
     current_stream->capacity = 10;
     current_stream->events = (YAMLEvent **)malloc(current_stream->capacity * sizeof(YAMLEvent *));
 
-    void *buf = composition__scan_string(input);
-    int res = composition_yy_parse();
-    composition__delete_buffer(buf);
+    void *buf = stream__scan_string(input);
+    int res = event_yy_parse();
+    stream__delete_buffer(buf);
 
     if (res != 0) {
         event_stream_free(current_stream);
         current_stream = NULL;
+>>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/event.y
         return NULL;
     }
-
-    EventStream *res_stream = current_stream;
-    current_stream = NULL;
-    return res_stream;
+    
+    char *line = strtok(input_copy, "\n");
+    while (line && *line) {
+        /* Expand capacity if needed */
+        if (stream->count >= stream->capacity) {
+            stream->capacity = stream->capacity * 2 + 10;
+            YAMLEvent **new_events = (YAMLEvent **)realloc(stream->events, 
+                                                           stream->capacity * sizeof(YAMLEvent *));
+            if (!new_events) {
+                free(input_copy);
+                event_stream_free(stream);
+                return NULL;
+            }
+            stream->events = new_events;
+        }
+        
+        /* Parse line into event */
+        YAMLEvent *event = (YAMLEvent *)malloc(sizeof(YAMLEvent));
+        if (!event) {
+            free(input_copy);
+            event_stream_free(stream);
+            return NULL;
+        }
+        
+        /* Initialize event */
+        event->type = EVENT_SCALAR;
+        event->quote_style = '\0';
+        event->value = NULL;
+        event->anchor = NULL;
+        event->tag = NULL;
+        event->explicit_start = 0;
+        event->alias_name = NULL;
+        
+        /* Parse event markers */
+        if (strcmp(line, "+STR") == 0) {
+            event->type = EVENT_STREAM_START;
+        } else if (strcmp(line, "-STR") == 0) {
+            event->type = EVENT_STREAM_END;
+        } else if (strcmp(line, "+DOC") == 0) {
+            event->type = EVENT_DOCUMENT_START;
+        } else if (strcmp(line, "-DOC") == 0) {
+            event->type = EVENT_DOCUMENT_END;
+        } else if (strcmp(line, "+SEQ") == 0) {
+            event->type = EVENT_SEQUENCE_START;
+        } else if (strcmp(line, "-SEQ") == 0) {
+            event->type = EVENT_SEQUENCE_END;
+        } else if (strcmp(line, "+MAP") == 0) {
+            event->type = EVENT_MAPPING_START;
+        } else if (strcmp(line, "-MAP") == 0) {
+            event->type = EVENT_MAPPING_END;
+        } else if (strncmp(line, "=VAL ", 5) == 0) {
+            /* Parse scalar: =VAL [quote_char][value]  or =VAL [quote]:[value] */
+            event->type = EVENT_SCALAR;
+            char *rest = line + 5;
+            
+            if (rest[0] == '"' || rest[0] == '\'') {
+                /* Quoted format: "value" or 'value' */
+                event->quote_style = rest[0];
+                char *end_quote = strchr(rest + 1, rest[0]);
+                if (end_quote) {
+                    size_t len = end_quote - (rest + 1);
+                    event->value = (char *)malloc(len + 1);
+                    strncpy(event->value, rest + 1, len);
+                    event->value[len] = '\0';
+                }
+            } else if (rest[0] == ':') {
+                /* Plain format: :value */
+                event->quote_style = ':';
+                event->value = strdup(rest + 1);
+            } else {
+                /* Format: [quote_char]:[value] where quote_char is literal */
+                char *colon = strchr(rest, ':');
+                if (colon && colon > rest) {
+                    event->quote_style = rest[0];
+                    event->value = strdup(colon + 1);
+                }
+            }
+        } else if (strncmp(line, "=ALI ", 5) == 0) {
+            /* Parse alias: =ALI *name */
+            event->type = EVENT_ALIAS;
+            char *rest = line + 5;
+            if (rest[0] == '*') {
+                event->alias_name = strdup(rest + 1);
+            }
+        }
+        
+        stream->events[stream->count++] = event;
+        line = strtok(NULL, "\n");
+    }
+    
+    free(input_copy);
+    return stream;
 }
 
+/* Cleanup parser */
+void yaml_event_parser_cleanup(void) {
+    current_stream = NULL;
+}
+
+/* Free event stream */
 void event_stream_free(EventStream *stream) {
     if (!stream) return;
+    
     for (int i = 0; i < stream->count; i++) {
         if (stream->events[i]) {
             free(stream->events[i]->value);
@@ -302,10 +421,18 @@ void event_stream_free(EventStream *stream) {
             free(stream->events[i]);
         }
     }
+    
     free(stream->events);
     free(stream);
 }
+%}
 
+<<<<<<<< HEAD:src/yaml_event.y
+/* Lexer value types */
+%union {
+    char *sval;   /* String values */
+    char cval;    /* Character values */
+========
 ValidationResult* rml_parse_event_stream(const EventStream *stream) {
     ValidationResult *result = (ValidationResult*)malloc(sizeof(ValidationResult));
     result->is_valid = (stream != NULL);
@@ -342,16 +469,80 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream) {
         result->intermediate_representation = NULL;
     }
     return result;
+>>>>>>>> 62fd093 (refactor: argv-based pipeline mode selection, cleanup old parsers):src/event.y
 }
 
-void validation_result_free(ValidationResult *result) {
-    if (!result) return;
-    free(result->error_message);
-    free(result->intermediate_representation);
-    free(result);
-}
+/* Token declarations with string literal aliases */
+%token STR_START   "+STR"
+%token STR_END     "-STR"
+%token DOC_START   "+DOC"
+%token DOC_END     "-DOC"
+%token SEQ_START   "+SEQ"
+%token SEQ_END     "-SEQ"
+%token MAP_START   "+MAP"
+%token MAP_END     "-MAP"
+%token VALUE_MARK  "=VAL"
+%token ALIAS_MARK  "=ALI"
+%token <sval> ANCHOR                     /* &anchor */
+%token <sval> TAG                        /* <tag> */
+%token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
+%token <cval> CHAR                       /* : " ' | > */
 
-/* Error handler for composition stage */
-void composition_yy_error(const char *msg) {
-    fprintf(stderr, "[COMPOSITION] Error: %s\n", msg ? msg : "syntax error");
+%define parse.error detailed
+%locations
+
+%%
+
+/* TOP-LEVEL: Parse a stream of events */
+stream : events
+       {
+           /* Document parsed successfully */
+       }
+       ;
+
+/* Sequence of zero or more events */
+events : %empty
+       | events event
+       ;
+
+/* Individual event */
+event : "+STR"
+      | "-STR"
+      | doc_event
+      | collection_start
+      | collection_end
+      | "=VAL" char:CHAR value:QUOTED_STRING
+      | "=VAL" char:CHAR value:IDENTIFIER
+      | "=ALI" name:IDENTIFIER
+      ;
+
+/* Document events */
+doc_event : "+DOC"
+          | "-DOC"
+          ;
+
+/* Collection events with optional anchor/tag */
+collection_start : "+SEQ"
+                 | "+SEQ" anchor:ANCHOR
+                 | "+SEQ" tag:TAG
+                 | "+SEQ" anchor:ANCHOR tag:TAG
+                 | "+MAP"
+                 | "+MAP" anchor:ANCHOR
+                 | "+MAP" tag:TAG
+                 | "+MAP" anchor:ANCHOR tag:TAG
+                 ;
+
+collection_end : "-SEQ"
+               | "-MAP"
+               ;
+
+%%
+
+/* Bison's detailed error messages via %define parse.error detailed
+   are passed as 'msg' parameter to this function.
+   Simply printing them ensures all error information reaches stderr. */
+void yyerror(const char *msg) {
+    if (msg) {
+        fprintf(stderr, "YAML Parse Error: %s\n", msg);
+    }
 }

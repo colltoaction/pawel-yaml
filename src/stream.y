@@ -1,12 +1,15 @@
 %code requires {
 #include "common.h"
-#include "lexer_context.h"
 
-/* Pipeline stage exports */
-int yaml_parse(void);
-int yaml_compose(void);
-int yaml_serialize(void);
-int yaml_present(void);
+/* Stage APIs */
+void stage1_parse(FILE *input, FILE *output);
+void stage1_lex(FILE *input, FILE *output);
+void stage2_parse(FILE *input, FILE *output);
+void stage2_lex(FILE *input, FILE *output);
+
+/* Pipeline stages */
+int parse(FILE *in, FILE *out);
+int lex(FILE *in, FILE *out);
 }
 
 %glr-parser
@@ -24,7 +27,7 @@ int yaml_present(void);
 
 int presentation_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 #define yylex presentation_lex
-void stream_yy_error(void *yylloc, void *scanner, const char *s);
+void stream_error(void *yylloc, void *scanner, const char *s);
 
 /* Output buffer for RML IR */
 char *rml_ir_buf = NULL;
@@ -120,6 +123,11 @@ static void add_alias_event(const char *name) {
 %destructor { free($$); } <string>
 %destructor { free($$.anchor); free($$.tag); } <props>
 
+%glr-parser
+
+%expect 140
+%expect-rr 63
+
 %locations
 %define parse.error detailed
 
@@ -131,9 +139,9 @@ static void add_alias_event(const char *name) {
 %%
 
 stream:
-    { ir = ir_builder_new_memory(); add_event(EVENT_STREAM_START); ir_stream_start(ir); }
+    { ir = ir_builder_new_memory(); add_event(EVENT_STREAM_START); }
     documents
-    { ir_stream_end(ir); rml_ir_buf = ir_builder_finalize(ir); rml_ir_size = strlen(rml_ir_buf); ir_builder_free(ir); ir = NULL; add_event(EVENT_STREAM_END); }
+    { rml_ir_buf = ir_builder_finalize(ir); rml_ir_size = strlen(rml_ir_buf); ir_builder_free(ir); ir = NULL; add_event(EVENT_STREAM_END); }
     ;
 
 documents:
@@ -152,10 +160,11 @@ explicit_document:
     DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
     node
     { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | error { yyerrok; yyclearin; }
     ;
 
 implicit_document:
-    { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); } node { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    node { ir_doc_start(ir); ir_doc_end(ir); add_event(EVENT_DOCUMENT_START); add_event(EVENT_DOCUMENT_END); }
     ;
 
 node:
@@ -182,6 +191,7 @@ node_props:
     ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
     | TAG[t] { $$.anchor = NULL; $$.tag = $t; }
     | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
+    | TAG[t] ANCHOR[a] { $$.anchor = $a; $$.tag = $t; }
     ;
 
 sequence:
@@ -246,67 +256,44 @@ flow_map_entry:
 
 %%
 
-void stream_yy_error(void *yylloc, void *scanner, const char *s) {
+void stream_error(void *yylloc, void *scanner, const char *s) {
     if (s) {
         fprintf(stderr, "Stream Parse Error: %s\n", s);
     }
 }
 
-/* Bison parser entry point */
-extern int event_yy_parse(void);
-
-/* Flex lexer functions */
-extern int presentation_lex_init(void **scanner);
-extern int presentation_lex_init_extra(void *user_defined, void **scanner);
-extern int presentation_lex_destroy(void *scanner);
-extern void presentation_set_in(FILE *in, void *scanner);
-extern void presentation_set_extra(void *extra, void *scanner);
-
-/**
- * Stage 1: Parse - Presentation -> Events
- * Reads YAML from stdin, produces event stream
- */
-int yaml_parse(void) {
-    void *scanner;
-    LexerContext *ctx = lexer_context_new();
-    if (!ctx) {
-        fprintf(stderr, "Failed to create lexer context\n");
-        return 1;
-    }
+int stream_stage_parse(FILE *input_stream, char **ir_buf, size_t *ir_size) {
+    extern int presentation_lex_init(void **scanner);
+    extern int presentation_lex_init_extra(void *user_defined, void **scanner);
+    extern int presentation_lex_destroy(void *scanner);
+    extern void presentation_set_in(FILE *in, void *scanner);
+    extern void presentation_set_extra(void *extra, void *scanner);
     
-    if (presentation_lex_init_extra(ctx, &scanner) != 0) {
-        fprintf(stderr, "Failed to initialize lexer\n");
-        return 1;
+    FILE *input = tmpfile();
+    int c;
+    while ((c = fgetc(input_stream)) != EOF) {
+        fputc(c, input);
     }
-    presentation_set_in(stdin, scanner);
+    rewind(input);
+    
+    LexerContext *ctx = lexer_context_new();
+    void *scanner;
+    presentation_lex_init(&scanner);
+    presentation_set_extra(ctx, scanner);
+    presentation_set_in(input, scanner);
+    
     int result = stream_yy_parse(scanner);
+    
     presentation_lex_destroy(scanner);
     lexer_context_free(ctx);
+    fclose(input);
+    
+    if (ir_buf) *ir_buf = rml_ir_buf;
+    if (ir_size) *ir_size = rml_ir_size;
+    
     return result;
 }
 
-/**
- * Stage 2: Compose - Events -> Representation (IR)
- * Composes IR from event stream
- */
-int yaml_compose(void) {
-    return event_yy_parse();
-}
-
-/**
- * Stage 3: Serialize - Representation -> Events
- * Creates event stream from IR (inverse of compose)
- */
-int yaml_serialize(void) {
-    /* Placeholder - to be implemented */
-    return 0;
-}
-
-/**
- * Stage 4: Present - Events -> Presentation
- * Renders event stream back to YAML text
- */
-int yaml_present(void) {
-    /* Placeholder - to be implemented */
-    return 0;
+int stream_main_parse(void) {
+    return stream_stage_parse(stdin, &rml_ir_buf, &rml_ir_size);
 }
