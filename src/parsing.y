@@ -20,8 +20,24 @@ int yaml_present(void);
 #include <stdarg.h>
 #include "common.h"
 #include "event_parser.h"
-#include "ir_builder.h"
 #include "lexer_context.h"
+
+/* === TYPE DEFINITIONS (from ir_builder.h) === */
+/**
+ * IRBuilder: Encapsulates output destination for RML IR
+ * Supports two modes: file mode (direct output) and memory mode (buffer)
+ */
+typedef struct {
+    FILE *out;              /* Output stream for IR (file mode) */
+    char *buffer;           /* Internal buffer (memory mode) */
+    size_t buffer_size;     /* Current buffer size */
+    size_t buffer_cap;      /* Buffer capacity */
+} IRBuilder;
+
+/* === EXTERNAL DECLARATIONS FROM scanning.l === */
+/* These are defined in scanning.l as non-static functions */
+extern LexerContext *lexer_context_new(void);
+extern void lexer_context_free(LexerContext *ctx);
 
 int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 #define yylex scanning_lex
