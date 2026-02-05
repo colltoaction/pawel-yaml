@@ -88,9 +88,6 @@ $(BUILD_DIR)/lexer_context.o: $(SRC_DIR)/lexer_context.c $(SRC_DIR)/lexer_contex
 $(BUILD_DIR)/ir_builder.o: $(SRC_DIR)/ir_builder.c $(SRC_DIR)/ir_builder.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/pipeline.o: $(SRC_DIR)/pipeline.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
 # ============================================================================
 # Linking
 # ============================================================================
