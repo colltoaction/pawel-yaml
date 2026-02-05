@@ -12,6 +12,9 @@ extern int presentation_lex_init_extra(LexerContext *user_defined, void **scanne
 extern int presentation_lex_destroy(void *scanner);
 extern void presentation_set_in(FILE *in_str, void *scanner);
 
+/* Lexer context creation */
+extern LexerContext *lexer_context_new(void);
+
 /* Error handler for Bison parser */
 void stream_yy_error(void *yylloc, void *scanner, const char *msg) {
     fprintf(stderr, "Parse error: %s\n", msg);
@@ -28,23 +31,19 @@ static int stage3_complete = 0;
  */
 int yaml_parse(void) {
     void *scanner;
-    LexerContext *ctx = (LexerContext *)malloc(sizeof(LexerContext));
+    LexerContext *ctx = lexer_context_new();
     if (!ctx) {
-        fprintf(stderr, "Failed to allocate lexer context\n");
+        fprintf(stderr, "Failed to create lexer context\n");
         return 1;
     }
-    /* Initialize context to zero */
-    memset(ctx, 0, sizeof(LexerContext));
     
     if (presentation_lex_init_extra(ctx, &scanner) != 0) {
         fprintf(stderr, "Failed to initialize lexer\n");
-        free(ctx);
         return 1;
     }
     presentation_set_in(stdin, scanner);
     int result = stream_yy_parse(scanner);
     presentation_lex_destroy(scanner);
-    /* Note: ctx memory is owned by the lexer scanner, don't free separately */
     if (result != 0) return 1;
     stage1_complete = 1;
     return 0;

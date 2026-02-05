@@ -11,7 +11,7 @@ extern int yaml_serialize(void);
 /* Stage 4: Present - Events -> Presentation */
 extern int yaml_present(void);
 
-/* YAML Pipeline with intermediate compilation steps */
+/* YAML Compilation Pipeline with intermediate steps */
 int main(int argc, char **argv) {
     if (yaml_parse() != 0) return 1;
     if (argc > 1 && strcmp(argv[1], "-dump-tokens") == 0) return 0;
