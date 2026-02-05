@@ -8,7 +8,7 @@
 #define YYLTYPE STREAM_YY_LTYPE
 
 /* Forward declaration for error handling */
-void stream_error(void *yylloc, void *scanner, const char *msg);
+void stream_yy_error(void *yylloc, void *scanner, const char *msg);
 
 /* Lexer context - replaces all global variables */
 #define CTX yyextra
@@ -268,7 +268,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     \\0 { append_scalar(CTX, "\0", 1); }
     
     \\[^ntr\\\"\/0] {
-        stream_error(NULL, yyscanner, "syntax error, invalid escape sequence");
+        stream_yy_error(NULL, yyscanner, "syntax error, invalid escape sequence");
         /* Return something that triggers an error in parser */
         return SCALAR; 
     }
@@ -277,7 +277,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     \n { append_scalar(CTX, "\n", 1); }
     
     <<EOF>> {
-        stream_error(NULL, yyscanner, "syntax error, unterminated quoted string");
+        stream_yy_error(NULL, yyscanner, "syntax error, unterminated quoted string");
         BEGIN(INITIAL);
         return SCALAR;
     }
@@ -520,7 +520,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 "#" {
     if (!check_comment_valid(CTX)) {
-        stream_error(NULL, yyscanner, "syntax error, comment without preceding whitespace");
+        stream_yy_error(NULL, yyscanner, "syntax error, comment without preceding whitespace");
         /* Triggering error */
         return SCALAR;
     }

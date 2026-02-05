@@ -27,7 +27,7 @@ int lex(FILE *in, FILE *out);
 
 int presentation_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 #define yylex presentation_lex
-void stream_error(void *yylloc, void *scanner, const char *s);
+void stream_yy_error(void *yylloc, void *scanner, const char *s);
 
 /* Output buffer for RML IR */
 char *rml_ir_buf = NULL;
@@ -249,7 +249,7 @@ flow_map_entry:
 
 %%
 
-void stream_error(void *yylloc, void *scanner, const char *s) {
+void stream_yy_error(void *yylloc, void *scanner, const char *s) {
     if (s) {
         fprintf(stderr, "Stream Parse Error: %s\n", s);
     }
