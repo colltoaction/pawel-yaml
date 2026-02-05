@@ -34,27 +34,34 @@ int parse(FILE *in, FILE *out) {
 /**
  * Stage 2: RML IR -> Event Stream
  */
-void lex(FILE *in, FILE *out) {
-    if (stage2_events) return; /* Already done */
-    if (!stage1_ir) parse(in, out); /* Ensure dependency */
+int lex(FILE *in, FILE *out) {
+    if (stage2_events) return 0; /* Already done */
+    if (!stage1_ir) {
+        int ret = parse(in, out);
+        if (ret != 0) return 1; /* Depend on parse success */
+    }
 
-    fprintf(stderr, "Starting lex\n");
+    fprintf(stderr, "lex called\n");
 
     yaml_event_parser_init();
     stage2_events = yaml_event_parse_string(stage1_ir);
     yaml_event_parser_cleanup();
 
     if (!stage2_events) {
-        exit(1);
+        return 1;  /* Return error code instead of exiting */
     }
+    return 0;  /* Return success code */
 }
 
 /**
  * Stage 3: Event Stream -> Validation & Canonical Output
  */
-void validate(FILE *in, FILE *out) {
-    if (stage3_result) return; /* Already done */
-    if (!stage2_events) lex(in, out); /* Ensure dependency */
+int validate(FILE *in, FILE *out) {
+    if (stage3_result) return 0; /* Already done */
+    if (!stage2_events) {
+        int ret = lex(in, out);
+        if (ret != 0) return 1;  /* Depend on lex success */
+    }
 
     stage3_result = rml_parse_event_stream(stage2_events);
     
@@ -62,11 +69,12 @@ void validate(FILE *in, FILE *out) {
         if (stage3_result->intermediate_representation) {
             fprintf(out, "%s", stage3_result->intermediate_representation);
         }
+        return 0;  /* Return success code */
     } else {
         if (stage3_result && stage3_result->error_message) {
             fprintf(stderr, "Validation error: %s\n", stage3_result->error_message);
         }
-        exit(1);
+        return 1;  /* Return error code instead of exiting */
     }
 }
 

@@ -2,15 +2,16 @@
 #include <stdlib.h>
 
 extern int parse(FILE *in, FILE *out);
-extern void lex(FILE *in, FILE *out);
-extern void validate(FILE *in, FILE *out);
+extern int lex(FILE *in, FILE *out);
+extern int validate(FILE *in, FILE *out);
 
 int main(void) {
-    int result = parse(stdin, stdout);
-    lex(stdin, stdout);
-    validate(stdin, stdout);
+    int parse_result = parse(stdin, stdout);
+    int lex_result = lex(stdin, stdout);
+    int validate_result = validate(stdin, stdout);
     
-    if (result == 0) {
+    /* Return success only if all stages succeed */
+    if (parse_result == 0 && lex_result == 0 && validate_result == 0) {
         return EXIT_SUCCESS;
     } else {
         return EXIT_FAILURE;

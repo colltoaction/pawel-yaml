@@ -10,7 +10,7 @@ int yaml_pipeline_run(FILE *input, FILE *output);
 
 /* Minimalist API */
 int parse(FILE *in, FILE *out);
-void lex(FILE *in, FILE *out);
-void validate(FILE *in, FILE *out);
+int lex(FILE *in, FILE *out);
+int validate(FILE *in, FILE *out);
 
 #endif
