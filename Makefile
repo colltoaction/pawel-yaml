@@ -56,13 +56,21 @@ directories:
 	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR) $(TMP_DIR) $(LOG_DIR)
 
 # ============================================================================
+# Token Definitions: Generate tokens.tab.h from tokens.y
+# This must be built first as other parsers depend on it
+# ============================================================================
+
+$(GEN_INC_DIR)/tokens.tab.h: $(SRC_DIR)/tokens.y | directories
+	$(BISON) -d -o $(GEN_SRC_DIR)/tokens.tab.c --defines=$(GEN_INC_DIR)/tokens.tab.h $<
+
+# ============================================================================
 # Parser Generation: Bison & Flex
 # Pattern: Each parser NAME produces:
 #   - $(GEN_SRC_DIR)/NAME.tab.c + $(GEN_INC_DIR)/NAME.tab.h (from NAME.y)
 #   - $(GEN_SRC_DIR)/NAME.lex.c (from NAME.l, depends on .tab.h)
 # ============================================================================
 
-$(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y
+$(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y $(GEN_INC_DIR)/tokens.tab.h
 	$(BISON) -d -o $(GEN_SRC_DIR)/$*.tab.c --defines=$(GEN_INC_DIR)/$*.tab.h $<
 
 $(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h

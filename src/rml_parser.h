@@ -17,10 +17,8 @@ typedef struct {
     char *intermediate_representation;
 } ValidationResult;
 
-/* Validate EventStream against RML grammar */
+/* Stage 3 API */
 ValidationResult* rml_parse_event_stream(const EventStream *stream);
-
-/* Free validation result */
 void validation_result_free(ValidationResult *result);
 
 #endif

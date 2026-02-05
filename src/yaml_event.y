@@ -158,6 +158,8 @@ int yaml_event_parser_init(void) {
 
 /* Parse event stream from string - moved from yaml_event_parser.c */
 EventStream* yaml_event_parse_string(const char *input) {
+    yaml_event_parser_init();
+    
     if (!input) return NULL;
     
     /* Create event stream */
@@ -337,9 +339,9 @@ event : "+STR"
       | doc_event
       | collection_start
       | collection_end
-      | "=VAL" char:CHAR value:QUOTED_STRING
-      | "=VAL" char:CHAR value:IDENTIFIER
-      | "=ALI" name:IDENTIFIER
+      | "=VAL" CHAR[style] QUOTED_STRING[content]
+      | "=VAL" CHAR[style] IDENTIFIER[content]
+      | "=ALI" IDENTIFIER[target]
       ;
 
 /* Document events */
@@ -349,13 +351,13 @@ doc_event : "+DOC"
 
 /* Collection events with optional anchor/tag */
 collection_start : "+SEQ"
-                 | "+SEQ" anchor:ANCHOR
-                 | "+SEQ" tag:TAG
-                 | "+SEQ" anchor:ANCHOR tag:TAG
+                 | "+SEQ" ANCHOR[name]
+                 | "+SEQ" TAG[uri]
+                 | "+SEQ" ANCHOR[name] TAG[uri]
                  | "+MAP"
-                 | "+MAP" anchor:ANCHOR
-                 | "+MAP" tag:TAG
-                 | "+MAP" anchor:ANCHOR tag:TAG
+                 | "+MAP" ANCHOR[name]
+                 | "+MAP" TAG[uri]
+                 | "+MAP" ANCHOR[name] TAG[uri]
                  ;
 
 collection_end : "-SEQ"
