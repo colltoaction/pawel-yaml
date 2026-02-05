@@ -1,5 +1,28 @@
 %code requires {
-#include "common.h"
+/* === TYPE DEFINITIONS (from common.h) === */
+/**
+ * Node properties structure for anchor/tag pairs
+ */
+typedef struct {
+    char *anchor;
+    char *tag;
+} NodeProps;
+
+/**
+ * Stable Event Types (Alphabet for all stages)
+ */
+typedef enum {
+    EVENT_STREAM_START = 300,
+    EVENT_STREAM_END,
+    EVENT_DOCUMENT_START,
+    EVENT_DOCUMENT_END,
+    EVENT_SEQUENCE_START,
+    EVENT_SEQUENCE_END,
+    EVENT_MAPPING_START,
+    EVENT_MAPPING_END,
+    EVENT_SCALAR,
+    EVENT_ALIAS,
+} YAMLEventType;
 }
 
 %{

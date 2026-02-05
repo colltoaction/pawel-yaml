@@ -1,6 +1,57 @@
+%code top {
+/* Type definitions are in %code requires and included via parsing.tab.h */
+}
+
 %code requires {
-#include "common.h"
 #include "lexer_context.h"
+
+/* === TYPE DEFINITIONS (from common.h) === */
+/**
+ * Node properties structure for anchor/tag pairs
+ */
+typedef struct {
+    char *anchor;
+    char *tag;
+} NodeProps;
+
+/**
+ * Stable Event Types (Alphabet for all stages)
+ */
+typedef enum {
+    EVENT_STREAM_START = 300,
+    EVENT_STREAM_END,
+    EVENT_DOCUMENT_START,
+    EVENT_DOCUMENT_END,
+    EVENT_SEQUENCE_START,
+    EVENT_SEQUENCE_END,
+    EVENT_MAPPING_START,
+    EVENT_MAPPING_END,
+    EVENT_SCALAR,
+    EVENT_ALIAS,
+} YAMLEventType;
+
+/* === TYPE DEFINITIONS (from event_parser.h) === */
+/**
+ * Individual YAML event representation
+ */
+typedef struct {
+    YAMLEventType type;
+    char quote_style;
+    char *value;
+    char *anchor;
+    char *tag;
+    int explicit_start;
+    char *alias_name;
+} YAMLEvent;
+
+/**
+ * Event stream container
+ */
+typedef struct {
+    YAMLEvent **events;
+    int count;
+    int capacity;
+} EventStream;
 
 /* Pipeline stage exports */
 int yaml_parse(void);
@@ -18,9 +69,10 @@ int yaml_present(void);
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include "common.h"
-#include "event_parser.h"
 #include "lexer_context.h"
+#include "parsing.tab.h"  /* Include generated header for type definitions */
+
+/* Types are declared in %code requires and included via parsing.tab.h */
 
 /* === TYPE DEFINITIONS (from ir_builder.h) === */
 /**

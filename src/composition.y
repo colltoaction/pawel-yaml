@@ -1,12 +1,72 @@
+%code requires {
+/* === TYPE DEFINITIONS (from common.h & event_parser.h) === */
+
+/**
+ * Node properties structure for anchor/tag pairs
+ */
+typedef struct {
+    char *anchor;
+    char *tag;
+} NodeProps;
+
+/**
+ * Stable Event Types (Alphabet for all stages)
+ * Matches values expected in event stream (300+)
+ */
+typedef enum {
+    EVENT_STREAM_START = 300,
+    EVENT_STREAM_END,
+    EVENT_DOCUMENT_START,
+    EVENT_DOCUMENT_END,
+    EVENT_SEQUENCE_START,
+    EVENT_SEQUENCE_END,
+    EVENT_MAPPING_START,
+    EVENT_MAPPING_END,
+    EVENT_SCALAR,
+    EVENT_ALIAS,
+} YAMLEventType;
+
+/**
+ * Individual YAML event representation
+ */
+typedef struct {
+    YAMLEventType type;
+    char quote_style;
+    char *value;
+    char *anchor;
+    char *tag;
+    int explicit_start;
+    char *alias_name;
+} YAMLEvent;
+
+/**
+ * Event stream container
+ */
+typedef struct {
+    YAMLEvent **events;
+    int count;
+    int capacity;
+} EventStream;
+
+/**
+ * Validation result after RML parsing
+ */
+typedef struct {
+    int is_valid;
+    char *error_message;
+    int error_line;
+    char *intermediate_representation;
+} ValidationResult;
+}
+
 %{
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include "event_parser.h"
+#include "composition.tab.h"  /* Include for type definitions */
 
-/**
- * YAML Event Stream & RML Validation (Unified Stage 2 & 3)
- */
+/* Forward declaration for cleanup function */
+void event_stream_free(EventStream *stream);
 
 /* Intermediate EventStream being built */
 static EventStream *current_stream = NULL;
