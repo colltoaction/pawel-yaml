@@ -1,17 +1,250 @@
 %{
-#include "stream.tab.h"
+#include "parsing.tab.h"
 #include "lexer_context.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
-#define YYSTYPE STREAM_YY_STYPE
-#define YYLTYPE STREAM_YY_LTYPE
+#define YYSTYPE PARSING_YY_STYPE
+#define YYLTYPE PARSING_YY_LTYPE
 
 /* Forward declaration for error handling */
-void stream_yy_error(void *yylloc, void *scanner, const char *msg);
+void parsing_yy_error(void *yylloc, void *scanner, const char *msg);
 
 /* Lexer context - replaces all global variables */
 #define CTX yyextra
+
+/* === INLINED: lexer_context.c - Unified Lexer State Management === */
+
+/**
+ * Create a new lexer context with default initialization
+ */
+LexerContext *lexer_context_new(void) {
+    LexerContext *ctx = (LexerContext*)malloc(sizeof(LexerContext));
+    if (!ctx) return NULL;
+    
+    /* Initialize indentation tracking */
+    ctx->indent_stack[0] = 0;
+    ctx->indent_sp = 0;
+    
+    /* Initialize flow and value tracking */
+    ctx->flow_level = 0;
+    ctx->expecting_value = 0;
+    ctx->pending_dedents = 0;
+    
+    /* Initialize document state */
+    ctx->first_line = 1;
+    ctx->last_was_value = 0;
+    
+    /* Initialize block scalar state */
+    ctx->block_scalar.type = '\0';
+    ctx->block_scalar.indent = -1;
+    
+    /* Initialize scalar accumulation buffer */
+    ctx->scalar.content = (char*)malloc(1024);
+    ctx->scalar.len = 0;
+    ctx->scalar.cap = 1024;
+    if (ctx->scalar.content) {
+        ctx->scalar.content[0] = '\0';
+    }
+    
+    /* Initialize indent context stack */
+    ctx->indent_context_sp = 0;
+    ctx->scalar_base_indent = 0;
+    ctx->scalar_type = '\0';
+    
+    return ctx;
+}
+
+/**
+ * Create a new lexer context with argc/argv for mode selection
+ */
+static LexerContext *lexer_context_new_with_args(int argc, char **argv) {
+    LexerContext *ctx = lexer_context_new();
+    if (ctx) {
+        ctx->argc = argc;
+        ctx->argv = argv;
+    }
+    return ctx;
+}
+
+/**
+ * Free lexer context and all associated resources
+ */
+void lexer_context_free(LexerContext *ctx) {
+    if (ctx) {
+        if (ctx->scalar.content) {
+            free(ctx->scalar.content);
+        }
+        free(ctx);
+    }
+}
+
+/**
+ * Reset context for a new document stream
+ * Preserves allocated buffers but resets state
+ */
+static void lexer_context_reset(LexerContext *ctx) {
+    if (!ctx) return;
+    
+    ctx->indent_stack[0] = 0;
+    ctx->indent_sp = 0;
+    ctx->flow_level = 0;
+    ctx->expecting_value = 0;
+    ctx->pending_dedents = 0;
+    ctx->first_line = 1;
+    ctx->last_was_value = 0;
+    
+    ctx->block_scalar.type = '\0';
+    ctx->block_scalar.indent = -1;
+    
+    ctx->scalar.len = 0;
+    if (ctx->scalar.content) {
+        ctx->scalar.content[0] = '\0';
+    }
+    
+    ctx->indent_context_sp = 0;
+    ctx->scalar_base_indent = 0;
+    ctx->scalar_type = '\0';
+}
+
+/**
+ * Push a new indentation level onto the stack
+ * Implements bounds checking to prevent overflow
+ */
+static void ctx_push_indent(LexerContext *ctx, int col) {
+    if (!ctx) return;
+    if (ctx->indent_sp < 99) {
+        ctx->indent_stack[++ctx->indent_sp] = col;
+    }
+}
+
+/**
+ * Pop the current indentation level from the stack
+ * Returns the popped value, or 0 if stack is empty
+ */
+static int ctx_pop_indent(LexerContext *ctx) {
+    if (!ctx) return 0;
+    return (ctx->indent_sp > 0) ? ctx->indent_stack[ctx->indent_sp--] : 0;
+}
+
+/**
+ * Get the current indentation level without modifying the stack
+ */
+static int ctx_current_indent(const LexerContext *ctx) {
+    if (!ctx) return 0;
+    return ctx->indent_stack[ctx->indent_sp];
+}
+
+/**
+ * Push an indentation context for multiline scalar tracking
+ */
+static void ctx_push_indent_context(LexerContext *ctx, int level, int is_flow, char type) {
+    if (!ctx) return;
+    if (ctx->indent_context_sp < 99) {
+        ctx->indent_context_stack[ctx->indent_context_sp].level = level;
+        ctx->indent_context_stack[ctx->indent_context_sp].is_flow = is_flow;
+        ctx->indent_context_stack[ctx->indent_context_sp].context_type = type;
+        ctx->indent_context_sp++;
+    }
+}
+
+/**
+ * Pop the current indentation context
+ */
+static void ctx_pop_indent_context(LexerContext *ctx) {
+    if (!ctx) return;
+    if (ctx->indent_context_sp > 0) {
+        ctx->indent_context_sp--;
+    }
+}
+
+/**
+ * Check if we're currently in a flow context
+ */
+static int ctx_in_flow_context(const LexerContext *ctx) {
+    if (!ctx) return 0;
+    return ctx->flow_level > 0 || 
+           (ctx->indent_context_sp > 0 && 
+            ctx->indent_context_stack[ctx->indent_context_sp - 1].is_flow);
+}
+
+/**
+ * Initialize scalar accumulation buffer
+ * Resets length to 0 but preserves allocated capacity
+ */
+static void ctx_scalar_init(LexerContext *ctx) {
+    if (!ctx) return;
+    ctx->scalar.len = 0;
+    if (ctx->scalar.content) {
+        ctx->scalar.content[0] = '\0';
+    }
+}
+
+/**
+ * Grow scalar buffer if needed to accommodate additional data
+ */
+static void ctx_try_grow_scalar(LexerContext *ctx, int additional_size) {
+    if (!ctx || !ctx->scalar.content) return;
+    
+    int required = ctx->scalar.len + additional_size + 2;  /* +2 for null terminator and safety */
+    if (required >= ctx->scalar.cap) {
+        /* Double capacity until sufficient */
+        while (ctx->scalar.cap < required) {
+            ctx->scalar.cap *= 2;
+        }
+        ctx->scalar.content = (char*)realloc(ctx->scalar.content, ctx->scalar.cap);
+    }
+}
+
+/**
+ * Append text to scalar accumulation buffer
+ * Automatically grows buffer if needed
+ */
+static void ctx_scalar_append(LexerContext *ctx, const char *text, int len) {
+    if (!ctx || !text || len <= 0) return;
+    
+    ctx_try_grow_scalar(ctx, len);
+    if (!ctx->scalar.content) return;
+    
+    memcpy(ctx->scalar.content + ctx->scalar.len, text, len);
+    ctx->scalar.len += len;
+    ctx->scalar.content[ctx->scalar.len] = '\0';
+}
+
+/**
+ * Finalize scalar and return a copy of the accumulated text
+ * Resets the buffer for next use
+ */
+static char *ctx_scalar_finalize(LexerContext *ctx) {
+    if (!ctx || !ctx->scalar.content) return strdup("");
+    
+    char *result = strdup(ctx->scalar.content);
+    ctx_scalar_init(ctx);
+    return result;
+}
+
+/**
+ * Start block scalar accumulation
+ * Sets type ('|' or '>') and initializes buffer
+ */
+static void ctx_block_scalar_start(LexerContext *ctx, char type) {
+    if (!ctx) return;
+    ctx->block_scalar.type = type;
+    ctx->block_scalar.indent = -1;
+    ctx_scalar_init(ctx);
+}
+
+/**
+ * Append a line to block scalar with newline
+ */
+static void ctx_block_scalar_append(LexerContext *ctx, const char *line, int len) {
+    if (!ctx || !line) return;
+    ctx_scalar_append(ctx, line, len);
+    ctx_scalar_append(ctx, "\n", 1);
+}
+
+/* === END INLINED: lexer_context.c === */
 
 /* Check if UTF-8 bytes represent visible space U+2423 */
 static int is_visible_space(const unsigned char *s) {
@@ -72,13 +305,14 @@ static void append_block_line(LexerContext *ctx, const char *line, int len) {
     ctx_block_scalar_append(ctx, line, len);
 }
 
+
 %}
 
 %option noyywrap
 %option reentrant
 %option bison-bridge
 %option bison-locations
-%option prefix="presentation_"
+%option prefix="scanning_"
 %option extra-type="LexerContext *"
 
 %x BLOCK_SCALAR
@@ -268,7 +502,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     \\0 { append_scalar(CTX, "\0", 1); }
     
     \\[^ntr\\\"\/0] {
-        stream_yy_error(NULL, yyscanner, "syntax error, invalid escape sequence");
+        parsing_yy_error(NULL, yyscanner, "syntax error, invalid escape sequence");
         /* Return something that triggers an error in parser */
         return SCALAR; 
     }
@@ -277,7 +511,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     \n { append_scalar(CTX, "\n", 1); }
     
     <<EOF>> {
-        stream_yy_error(NULL, yyscanner, "syntax error, unterminated quoted string");
+        parsing_yy_error(NULL, yyscanner, "syntax error, unterminated quoted string");
         BEGIN(INITIAL);
         return SCALAR;
     }
@@ -520,7 +754,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 "#" {
     if (!check_comment_valid(CTX)) {
-        stream_yy_error(NULL, yyscanner, "syntax error, comment without preceding whitespace");
+        parsing_yy_error(NULL, yyscanner, "syntax error, comment without preceding whitespace");
         /* Triggering error */
         return SCALAR;
     }

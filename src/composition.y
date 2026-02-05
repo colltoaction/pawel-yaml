@@ -67,7 +67,7 @@ static YAMLEvent* event_alias_new(const char *name) {
 
 %}
 
-%define api.prefix {event_yy_}
+%define api.prefix {composition_yy_}
 
 %union {
     char *sval;   /* String values */
@@ -95,10 +95,10 @@ static YAMLEvent* event_alias_new(const char *name) {
 %locations
 
 %{
-int stream_lex(void);
-void event_error(const char *msg);
-#define yylex stream_lex
-#define yyerror event_error
+int composition_lex(void);
+void composition_yy_error(const char *msg);
+#define yylex composition_lex
+#define yyerror composition_yy_error
 %}
 
 %%
@@ -168,8 +168,8 @@ void event_error(const char *msg) {
 }
 
 /* Global state for string parsing */
-extern void *stream__scan_string(const char *);
-extern void stream__delete_buffer(void *);
+extern void *composition__scan_string(const char *);
+extern void composition__delete_buffer(void *);
 
 int yaml_event_parser_init(void) {
     return 0;
@@ -188,9 +188,9 @@ EventStream* event_parse_string(const char *input) {
     current_stream->capacity = 10;
     current_stream->events = (YAMLEvent **)malloc(current_stream->capacity * sizeof(YAMLEvent *));
 
-    void *buf = stream__scan_string(input);
-    int res = event_yy_parse();
-    stream__delete_buffer(buf);
+    void *buf = composition__scan_string(input);
+    int res = composition_yy_parse();
+    composition__delete_buffer(buf);
 
     if (res != 0) {
         event_stream_free(current_stream);
@@ -261,4 +261,9 @@ void validation_result_free(ValidationResult *result) {
     free(result->error_message);
     free(result->intermediate_representation);
     free(result);
+}
+
+/* Error handler for composition stage */
+void composition_yy_error(const char *msg) {
+    fprintf(stderr, "Composition error: %s\n", msg);
 }

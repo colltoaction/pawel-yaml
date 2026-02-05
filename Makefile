@@ -19,27 +19,25 @@ PLAY_DIR = $(LIB_DIR)/yaml-play
 SUITE_DIR = $(LIB_DIR)/yaml-test-suite
 
 # Parser and Lexer definitions
-PARSERS = stream event
-LEXERS = presentation stream
+# LOAD process: scanning → parsing → composition
+PARSERS = parsing composition
+LEXERS = scanning composition
 
 # Generated parser files
-STREAM_TAB_C = $(GEN_SRC_DIR)/stream.tab.c
-STREAM_TAB_H = $(GEN_INC_DIR)/stream.tab.h
-EVENT_TAB_C = $(GEN_SRC_DIR)/event.tab.c
-EVENT_TAB_H = $(GEN_INC_DIR)/event.tab.h
+PARSING_TAB_C = $(GEN_SRC_DIR)/parsing.tab.c
+PARSING_TAB_H = $(GEN_INC_DIR)/parsing.tab.h
+COMPOSITION_TAB_C = $(GEN_SRC_DIR)/composition.tab.c
+COMPOSITION_TAB_H = $(GEN_INC_DIR)/composition.tab.h
 
 # Object files
-PARSER_OBJS = $(BUILD_DIR)/stream.tab.o $(BUILD_DIR)/presentation.lex.o \
-              $(BUILD_DIR)/event.tab.o $(BUILD_DIR)/stream.lex.o
+PARSER_OBJS = $(BUILD_DIR)/parsing.tab.o $(BUILD_DIR)/scanning.lex.o \
+              $(BUILD_DIR)/composition.tab.o $(BUILD_DIR)/composition.lex.o
 
 # TDD & testing artifacts
 TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
-# Custom C source files for refactored architecture
-CUSTOM_OBJS = $(BUILD_DIR)/lexer_context.o $(BUILD_DIR)/ir_builder.o
-
-OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o $(CUSTOM_OBJS)
+OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o
 
 TARGET = $(BIN_DIR)/pawel-yaml
 
@@ -62,10 +60,10 @@ $(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h | directories
 	$(FLEX) -o $@ $<
 
 # Explicit lexer rules (non-standard naming)
-$(GEN_SRC_DIR)/presentation.lex.c: $(SRC_DIR)/presentation.l $(STREAM_TAB_H) | directories
+$(GEN_SRC_DIR)/scanning.lex.c: $(SRC_DIR)/scanning.l $(PARSING_TAB_H) | directories
 	$(FLEX) -o $@ $<
 
-$(GEN_SRC_DIR)/stream.lex.c: $(SRC_DIR)/stream.l $(EVENT_TAB_H) | directories
+$(GEN_SRC_DIR)/composition.lex.c: $(SRC_DIR)/composition.l $(COMPOSITION_TAB_H) | directories
 	$(FLEX) -o $@ $<
 
 # ============================================================================
@@ -75,17 +73,10 @@ $(GEN_SRC_DIR)/stream.lex.c: $(SRC_DIR)/stream.l $(EVENT_TAB_H) | directories
 $(BUILD_DIR)/%.o: $(GEN_SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/stream.tab.o: $(GEN_SRC_DIR)/stream.tab.c $(GEN_INC_DIR)/event.tab.h
+$(BUILD_DIR)/parsing.tab.o: $(GEN_SRC_DIR)/parsing.tab.c $(GEN_INC_DIR)/composition.tab.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(STREAM_TAB_H)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-$(BUILD_DIR)/lexer_context.o: $(SRC_DIR)/lexer_context.c $(SRC_DIR)/lexer_context.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/ir_builder.o: $(SRC_DIR)/ir_builder.c $(SRC_DIR)/ir_builder.h
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(PARSING_TAB_H)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================================
@@ -114,9 +105,9 @@ deepclean:
 
 test-event: directories
 	@echo "Compiling event unit tests..."
-	$(BISON) -d -o $(BUILD_DIR)/src/event.tab.c --defines=$(GEN_INC_DIR)/event.tab.h src/event.y
-	$(CC) $(CFLAGS) -c $(BUILD_DIR)/src/event.tab.c -o $(BUILD_DIR)/event.tab.o
-	$(CC) $(CFLAGS) -g test_yaml_event.c test_yaml_event_stubs.c $(BUILD_DIR)/event.tab.o -o test_yaml_event
+	$(BISON) -d -o $(BUILD_DIR)/src/composition.tab.c --defines=$(GEN_INC_DIR)/composition.tab.h src/composition.y
+	$(CC) $(CFLAGS) -c $(BUILD_DIR)/src/composition.tab.c -o $(BUILD_DIR)/composition.tab.o
+	$(CC) $(CFLAGS) -g test_yaml_event.c test_yaml_event_stubs.c $(BUILD_DIR)/composition.tab.o -o test_yaml_event
 
 test-unit: test-event
 	@echo "Running unit tests..."

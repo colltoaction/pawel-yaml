@@ -1,11 +1,11 @@
 %{
 #include <string.h>
-#include "event.tab.h"
-#define yylval event_yy_lval
+#include "composition.tab.h"
+#define yylval composition_yy_lval
 %}
 
 %option noyywrap yylineno
-%option prefix="stream_"
+%option prefix="composition_"
 
 %%
 

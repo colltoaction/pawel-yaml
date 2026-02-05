@@ -17,14 +17,15 @@ int yaml_present(void);
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include "common.h"
 #include "event_parser.h"
 #include "ir_builder.h"
 #include "lexer_context.h"
 
-int presentation_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
-#define yylex presentation_lex
-void stream_yy_error(void *yylloc, void *scanner, const char *s);
+int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
+#define yylex scanning_lex
+void parsing_yy_error(void *yylloc, void *scanner, const char *s);
 
 /* Output buffer for RML IR */
 char *rml_ir_buf = NULL;
@@ -97,10 +98,258 @@ static void add_alias_event(const char *name) {
     current_event_stream->events[current_event_stream->count++] = evt;
 }
 
+/* === INLINED: ir_builder.c - RML IR Builder Implementation === */
+
+/**
+ * Internal helper: Write formatted output to IR builder
+ */
+static void ir_write(IRBuilder *b, const char *format, ...) {
+    if (!b) return;
+    
+    va_list args;
+    va_start(args, format);
+    
+    if (b->out) {
+        /* File mode: direct output to stream */
+        vfprintf(b->out, format, args);
+    } else if (b->buffer) {
+        /* Memory mode: append to buffer */
+        va_list args_copy;
+        va_copy(args_copy, args);
+        
+        /* Calculate required space */
+        int needed = vsnprintf(NULL, 0, format, args_copy);
+        va_end(args_copy);
+        
+        /* Grow buffer if needed */
+        if (b->buffer_size + needed + 1 >= b->buffer_cap) {
+            while (b->buffer_cap < b->buffer_size + needed + 1) {
+                b->buffer_cap *= 2;
+            }
+            b->buffer = (char*)realloc(b->buffer, b->buffer_cap);
+        }
+        
+        /* Write to buffer */
+        vsprintf(b->buffer + b->buffer_size, format, args);
+        b->buffer_size += needed;
+    }
+    
+    va_end(args);
+}
+
+/**
+ * Create IR builder for file output
+ */
+static IRBuilder *ir_builder_new_file(FILE *out) {
+    IRBuilder *b = (IRBuilder*)malloc(sizeof(IRBuilder));
+    if (!b) return NULL;
+    
+    b->out = out;
+    b->buffer = NULL;
+    b->buffer_size = 0;
+    b->buffer_cap = 0;
+    
+    return b;
+}
+
+/**
+ * Create IR builder for memory output
+ */
+static IRBuilder *ir_builder_new_memory(void) {
+    IRBuilder *b = (IRBuilder*)malloc(sizeof(IRBuilder));
+    if (!b) return NULL;
+    
+    b->out = NULL;
+    b->buffer_cap = 4096;
+    b->buffer = (char*)malloc(b->buffer_cap);
+    b->buffer_size = 0;
+    if (b->buffer) {
+        b->buffer[0] = '\0';
+    }
+    
+    return b;
+}
+
+/**
+ * Free IR builder resources
+ */
+static void ir_builder_free(IRBuilder *b) {
+    if (b) {
+        if (b->buffer) {
+            free(b->buffer);
+        }
+        free(b);
+    }
+}
+
+/**
+ * Finalize and retrieve memory buffer
+ * Caller owns the returned string and must free() it
+ * Returns NULL in file mode
+ */
+static char *ir_builder_finalize(IRBuilder *b) {
+    if (!b || !b->buffer) return NULL;
+    
+    char *result = strdup(b->buffer);
+    b->buffer_size = 0;
+    if (b->buffer) {
+        b->buffer[0] = '\0';
+    }
+    
+    return result;
+}
+
+/**
+ * Stream start marker
+ * Format: +STR
+ */
+static void ir_stream_start(IRBuilder *b) {
+    ir_write(b, "+STR\n");
+}
+
+/**
+ * Stream end marker
+ * Format: -STR
+ */
+static void ir_stream_end(IRBuilder *b) {
+    ir_write(b, "-STR\n");
+}
+
+/**
+ * Document start marker
+ * Format: +DOC
+ */
+static void ir_doc_start(IRBuilder *b) {
+    ir_write(b, "+DOC\n");
+}
+
+/**
+ * Document end marker
+ * Format: -DOC
+ */
+static void ir_doc_end(IRBuilder *b) {
+    ir_write(b, "-DOC\n");
+}
+
+/**
+ * Sequence start with optional properties
+ * Format: +SEQ [&anchor] [!tag]
+ */
+static void ir_seq_start(IRBuilder *b, const char *anchor, const char *tag) {
+    ir_write(b, "+SEQ");
+    if (anchor) ir_write(b, " &%s", anchor);
+    if (tag) ir_write(b, " !%s", tag);
+    ir_write(b, "\n");
+}
+
+/**
+ * Sequence end marker
+ * Format: -SEQ
+ */
+static void ir_seq_end(IRBuilder *b) {
+    ir_write(b, "-SEQ\n");
+}
+
+/**
+ * Mapping start with optional properties
+ * Format: +MAP [&anchor] [!tag]
+ */
+static void ir_map_start(IRBuilder *b, const char *anchor, const char *tag) {
+    ir_write(b, "+MAP");
+    if (anchor) ir_write(b, " &%s", anchor);
+    if (tag) ir_write(b, " !%s", tag);
+    ir_write(b, "\n");
+}
+
+/**
+ * Mapping end marker
+ * Format: -MAP
+ */
+static void ir_map_end(IRBuilder *b) {
+    ir_write(b, "-MAP\n");
+}
+
+/**
+ * Plain scalar value
+ * Format: =VAL ::value
+ */
+static void ir_scalar_plain(IRBuilder *b, const char *value) {
+    if (!value) value = "";
+    ir_write(b, "=VAL :%s\n", value);
+}
+
+/**
+ * Quoted scalar value
+ * Format: =VAL ":value or =VAL ':value
+ */
+static void ir_scalar_quoted(IRBuilder *b, const char *value, char quote) {
+    if (!value) value = "";
+    ir_write(b, "=VAL %c:%s\n", quote, value);
+}
+
+/**
+ * Block scalar value
+ * Format: =VAL |:value or =VAL >:value
+ */
+static void ir_scalar_block(IRBuilder *b, const char *value, char type) {
+    if (!value) value = "";
+    ir_write(b, "=VAL %c:%s\n", type, value);
+}
+
+/**
+ * Empty scalar value
+ * Format: =VAL :
+ */
+static void ir_scalar_empty(IRBuilder *b) {
+    ir_write(b, "=VAL :\n");
+}
+
+/**
+ * Alias reference
+ * Format: =ALI *name
+ */
+static void ir_alias(IRBuilder *b, const char *name) {
+    if (!name) name = "";
+    ir_write(b, "=ALI *%s\n", name);
+}
+
+/**
+ * Anchor property alone
+ * Format: P:&anchor
+ */
+static void ir_prop_anchor(IRBuilder *b, const char *anchor) {
+    if (!anchor) return;
+    ir_write(b, "P:&%s\n", anchor);
+}
+
+/**
+ * Tag property alone
+ * Format: P:!tag
+ */
+static void ir_prop_tag(IRBuilder *b, const char *tag) {
+    if (!tag) return;
+    ir_write(b, "P:!%s\n", tag);
+}
+
+/**
+ * Both anchor and tag properties
+ * Format: P:&anchor !tag
+ */
+static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
+    if (!anchor && !tag) return;
+    ir_write(b, "P:");
+    if (anchor) ir_write(b, "&%s", anchor);
+    if (anchor && tag) ir_write(b, " ");
+    if (tag) ir_write(b, "!%s", tag);
+    ir_write(b, "\n");
+}
+
+/* === END INLINED: ir_builder.c === */
+
 %}
 
 %define api.pure true
-%define api.prefix {stream_yy_}
+%define api.prefix {parsing_yy_}
 %locations
 %parse-param {void *scanner}
 %lex-param {void *scanner}
@@ -253,17 +502,17 @@ void stream_yy_error(void *yylloc, void *scanner, const char *s) {
 }
 
 /* Bison parser entry point */
-extern int event_yy_parse(void);
+extern int composition_yy_parse(void);
 
 /* Flex lexer functions */
-extern int presentation_lex_init(void **scanner);
-extern int presentation_lex_init_extra(void *user_defined, void **scanner);
-extern int presentation_lex_destroy(void *scanner);
-extern void presentation_set_in(FILE *in, void *scanner);
-extern void presentation_set_extra(void *extra, void *scanner);
+extern int scanning_lex_init(void **scanner);
+extern int scanning_lex_init_extra(void *user_defined, void **scanner);
+extern int scanning_lex_destroy(void *scanner);
+extern void scanning_set_in(FILE *in, void *scanner);
+extern void scanning_set_extra(void *extra, void *scanner);
 
 /**
- * Stage 1: Parse - Presentation -> Events
+ * Stage 1: Parse - Scanning -> Parsing (Presentation -> Events)
  * Reads YAML from stdin, produces event stream
  */
 int yaml_parse(void) {
@@ -274,13 +523,13 @@ int yaml_parse(void) {
         return 1;
     }
     
-    if (presentation_lex_init_extra(ctx, &scanner) != 0) {
+    if (scanning_lex_init_extra(ctx, &scanner) != 0) {
         fprintf(stderr, "Failed to initialize lexer\n");
         return 1;
     }
-    presentation_set_in(stdin, scanner);
-    int result = stream_yy_parse(scanner);
-    presentation_lex_destroy(scanner);
+    scanning_set_in(stdin, scanner);
+    int result = parsing_yy_parse(scanner);
+    scanning_lex_destroy(scanner);
     lexer_context_free(ctx);
     return result;
 }
@@ -290,7 +539,7 @@ int yaml_parse(void) {
  * Composes IR from event stream
  */
 int yaml_compose(void) {
-    return event_yy_parse();
+    return composition_yy_parse();
 }
 
 /**
@@ -309,4 +558,9 @@ int yaml_serialize(void) {
 int yaml_present(void) {
     /* Placeholder - to be implemented */
     return 0;
+}
+
+/* Error handler for parsing stage */
+void parsing_yy_error(void *yylloc, void *scanner, const char *s) {
+    fprintf(stderr, "Parse error: %s\n", s);
 }
