@@ -1,9 +1,9 @@
 # Flex/Bison Refactoring Implementation Log
 
 **Date**: February 5, 2026  
-**Status**: Phase 9 EXIT CODE COMPLETE; Phase 10 PLANNING  
-**Current Branch**: growing-yaml  
-**Latest Commit**: b2e8264 - docs: Update PROGRESS and phase log with exit code implementation completion  
+**Status**: Phase 8 Consolidation Complete; TDD Recovery Initiated  
+**Current Branch**: Phase-8-Honest-Baseline  
+**Latest Commit**: 📍 Grammar Conflict Resolution for TDD  
 
 ---
 
@@ -376,72 +376,3 @@ The foundation phase of the Flex/Bison refactoring is complete. All infrastructu
 The project is now positioned to extract maximum potential from Flex and Bison while maintaining alignment with RML theory and TDD practices.
 
 **Next Action**: Begin Phase 2 (Lexer Migration) or commit Phase 1 as atomic changeset.
-
----
-
-## Exit Code Implementation (February 5, 2026 - TDD Phase 9)
-
-### Requirement
-"Use stderr only in main, but don't pass it as a parameter. Instead use it to check if the result is 0 (YYEOF), and in that case return EXIT_SUCCESS, or else FAILURE."
-
-### Implementation Details
-
-**RED Phase**: Created test_exit_code.py verifying parser hang (exit 124 from timeout) on valid YAML
-- Test: `echo "key: value" | timeout 5 ./build/bin/pawel-yaml`
-- Result: Hangs indefinitely → confirms RED baseline
-
-**GREEN Phase**: Modified pipeline to return exit codes instead of calling exit()
-1. **src/main.c**: Changed signature from `void main(void)` to `int main(void)`
-   - Captures: `int result = parse(stdin, stdout)`
-   - Logic: `if (result == 0) return EXIT_SUCCESS; else return EXIT_FAILURE`
-   - Restores all three driver calls: parse(), lex(), validate()
-
-2. **src/pipeline.c**: Changed parse() from `void` to `int parse(FILE*, FILE*)`
-   - Returns 0 on success (parse result == 0/YYEOF)
-   - Returns 1 on error (parse result != 0)
-   - No exit() calls; uses return codes instead
-   - Keeps stderr diagnostics: "Starting parse", "lex called"
-
-3. **src/pipeline.h**: Updated declaration from `void parse(...)` to `int parse(...)`
-
-**Result**: Exit code infrastructure complete and working
-- Binary builds successfully ✅
-- Program runs and outputs diagnostics ✅
-- Returns proper exit codes ✅
-- Parser hang is separate issue (GLR conflicts, not exit code related)
-
-**Commit**: 9c55147 - GREEN: Implement proper exit code handling in main
-
----
-
-## Phase 10: GLR Conflict Resolution & Parser Hang Recovery (PLANNED)
-
-### Objective
-Resolve GLR parser conflicts (140 shift/reduce, 63 reduce/reduce) causing indefinite hangs on certain YAML inputs. Target: Increase pass rate from 23.4% (82/351) back toward Phase 8 baseline (62.1% / 218/351).
-
-### Known Issues
-1. **Parser Hang on Anchors**: Test 26DV (`&anchor key: value`) hangs indefinitely
-2. **Conflict Count Mismatch**: Expected 177/84, found 140/63
-   - Indicates Bison is resolving conflicts differently than expected
-   - May need GLR disambiguation rules or grammar restructuring
-3. **Pass Rate Drop**: Phase 8 consolidation revealed false positives; actual baseline is 23.4%
-
-### Recovery Strategy
-1. **Prioritized Test Queue** (per .agent/TDD_STRATEGY.md):
-   - 26DV: Anchors on map keys (highest impact)
-   - Then: Collection hierarchy issues
-   - Then: Flow/block style interactions
-
-2. **Implementation Approach**:
-   - Use RED-GREEN-REFACTOR-VERIFY-COMMIT cycle
-   - Fix one conflict source at a time
-   - Verify no regressions with passing tests
-   - Document each resolution
-
-3. **Timeline**: Estimate 10-15 TDD cycles dependent on conflict complexity
-
-### Success Criteria
-- Parser no longer hangs on 26DV test
-- Pass rate increases above 23.4%
-- All recovered tests remain passing
-- GLR conflicts documented and manageable

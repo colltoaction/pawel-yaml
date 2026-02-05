@@ -1,28 +1,15 @@
 /**
- * yaml_event_parser.h - YAML Event Stream Layer (Stage 2)
- * 
- * Converts YAML token stream into canonical event format
- * Input: YAML tokens from Stage 1
- * Output: Event stream (+STR, -STR, +DOC, etc.)
+ * yaml_event_parser.h - YAML Event Stream & RML Validation
  */
 
 #ifndef YAML_EVENT_PARSER_H
 #define YAML_EVENT_PARSER_H
 
 #include <stdio.h>
+#include "common.h"
 
-typedef enum {
-    EVENT_STREAM_START,
-    EVENT_STREAM_END,
-    EVENT_DOCUMENT_START,
-    EVENT_DOCUMENT_END,
-    EVENT_SEQUENCE_START,
-    EVENT_SEQUENCE_END,
-    EVENT_MAPPING_START,
-    EVENT_MAPPING_END,
-    EVENT_SCALAR,
-    EVENT_ALIAS,
-} YAMLEventType;
+/* YAMLEventType mapping */
+typedef YAMLEventType_t YAMLEventType;
 
 typedef struct {
     YAMLEventType type;
@@ -40,14 +27,21 @@ typedef struct {
     int capacity;
 } EventStream;
 
-/* Initialize event parser */
+typedef struct {
+    int is_valid;
+    char *error_message;
+    int error_line;
+    char *intermediate_representation;
+} ValidationResult;
+
+/* Stage 2 & 3 API (implemented in yaml_event.y) */
 int yaml_event_parser_init(void);
-
-/* Parse event stream from string */
 EventStream* yaml_event_parse_string(const char *input);
-
-/* Cleanup */
 void yaml_event_parser_cleanup(void);
 void event_stream_free(EventStream *stream);
+
+/* Folded RML API */
+ValidationResult* rml_parse_event_stream(const EventStream *stream);
+void validation_result_free(ValidationResult *result);
 
 #endif
