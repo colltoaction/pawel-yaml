@@ -1,19 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include "lexer_context.h"
 
 /* Bison parser entry points */
 extern int stream_yy_parse(void *scanner);
 extern int event_yy_parse(void);
 
 /* Flex lexer initialization and input management */
-extern int presentation_lex_init_extra(LexerContext *user_defined, void **scanner);
+extern int presentation_lex_init(void **scanner);
 extern int presentation_lex_destroy(void *scanner);
 extern void presentation_set_in(FILE *in_str, void *scanner);
-
-/* Lexer context creation */
-extern LexerContext *lexer_context_new(void);
 
 /* Error handler for Bison parser */
 void stream_yy_error(void *yylloc, void *scanner, const char *msg) {
@@ -31,13 +26,7 @@ static int stage3_complete = 0;
  */
 int yaml_parse(void) {
     void *scanner;
-    LexerContext *ctx = lexer_context_new();
-    if (!ctx) {
-        fprintf(stderr, "Failed to create lexer context\n");
-        return 1;
-    }
-    
-    if (presentation_lex_init_extra(ctx, &scanner) != 0) {
+    if (presentation_lex_init(&scanner) != 0) {
         fprintf(stderr, "Failed to initialize lexer\n");
         return 1;
     }
