@@ -3,7 +3,36 @@
 }
 
 %code requires {
-#include "lexer_context.h"
+/* === LEXER CONTEXT TYPE (defined in scanning.l) === */
+/* Forward declaration - full type defined in scanning.l/scanning.lex.c */
+typedef struct {
+    int indent_stack[100];
+    int indent_sp;
+    int flow_level;
+    int expecting_value;
+    int pending_dedents;
+    int first_line;
+    int last_was_value;
+    struct {
+        char type;
+        int indent;
+    } block_scalar;
+    struct {
+        char *content;
+        int len;
+        int cap;
+    } scalar;
+    struct {
+        int level;
+        int is_flow;
+        char context_type;
+    } indent_context_stack[100];
+    int indent_context_sp;
+    int scalar_base_indent;
+    char scalar_type;
+    int argc;
+    char **argv;
+} LexerContext;
 
 /* === TYPE DEFINITIONS (from common.h) === */
 /**
@@ -69,7 +98,6 @@ int yaml_present(void);
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include "lexer_context.h"
 #include "parsing.tab.h"  /* Include generated header for type definitions */
 
 /* Types are declared in %code requires and included via parsing.tab.h */

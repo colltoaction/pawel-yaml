@@ -1,9 +1,10 @@
 %{
 #include "parsing.tab.h"
-#include "lexer_context.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+
+/* LexerContext type is defined in parsing.y's %code requires and included via parsing.tab.h */
 
 #define YYSTYPE PARSING_YY_STYPE
 #define YYLTYPE PARSING_YY_LTYPE
