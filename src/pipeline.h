@@ -4,17 +4,8 @@
 #include <stdio.h>
 
 /**
- * Bison-style return codes for pipeline stages
- * Matches standard Bison parser return conventions
- */
-typedef enum {
-    PARSER_SUCCESS = 0,        /* Parse succeeded (YYACCEPT) */
-    PARSER_ERROR = 1,          /* Parse failed (YYABORT) */
-    PARSER_MEMORY_ERROR = 2    /* Memory exhaustion */
-} parser_status_code_t;
-
-/**
  * Pawel-YAML 3-Stage Pipeline
+ * Uses standard Bison return codes: YYACCEPT (0) for success, YYABORT (1) for error
  */
 int yaml_pipeline_run(FILE *input, FILE *output);
 

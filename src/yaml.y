@@ -6,6 +6,11 @@ void stage1_parse(FILE *input, FILE *output);
 void stage1_lex(FILE *input, FILE *output);
 void stage2_parse(FILE *input, FILE *output);
 void stage2_lex(FILE *input, FILE *output);
+
+/* Pipeline stages */
+int parse(FILE *in, FILE *out);
+int lex(FILE *in, FILE *out);
+int validate(FILE *in, FILE *out);
 }
 
 %{
