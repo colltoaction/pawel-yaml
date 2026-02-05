@@ -28,6 +28,8 @@
 
 # Temporary files
 tmp_*
+.agent/
+.agent/**
 build/src/
 build/inc/
 build/bin/
