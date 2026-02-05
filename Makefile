@@ -58,10 +58,10 @@ directories:
 #   - $(GEN_SRC_DIR)/NAME.lex.c (from NAME.l, depends on .tab.h)
 # ============================================================================
 
-$(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y
+$(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y | directories
 	$(BISON) -d -o $(GEN_SRC_DIR)/$*.tab.c --defines=$(GEN_INC_DIR)/$*.tab.h $<
 
-$(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h
+$(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h | directories
 	$(FLEX) -o $@ $<
 
 # ============================================================================

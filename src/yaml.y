@@ -182,7 +182,6 @@ node_props:
     ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
     | TAG[t] { $$.anchor = NULL; $$.tag = $t; }
     | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
-    | TAG[t] ANCHOR[a] { $$.anchor = $a; $$.tag = $t; }
     ;
 
 sequence:
