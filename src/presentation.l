@@ -1,14 +1,14 @@
 %{
-#include "stream.tab.h"
+#include "yaml.tab.h"
 #include "lexer_context.h"
 #include <string.h>
 #include <stdlib.h>
 
-#define YYSTYPE STREAM_YY_STYPE
-#define YYLTYPE STREAM_YY_LTYPE
+#define YYSTYPE YAML_STYPE
+#define YYLTYPE YAML_LTYPE
 
 /* Forward declaration for error handling */
-void stream_yy_error(void *yylloc, void *scanner, const char *msg);
+void yaml_error(void *yylloc, void *scanner, const char *msg);
 
 /* Lexer context - replaces all global variables */
 #define CTX yyextra
@@ -78,7 +78,7 @@ static void append_block_line(LexerContext *ctx, const char *line, int len) {
 %option reentrant
 %option bison-bridge
 %option bison-locations
-%option prefix="presentation_"
+%option prefix="yaml_"
 %option extra-type="LexerContext *"
 
 %x BLOCK_SCALAR
@@ -243,14 +243,6 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 }
 
 <QUOTED>{
-    \"/[ ]*":"[ \t\n] {
-        BEGIN(INITIAL);
-        yylval->string = strdup(CTX->scalar.content);
-        CTX->expecting_value = 0;
-        CTX->last_was_value = 1;
-        return QMAP_KEY;
-    }
-
     \" {
         BEGIN(INITIAL);
         yylval->string = strdup(CTX->scalar.content);
@@ -268,7 +260,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     \\0 { append_scalar(CTX, "\0", 1); }
     
     \\[^ntr\\\"\/0] {
-        stream_yy_error(NULL, yyscanner, "syntax error, invalid escape sequence");
+        yaml_error(NULL, yyscanner, "syntax error, invalid escape sequence");
         /* Return something that triggers an error in parser */
         return SCALAR; 
     }
@@ -277,7 +269,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     \n { append_scalar(CTX, "\n", 1); }
     
     <<EOF>> {
-        stream_yy_error(NULL, yyscanner, "syntax error, unterminated quoted string");
+        yaml_error(NULL, yyscanner, "syntax error, unterminated quoted string");
         BEGIN(INITIAL);
         return SCALAR;
     }
@@ -379,12 +371,6 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 
 
-[a-zA-Z0-9\-\._][a-zA-Z0-9\-\._ ]*/[ ]*":"[ \t\n] {
-    yylval->string = strdup(yytext);
-    CTX->expecting_value = 0;
-    return MAP_KEY;
-}
-
 [a-zA-Z0-9\-\._]+ {
     /* Start simple scalar */
     init_scalar(CTX);
@@ -392,6 +378,16 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     CTX->expecting_value = 0;
     CTX->scalar_base_indent = current_indent(CTX);
     CTX->scalar_type = ':';  /* Plain scalar */
+    BEGIN(PLAIN_SCALAR_CONT);
+}
+
+"?"[a-zA-Z0-9\-\._]+ {
+    /* Question mark followed by alphanumeric - treat as scalar */
+    init_scalar(CTX);
+    append_scalar(CTX, yytext, yyleng);
+    CTX->expecting_value = 0;
+    CTX->scalar_base_indent = current_indent(CTX);
+    CTX->scalar_type = ':';
     BEGIN(PLAIN_SCALAR_CONT);
 }
 
@@ -520,7 +516,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 "#" {
     if (!check_comment_valid(CTX)) {
-        stream_yy_error(NULL, yyscanner, "syntax error, comment without preceding whitespace");
+        yaml_error(NULL, yyscanner, "syntax error, comment without preceding whitespace");
         /* Triggering error */
         return SCALAR;
     }

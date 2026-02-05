@@ -18,26 +18,29 @@ RUNTIMES_DIR = $(LIB_DIR)/yaml-runtimes
 PLAY_DIR = $(LIB_DIR)/yaml-play
 SUITE_DIR = $(LIB_DIR)/yaml-test-suite
 
-# Parser and Lexer definitions
-PARSERS = stream event
-LEXERS = presentation stream
+# Parser definitions: PARSERS = name1 name2
+# Note: RML parser logic is embedded in yaml_event.y and rml.y grammar files
+# but compiled as separate units with proper namespacing to avoid symbol conflicts
+PARSERS = yaml yaml_event
 
-# Generated parser files
-STREAM_TAB_C = $(GEN_SRC_DIR)/stream.tab.c
-STREAM_TAB_H = $(GEN_INC_DIR)/stream.tab.h
-EVENT_TAB_C = $(GEN_SRC_DIR)/event.tab.c
-EVENT_TAB_H = $(GEN_INC_DIR)/event.tab.h
+# Generated parser files (derived from PARSERS)
+YAML_TAB_C = $(GEN_SRC_DIR)/yaml.tab.c
+YAML_TAB_H = $(GEN_INC_DIR)/yaml.tab.h
+YAML_LEX_C = $(GEN_SRC_DIR)/yaml.lex.c
 
-# Object files
-PARSER_OBJS = $(BUILD_DIR)/stream.tab.o $(BUILD_DIR)/presentation.lex.o \
-              $(BUILD_DIR)/event.tab.o $(BUILD_DIR)/stream.lex.o
+# Object files (derived from PARSERS)
+PARSER_OBJS = $(BUILD_DIR)/yaml.tab.o $(BUILD_DIR)/yaml.lex.o \
+              $(BUILD_DIR)/yaml_event.tab.o $(BUILD_DIR)/yaml_event.lex.o
 
 # TDD & testing artifacts
 TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
 # Custom C source files for refactored architecture
-CUSTOM_OBJS = $(BUILD_DIR)/lexer_context.o $(BUILD_DIR)/ir_builder.o
+# - lexer_context.c: unified lexer state management
+# - ir_builder.c: IR generation API
+# - pipeline.c: 3-stage pipeline driver
+CUSTOM_OBJS = $(BUILD_DIR)/lexer_context.o $(BUILD_DIR)/ir_builder.o $(BUILD_DIR)/pipeline.o
 
 OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o $(CUSTOM_OBJS)
 
@@ -61,13 +64,6 @@ $(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y | directories
 $(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h | directories
 	$(FLEX) -o $@ $<
 
-# Explicit lexer rules (non-standard naming)
-$(GEN_SRC_DIR)/presentation.lex.c: $(SRC_DIR)/presentation.l $(STREAM_TAB_H) | directories
-	$(FLEX) -o $@ $<
-
-$(GEN_SRC_DIR)/stream.lex.c: $(SRC_DIR)/stream.l $(EVENT_TAB_H) | directories
-	$(FLEX) -o $@ $<
-
 # ============================================================================
 # Object Compilation: Generic pattern rule
 # ============================================================================
@@ -75,10 +71,10 @@ $(GEN_SRC_DIR)/stream.lex.c: $(SRC_DIR)/stream.l $(EVENT_TAB_H) | directories
 $(BUILD_DIR)/%.o: $(GEN_SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/stream.tab.o: $(GEN_SRC_DIR)/stream.tab.c $(GEN_INC_DIR)/event.tab.h
+$(BUILD_DIR)/yaml.tab.o: $(GEN_SRC_DIR)/yaml.tab.c $(GEN_INC_DIR)/yaml_event.tab.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(STREAM_TAB_H)
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(YAML_TAB_H)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
@@ -88,7 +84,7 @@ $(BUILD_DIR)/lexer_context.o: $(SRC_DIR)/lexer_context.c $(SRC_DIR)/lexer_contex
 $(BUILD_DIR)/ir_builder.o: $(SRC_DIR)/ir_builder.c $(SRC_DIR)/ir_builder.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/pipeline.o: $(SRC_DIR)/pipeline.c
+$(BUILD_DIR)/pipeline.o: $(SRC_DIR)/pipeline.c $(SRC_DIR)/pipeline.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================================
@@ -116,10 +112,10 @@ deepclean:
 # ============================================================================
 
 test-event: directories
-	@echo "Compiling event unit tests..."
-	$(BISON) -d -o $(BUILD_DIR)/src/event.tab.c --defines=$(GEN_INC_DIR)/event.tab.h src/event.y
-	$(CC) $(CFLAGS) -c $(BUILD_DIR)/src/event.tab.c -o $(BUILD_DIR)/event.tab.o
-	$(CC) $(CFLAGS) -g test_yaml_event.c test_yaml_event_stubs.c $(BUILD_DIR)/event.tab.o -o test_yaml_event
+	@echo "Compiling yaml_event unit tests..."
+	$(BISON) -d -o $(BUILD_DIR)/src/yaml_event.tab.c --defines=$(GEN_INC_DIR)/yaml_event.tab.h src/yaml_event.y
+	$(CC) $(CFLAGS) -c $(BUILD_DIR)/src/yaml_event.tab.c -o $(BUILD_DIR)/yaml_event.tab.o
+	$(CC) $(CFLAGS) -g test_yaml_event.c test_yaml_event_stubs.c $(BUILD_DIR)/yaml_event.tab.o -o test_yaml_event
 
 test-unit: test-event
 	@echo "Running unit tests..."
