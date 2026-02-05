@@ -1,106 +1,82 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "pipeline.h"
-#include "yaml_event_parser.h"
+#include "lexer_context.h"
 
-/* Standard Bison parser return codes */
-#define YYACCEPT 0
-#define YYABORT 1
+/* Bison parser entry points */
+extern int stream_yy_parse(void *scanner);
+extern int event_yy_parse(void);
 
-/* Externs from parsers */
-int yaml_stage_parse(FILE *input_stream, char **ir_buf, size_t *ir_size);
-extern char *rml_ir_buf;
-extern size_t rml_ir_size;
+/* Flex lexer initialization and input management */
+extern int presentation_lex_init_extra(LexerContext *user_defined, void **scanner);
+extern int presentation_lex_destroy(void *scanner);
+extern void presentation_set_in(FILE *in_str, void *scanner);
 
-/* Global state for the 3-stage pipeline */
-static char *stage1_ir = NULL;
-static EventStream *stage2_events = NULL;
-static ValidationResult *stage3_result = NULL;
+/* Lexer context creation */
+extern LexerContext *lexer_context_new(void);
+
+/* Error handler for Bison parser */
+void stream_yy_error(void *yylloc, void *scanner, const char *msg) {
+    fprintf(stderr, "Parse error: %s\n", msg);
+}
+
+/* Global state for pipeline stages */
+static int stage1_complete = 0;
+static int stage2_complete = 0;
+static int stage3_complete = 0;
 
 /**
- * Stage 1: YAML Presentation -> RML IR
+ * Stage 1: Parse - Presentation -> Serialization
+ * Reads YAML text from stdin, produces event stream
  */
-int parse(FILE *in, FILE *out) {
-    if (stage1_ir) return YYACCEPT; /* Already done */
-
-    fprintf(stderr, "Starting parse\n"); fflush(stderr);
-
-    int ret = yaml_stage_parse(in, &rml_ir_buf, &rml_ir_size);
-    if (ret != YYACCEPT) {
-        return YYABORT;  /* Return error code instead of exiting */
+int yaml_parse(void) {
+    void *scanner;
+    LexerContext *ctx = lexer_context_new();
+    if (!ctx) {
+        fprintf(stderr, "Failed to create lexer context\n");
+        return 1;
     }
-    stage1_ir = rml_ir_buf;
-    rml_ir_buf = NULL; /* Move ownership */
-    return YYACCEPT;  /* Return success code */
+    
+    if (presentation_lex_init_extra(ctx, &scanner) != 0) {
+        fprintf(stderr, "Failed to initialize lexer\n");
+        return 1;
+    }
+    presentation_set_in(stdin, scanner);
+    int result = stream_yy_parse(scanner);
+    presentation_lex_destroy(scanner);
+    if (result != 0) return 1;
+    stage1_complete = 1;
+    return 0;
 }
 
 /**
- * Stage 2: RML IR -> Event Stream
+ * Stage 2: Compose - Serialization -> Representation
+ * Composes IR (data structures) from event stream
  */
-int lex(FILE *in, FILE *out) {
-    fputs("[LEX-1]\n", stderr); fflush(stderr);
-    
-    if (stage2_events) {
-        fputs("[LEX-2-CACHED]\n", stderr); fflush(stderr);
-        return YYACCEPT; /* Already done */
-    }
-    
-    fputs("[LEX-3]\n", stderr); fflush(stderr);
-    if (!stage1_ir) {
-        fputs("[LEX-4-PARSING]\n", stderr); fflush(stderr);
-        int ret = parse(in, out);
-        if (ret == YYABORT) {
-            fputs("[LEX-4-PARSE-FAILED]\n", stderr); fflush(stderr);
-            return YYABORT; /* Depend on parse success */
-        }
-    }
-
-    fputs("[LEX-5]\n", stderr); fflush(stderr);
-    yaml_event_parser_init();
-    fputs("[LEX-6]\n", stderr); fflush(stderr);
-    
-    stage2_events = yaml_event_parse_string(stage1_ir);
-    fputs("[LEX-7]\n", stderr); fflush(stderr);
-    
-    yaml_event_parser_cleanup();
-    fputs("[LEX-8]\n", stderr); fflush(stderr);
-
-    if (!stage2_events) {
-        fputs("[LEX-ERROR]\n", stderr); fflush(stderr);
-        return YYABORT;  /* Return error code instead of exiting */
-    }
-    fputs("[LEX-SUCCESS]\n", stderr); fflush(stderr);
-    return YYACCEPT;  /* Return success code */
+int yaml_compose(void) {
+    if (stage1_complete == 0) return 1;  /* Requires stage 1 */
+    if (event_yy_parse() != 0) return 1;
+    stage2_complete = 1;
+    return 0;
 }
 
 /**
- * Stage 3: Event Stream -> Validation & Canonical Output
+ * Stage 3: Serialize - Representation -> Serialization
+ * Creates event stream from IR (inverse of compose)
  */
-int validate(FILE *in, FILE *out) {
-    if (stage3_result) return YYACCEPT; /* Already done */
-    if (!stage2_events) {
-        int ret = lex(in, out);
-        if (ret == YYABORT) return YYABORT;  /* Depend on lex success */
-    }
-
-    stage3_result = rml_parse_event_stream(stage2_events);
-    
-    if (stage3_result && stage3_result->is_valid) {
-        if (stage3_result->intermediate_representation) {
-            fprintf(out, "%s", stage3_result->intermediate_representation);
-        }
-        return YYACCEPT;  /* Return success code */
-    } else {
-        if (stage3_result && stage3_result->error_message) {
-            fprintf(stderr, "Validation error: %s\n", stage3_result->error_message);
-        }
-        return YYABORT;  /* Return error code instead of exiting */
-    }
+int yaml_serialize(void) {
+    if (stage2_complete == 0) return 1;  /* Requires stage 2 */
+    /* For now, pass through - full serialization to be implemented */
+    stage3_complete = 1;
+    return 0;
 }
 
-/* Pipeline runner helper */
-int yaml_pipeline_run(FILE *input, FILE *output) {
-    validate(input, output);
+/**
+ * Stage 4: Present - Serialization -> Presentation
+ * Renders event stream back to YAML text
+ */
+int yaml_present(void) {
+    if (stage3_complete == 0) return 1;  /* Requires stage 3 */
+    /* For now, pass through - full presentation to be implemented */
     return 0;
 }
