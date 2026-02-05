@@ -48,6 +48,12 @@
     return IDENTIFIER;
 }
 
+\"[^\"]*\" {
+    yylval.sval = strdup(yytext + 1);
+    yylval.sval[strlen(yylval.sval) - 1] = '\0';  // Remove closing quote
+    return E_QUOTED_STRING;
+}
+
 [ \t]+ ;
 \n yylineno++;
 "#".* ;
