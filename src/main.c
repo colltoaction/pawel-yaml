@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include "pipeline.h"
 
 extern int parse(FILE *in, FILE *out);
 extern int lex(FILE *in, FILE *out);
@@ -10,8 +11,8 @@ int main(void) {
     int lex_result = lex(stdin, stdout);
     int validate_result = validate(stdin, stdout);
     
-    /* Return success only if all stages succeed */
-    if (parse_result == 0 && lex_result == 0 && validate_result == 0) {
+    /* Return success only if all stages succeed (Bison-style: 0 = success) */
+    if (parse_result == PARSER_SUCCESS && lex_result == PARSER_SUCCESS && validate_result == PARSER_SUCCESS) {
         return EXIT_SUCCESS;
     } else {
         return EXIT_FAILURE;
