@@ -1,8 +1,6 @@
 # Exclusions
 *
 !.gitignore
-!.agent/
-!.agent/**
 !src/
 !src/**
 !Dockerfile.alpine
@@ -27,6 +25,7 @@
 !build/lib/yaml-play/**
 
 # Temporary files
+.agent/
 tmp_*
 build/src/
 build/inc/
