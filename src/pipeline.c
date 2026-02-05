@@ -17,17 +17,18 @@ static ValidationResult *stage3_result = NULL;
 /**
  * Stage 1: YAML Presentation -> RML IR
  */
-void parse(FILE *in, FILE *out) {
-    if (stage1_ir) return; /* Already done */
+int parse(FILE *in, FILE *out) {
+    if (stage1_ir) return 0; /* Already done */
 
     fprintf(stderr, "Starting parse\n"); fflush(stderr);
 
     int ret = yaml_stage_parse(in, &rml_ir_buf, &rml_ir_size);
     if (ret != 0) {
-        exit(1);
+        return 1;  /* Return error code instead of exiting */
     }
     stage1_ir = rml_ir_buf;
     rml_ir_buf = NULL; /* Move ownership */
+    return 0;  /* Return success code */
 }
 
 /**
