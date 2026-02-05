@@ -157,7 +157,6 @@ explicit_document:
     DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
     node
     { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | error { yyerrok; yyclearin; }
     ;
 
 implicit_document:
