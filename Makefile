@@ -28,10 +28,6 @@ YAML_TAB_C = $(GEN_SRC_DIR)/yaml.tab.c
 YAML_TAB_H = $(GEN_INC_DIR)/yaml.tab.h
 YAML_LEX_C = $(GEN_SRC_DIR)/yaml.lex.c
 
-RML_TAB_C = $(GEN_SRC_DIR)/rml.tab.c
-RML_TAB_H = $(GEN_INC_DIR)/rml.tab.h
-RML_LEX_C = $(GEN_SRC_DIR)/rml.lex.c
-
 # Object files (derived from PARSERS)
 PARSER_OBJS = $(BUILD_DIR)/yaml.tab.o $(BUILD_DIR)/yaml.lex.o \
               $(BUILD_DIR)/yaml_event.tab.o $(BUILD_DIR)/yaml_event.lex.o
@@ -41,11 +37,10 @@ TMP_DIR = $(BUILD_DIR)/tmp
 LOG_DIR = $(BUILD_DIR)/log
 
 # Custom C source files for refactored architecture
-# - rml_validation.c: validation functions (no parser/lexer)
 # - lexer_context.c: unified lexer state management
 # - ir_builder.c: IR generation API
 # - pipeline.c: 3-stage pipeline driver
-CUSTOM_OBJS = $(BUILD_DIR)/rml_validation.o $(BUILD_DIR)/lexer_context.o $(BUILD_DIR)/ir_builder.o $(BUILD_DIR)/pipeline.o
+CUSTOM_OBJS = $(BUILD_DIR)/lexer_context.o $(BUILD_DIR)/ir_builder.o $(BUILD_DIR)/pipeline.o
 
 OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o $(CUSTOM_OBJS)
 
@@ -57,21 +52,13 @@ directories:
 	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR) $(TMP_DIR) $(LOG_DIR)
 
 # ============================================================================
-# Token Definitions: Generate tokens.tab.h from tokens.y
-# This must be built first as other parsers depend on it
-# ============================================================================
-
-$(GEN_INC_DIR)/tokens.tab.h: $(SRC_DIR)/tokens.y | directories
-	$(BISON) -d -o $(GEN_SRC_DIR)/tokens.tab.c --defines=$(GEN_INC_DIR)/tokens.tab.h $<
-
-# ============================================================================
 # Parser Generation: Bison & Flex
 # Pattern: Each parser NAME produces:
 #   - $(GEN_SRC_DIR)/NAME.tab.c + $(GEN_INC_DIR)/NAME.tab.h (from NAME.y)
 #   - $(GEN_SRC_DIR)/NAME.lex.c (from NAME.l, depends on .tab.h)
 # ============================================================================
 
-$(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y $(GEN_INC_DIR)/tokens.tab.h
+$(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y
 	$(BISON) -d -o $(GEN_SRC_DIR)/$*.tab.c --defines=$(GEN_INC_DIR)/$*.tab.h $<
 
 $(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h
@@ -84,11 +71,12 @@ $(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h
 $(BUILD_DIR)/%.o: $(GEN_SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/yaml.tab.o: $(GEN_SRC_DIR)/yaml.tab.c $(GEN_INC_DIR)/yaml_event.tab.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(YAML_TAB_H)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/rml_validation.o: $(SRC_DIR)/rml_validation.c $(SRC_DIR)/rml_parser.h
-	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/lexer_context.o: $(SRC_DIR)/lexer_context.c $(SRC_DIR)/lexer_context.h
 	$(CC) $(CFLAGS) -c $< -o $@

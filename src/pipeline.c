@@ -3,69 +3,74 @@
 #include <string.h>
 #include "pipeline.h"
 #include "yaml_event_parser.h"
-#include "rml_parser.h"
 
-/* Stage 1 API (defined in yaml.y) */
+/* Externs from parsers */
 int yaml_stage_parse(FILE *input_stream, char **ir_buf, size_t *ir_size);
 extern char *rml_ir_buf;
 extern size_t rml_ir_size;
 
+/* Global state for the 3-stage pipeline */
+static char *stage1_ir = NULL;
+static EventStream *stage2_events = NULL;
+static ValidationResult *stage3_result = NULL;
+
 /**
- * 3-Stage Pipeline implementation
+ * Stage 1: YAML Presentation -> RML IR
  */
-int yaml_pipeline_run(FILE *input, FILE *output) {
-    int ret = yaml_stage_parse(input, &rml_ir_buf, &rml_ir_size);
-    if (ret != 0) return 1;
-    if (!rml_ir_buf || strlen(rml_ir_buf) == 0) return 0;
+void parse(FILE *in, FILE *out) {
+    if (stage1_ir) return; /* Already done */
+
+    fprintf(stderr, "Starting parse\n"); fflush(stderr);
+
+    int ret = yaml_stage_parse(in, &rml_ir_buf, &rml_ir_size);
+    if (ret != 0) {
+        exit(1);
+    }
+    stage1_ir = rml_ir_buf;
+    rml_ir_buf = NULL; /* Move ownership */
+}
+
+/**
+ * Stage 2: RML IR -> Event Stream
+ */
+void lex(FILE *in, FILE *out) {
+    if (stage2_events) return; /* Already done */
+    if (!stage1_ir) parse(in, out); /* Ensure dependency */
+
+    fprintf(stderr, "Starting lex\n");
 
     yaml_event_parser_init();
-    EventStream *events = yaml_event_parse_string(rml_ir_buf);
+    stage2_events = yaml_event_parse_string(stage1_ir);
     yaml_event_parser_cleanup();
-    
-    if (!events) {
-        if (rml_ir_buf) { free(rml_ir_buf); rml_ir_buf = NULL; }
-        return 1;
-    }
 
-    ValidationResult *result = rml_parse_event_stream(events);
-    int exit_code = 0;
+    if (!stage2_events) {
+        exit(1);
+    }
+}
+
+/**
+ * Stage 3: Event Stream -> Validation & Canonical Output
+ */
+void validate(FILE *in, FILE *out) {
+    if (stage3_result) return; /* Already done */
+    if (!stage2_events) lex(in, out); /* Ensure dependency */
+
+    stage3_result = rml_parse_event_stream(stage2_events);
     
-    if (result && result->is_valid) {
-        if (result->intermediate_representation) {
-            fprintf(output, "%s", result->intermediate_representation);
+    if (stage3_result && stage3_result->is_valid) {
+        if (stage3_result->intermediate_representation) {
+            fprintf(out, "%s", stage3_result->intermediate_representation);
         }
     } else {
-        if (result && result->error_message) {
-            fprintf(stderr, "Validation error: %s\n", result->error_message);
+        if (stage3_result && stage3_result->error_message) {
+            fprintf(stderr, "Validation error: %s\n", stage3_result->error_message);
         }
-        exit_code = 1;
-    }
-    
-    event_stream_free(events);
-    validation_result_free(result);
-    free(rml_ir_buf);
-    rml_ir_buf = NULL;
-    
-    return exit_code;
-}
-
-/* User-requested minimal style functions */
-void parse(FILE *in, FILE *out) {
-    yaml_pipeline_run(in, out);
-}
-
-void lex(FILE *in, FILE *out) {
-    /* Presentation layer IR only */
-    if (yaml_stage_parse(in, &rml_ir_buf, &rml_ir_size) == 0) {
-        if (rml_ir_buf) {
-            fprintf(out, "%s", rml_ir_buf);
-            free(rml_ir_buf);
-            rml_ir_buf = NULL;
-        }
+        exit(1);
     }
 }
 
-void validate(FILE *in, FILE *out) {
-    /* Stage 3 only (simulated by full pipeline for now) */
-    parse(in, out);
+/* Pipeline runner helper */
+int yaml_pipeline_run(FILE *input, FILE *output) {
+    validate(input, output);
+    return 0;
 }

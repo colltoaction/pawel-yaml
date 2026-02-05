@@ -121,6 +121,8 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 %%
 
+    fprintf(stderr, "lex called\n"); fflush(stderr);
+
     if (CTX->first_line) {
         CTX->first_line = 0;
         BEGIN(INDENT_CHECK);
@@ -150,15 +152,19 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 <INDENT_CHECK>[ \t]* {
     int indent = 0;
     for (int i=0; i<yyleng; i++) {
-        if (yytext[i] == ' ') indent++;
-        else if (yytext[i] == '\t') indent = (indent + 8) & ~7;
+        if (yytext[i] == ' ') {
+            indent++;
+        } else if (yytext[i] == '\t') {
+            fprintf(stderr, "syntax error, tabs used for indentation\n");
+            exit(1);
+        }
     }
     
     BEGIN(INITIAL);
     int cur = current_indent(CTX);
     if (indent > cur) {
         push_indent(CTX, indent);
-        return INDENT;
+        /* return INDENT; */
     } else if (indent < cur) {
         while (indent < current_indent(CTX)) {
             pop_indent(CTX);

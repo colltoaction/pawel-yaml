@@ -1,60 +1,69 @@
 %{
-#include "yaml_event.tab.h"
-#include "tokens.tab.h"
 #include <string.h>
+#include "yaml_event.tab.h"
+#define yylval yaml_event_lval
 %}
 
 %option noyywrap yylineno
+%option prefix="yaml_event_"
 
 %%
 
-"+STR"          return TOK_EVENT_STREAM_START;
-"-STR"          return TOK_EVENT_STREAM_END;
-"+DOC"          return TOK_EVENT_DOCUMENT_START;
-"-DOC"          return TOK_EVENT_DOCUMENT_END;
-"+SEQ"          return TOK_EVENT_SEQUENCE_START;
-"-SEQ"          return TOK_EVENT_SEQUENCE_END;
-"+MAP"          return TOK_EVENT_MAPPING_START;
-"-MAP"          return TOK_EVENT_MAPPING_END;
-"=VAL"          return TOK_EVENT_SCALAR;
-"=ALI"          return TOK_EVENT_ALIAS;
+"+STR"          return E_STR_START;
+"-STR"          return E_STR_END;
+"+DOC"          return E_DOC_START;
+"-DOC"          return E_DOC_END;
+"+SEQ"          return E_SEQ_START;
+"-SEQ"          return E_SEQ_END;
+"+MAP"          return E_MAP_START;
+"-MAP"          return E_MAP_END;
+"=VAL"          return E_SCALAR;
+"=ALI"          return E_ALIAS;
 
 "&"[a-zA-Z0-9_]+ {
     yylval.sval = strdup(yytext + 1);
-    return ANCHOR;
+    return E_ANCHOR;
 }
 
-\<[^\>]+\> {
-    yylval.sval = strdup(yytext);
-    return TAG;
+"<"[^>]+">" {
+    yylval.sval = strdup(yytext + 1);
+    yylval.sval[strlen(yylval.sval)-1] = '\0';
+    return E_TAG;
 }
 
-: {
+":" {
     yylval.cval = ':';
-    return CHAR;
+    return E_CHAR;
 }
 
-\" {
+"\"" {
     yylval.cval = '"';
-    return CHAR;
+    return E_CHAR;
 }
 
-\' {
+"\'" {
     yylval.cval = '\'';
-    return CHAR;
+    return E_CHAR;
 }
 
-[a-zA-Z0-9_]+ {
+"|" {
+    yylval.cval = '|';
+    return E_CHAR;
+}
+
+">" {
+    yylval.cval = '>';
+    return E_CHAR;
+}
+
+[a-zA-Z0-9_.\-\/]+ {
     yylval.sval = strdup(yytext);
-    return IDENTIFIER;
+    return E_IDENTIFIER;
 }
 
 [ \t]+ ;
-\n yylineno++;
+\n ;
 "#".* ;
 . return yytext[0];
 
 %%
-
-
-
