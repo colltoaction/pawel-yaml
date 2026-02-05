@@ -1,8 +1,5 @@
 %code requires {
-typedef struct {
-    char *anchor;
-    char *tag;
-} NodeProps;
+#include "tokens.tab.h"
 
 /* Stage APIs */
 void stage1_parse(FILE *input, FILE *output);
@@ -15,6 +12,7 @@ void stage2_lex(FILE *input, FILE *output);
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "tokens.tab.h"
 #include "yaml_event_parser.h"
 #include "rml_parser.h"
 #include "ir_builder.h"

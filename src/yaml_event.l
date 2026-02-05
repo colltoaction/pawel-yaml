@@ -1,5 +1,6 @@
 %{
 #include "yaml_event.tab.h"
+#include "tokens.tab.h"
 #include <string.h>
 %}
 
@@ -7,16 +8,16 @@
 
 %%
 
-"+STR"          return STR_START;
-"-STR"          return STR_END;
-"+DOC"          return DOC_START;
-"-DOC"          return DOC_END;
-"+SEQ"          return SEQ_START;
-"-SEQ"          return SEQ_END;
-"+MAP"          return MAP_START;
-"-MAP"          return MAP_END;
-"=VAL"          return VALUE_MARK;
-"=ALI"          return ALIAS_MARK;
+"+STR"          return TOK_EVENT_STREAM_START;
+"-STR"          return TOK_EVENT_STREAM_END;
+"+DOC"          return TOK_EVENT_DOCUMENT_START;
+"-DOC"          return TOK_EVENT_DOCUMENT_END;
+"+SEQ"          return TOK_EVENT_SEQUENCE_START;
+"-SEQ"          return TOK_EVENT_SEQUENCE_END;
+"+MAP"          return TOK_EVENT_MAPPING_START;
+"-MAP"          return TOK_EVENT_MAPPING_END;
+"=VAL"          return TOK_EVENT_SCALAR;
+"=ALI"          return TOK_EVENT_ALIAS;
 
 "&"[a-zA-Z0-9_]+ {
     yylval.sval = strdup(yytext + 1);

@@ -3,7 +3,12 @@
 #include <string.h>
 #include <stdio.h>
 
-void yyerror(const char *msg);
+/* Bison's detailed error messages via %define parse.error detailed
+   are passed as 'msg' parameter to this function.
+   Simply printing them ensures all error information reaches stderr. */
+void yyerror(const char *msg) {
+    fprintf(stderr, "%s\n", msg);
+}
 
 /**
  * YAML Event Stream (Test-Suite Canonical Format)
@@ -18,35 +23,8 @@ void yyerror(const char *msg);
  * - Aliases: =ALI *name
  */
 
-/* Event type enumeration */
-typedef enum {
-    EVENT_STREAM_START,
-    EVENT_STREAM_END,
-    EVENT_DOCUMENT_START,
-    EVENT_DOCUMENT_END,
-    EVENT_SEQUENCE_START,
-    EVENT_SEQUENCE_END,
-    EVENT_MAPPING_START,
-    EVENT_MAPPING_END,
-    EVENT_SCALAR,
-    EVENT_ALIAS,
-} YAMLEventType;
-
-typedef struct {
-    YAMLEventType type;
-    char quote_style;        /* ':' plain, '"' double, '\'' single, '|' literal, '>' folded */
-    char *value;
-    char *anchor;
-    char *tag;
-    int explicit_start;
-    char *alias_name;
-} YAMLEvent;
-
-typedef struct {
-    YAMLEvent **events;
-    int count;
-    int capacity;
-} EventStream;
+#include "tokens.tab.h"
+#include "yaml_event_parser.h"
 
 /* Constructor helpers */
 YAMLEvent *event_create(YAMLEventType type) {
@@ -300,17 +278,6 @@ void event_stream_free(EventStream *stream) {
     char cval;    /* Character values */
 }
 
-/* Token declarations with string literal aliases */
-%token STR_START   "+STR"
-%token STR_END     "-STR"
-%token DOC_START   "+DOC"
-%token DOC_END     "-DOC"
-%token SEQ_START   "+SEQ"
-%token SEQ_END     "-SEQ"
-%token MAP_START   "+MAP"
-%token MAP_END     "-MAP"
-%token VALUE_MARK  "=VAL"
-%token ALIAS_MARK  "=ALI"
 %token <sval> ANCHOR                     /* &anchor */
 %token <sval> TAG                        /* <tag> */
 %token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
@@ -365,12 +332,3 @@ collection_end : "-SEQ"
                ;
 
 %%
-
-/* Bison's detailed error messages via %define parse.error detailed
-   are passed as 'msg' parameter to this function.
-   Simply printing them ensures all error information reaches stderr. */
-void yyerror(const char *msg) {
-    if (msg) {
-        fprintf(stderr, "YAML Parse Error: %s\n", msg);
-    }
-}
