@@ -125,7 +125,10 @@ node : scalar
      | mapping
      ;
 
-scalar : "=VAL" E_CHAR[style] E_QUOTED_STRING[content] { push_event(event_scalar_new($style, $content)); free($content); }
+scalar : "=VAL" E_CHAR[style] E_CHAR    E_QUOTED_STRING[content] { push_event(event_scalar_new($style, $content)); free($content); }
+       | "=VAL" E_CHAR[style] E_CHAR    E_IDENTIFIER[content]    { push_event(event_scalar_new($style, $content)); free($content); }
+       | "=VAL" E_CHAR[style] E_CHAR                             { push_event(event_scalar_new($style, NULL)); }
+       | "=VAL" E_CHAR[style] E_QUOTED_STRING[content] { push_event(event_scalar_new($style, $content)); free($content); }
        | "=VAL" E_CHAR[style] E_IDENTIFIER[content]    { push_event(event_scalar_new($style, $content)); free($content); }
        | "=VAL" E_CHAR[style]                          { push_event(event_scalar_new($style, NULL)); }
        ;
