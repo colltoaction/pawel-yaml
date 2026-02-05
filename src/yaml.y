@@ -131,9 +131,9 @@ static void add_alias_event(const char *name) {
 %%
 
 stream:
-    { ir = ir_builder_new_memory(); add_event(EVENT_STREAM_START); }
+    { ir = ir_builder_new_memory(); add_event(EVENT_STREAM_START); ir_stream_start(ir); }
     documents
-    { rml_ir_buf = ir_builder_finalize(ir); rml_ir_size = strlen(rml_ir_buf); ir_builder_free(ir); ir = NULL; add_event(EVENT_STREAM_END); }
+    { ir_stream_end(ir); rml_ir_buf = ir_builder_finalize(ir); rml_ir_size = strlen(rml_ir_buf); ir_builder_free(ir); ir = NULL; add_event(EVENT_STREAM_END); }
     ;
 
 documents:
@@ -155,7 +155,7 @@ explicit_document:
     ;
 
 implicit_document:
-    node { ir_doc_start(ir); ir_doc_end(ir); add_event(EVENT_DOCUMENT_START); add_event(EVENT_DOCUMENT_END); }
+    { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); } node { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     ;
 
 node:
