@@ -1,9 +1,9 @@
 # Flex/Bison Refactoring Implementation Log
 
 **Date**: February 5, 2026  
-**Status**: Phase 8 Consolidation Complete; TDD Recovery Initiated  
-**Current Branch**: Phase-8-Honest-Baseline  
-**Latest Commit**: 📍 Grammar Conflict Resolution for TDD  
+**Status**: Phase 9 EXIT CODE COMPLETE; Phase 10 PLANNING  
+**Current Branch**: growing-yaml  
+**Latest Commit**: b2e8264 - docs: Update PROGRESS and phase log with exit code implementation completion  
 
 ---
 
@@ -411,3 +411,37 @@ The project is now positioned to extract maximum potential from Flex and Bison w
 - Parser hang is separate issue (GLR conflicts, not exit code related)
 
 **Commit**: 9c55147 - GREEN: Implement proper exit code handling in main
+
+---
+
+## Phase 10: GLR Conflict Resolution & Parser Hang Recovery (PLANNED)
+
+### Objective
+Resolve GLR parser conflicts (140 shift/reduce, 63 reduce/reduce) causing indefinite hangs on certain YAML inputs. Target: Increase pass rate from 23.4% (82/351) back toward Phase 8 baseline (62.1% / 218/351).
+
+### Known Issues
+1. **Parser Hang on Anchors**: Test 26DV (`&anchor key: value`) hangs indefinitely
+2. **Conflict Count Mismatch**: Expected 177/84, found 140/63
+   - Indicates Bison is resolving conflicts differently than expected
+   - May need GLR disambiguation rules or grammar restructuring
+3. **Pass Rate Drop**: Phase 8 consolidation revealed false positives; actual baseline is 23.4%
+
+### Recovery Strategy
+1. **Prioritized Test Queue** (per .agent/TDD_STRATEGY.md):
+   - 26DV: Anchors on map keys (highest impact)
+   - Then: Collection hierarchy issues
+   - Then: Flow/block style interactions
+
+2. **Implementation Approach**:
+   - Use RED-GREEN-REFACTOR-VERIFY-COMMIT cycle
+   - Fix one conflict source at a time
+   - Verify no regressions with passing tests
+   - Document each resolution
+
+3. **Timeline**: Estimate 10-15 TDD cycles dependent on conflict complexity
+
+### Success Criteria
+- Parser no longer hangs on 26DV test
+- Pass rate increases above 23.4%
+- All recovered tests remain passing
+- GLR conflicts documented and manageable
