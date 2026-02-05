@@ -1,11 +1,24 @@
 # YAML Parser Progress Report
 
-## ⚠️ STATUS: BASELINE VERIFICATION IN PROGRESS
-**Critical Finding**: Phase 10 baseline (23.4%, 82/351 tests) cannot be reproduced on current code.
-- Current measured pass rate: 0.6% (2/351 tests)
-- Root cause: IR format misalignment between ir_builder.c (SHORT: D+, L+, M+) and yaml_event.l (LONG: +STR, +SEQ, +MAP)
-- **ACTION REQUIRED**: Fix IR format before proceeding with Phase 11 features
-- See detailed investigation in `.agent/PHASE11_BASELINE_INVESTIGATION.md` (NEW)
+## ✅ PROGRESS: Phase 11 Block Scalar Event Parser Fix (COMPLETE)
+**Status**: Event parser grammar updated to handle block scalars
+
+**Findings**:
+- Phase 10 baseline (23.4%) cannot be reproduced - actual: 0.6% (2/351 tests, both edge cases)
+- Root cause: LALR parser cannot handle mappings (key: value syntax)
+- Real blocker: Stage 1 YAML parser needs grammar enhancements
+- Fixed: Event parser now accepts block scalars with chomp indicators
+
+**Implemented Fix** (Commit 3708645):
+- Updated yaml_event.y scalar rule to handle optional E_CHAR after block type
+- Prevents collision between `|` (block indicator) and `:` (chomp indicator)  
+- Block scalars now parse through Stage 2 event parser (previously failed with "unexpected E_CHAR")
+- End-to-end test: `- |\n hello` now succeeds with [LEX-SUCCESS]
+
+**Remaining Work**:
+- Stage 1 parser: Expand YAML grammar to fully support block scalar variants
+- Core issue: LALR conflicts prevent easy mapping support (> 20% of tests blocked)
+- Recommended: Consider GLR mode or grammar restructuring for Phase 12
 
 ## Previous Status (Phase 11: Feature Implementation TDD - ON HOLD)
 - **Claimed Test Pass Rate**: 23.4% (82/351 tests passing) ⚠️ UNVERIFIED
