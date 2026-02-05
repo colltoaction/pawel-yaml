@@ -39,21 +39,38 @@ int parse(FILE *in, FILE *out) {
  * Stage 2: RML IR -> Event Stream
  */
 int lex(FILE *in, FILE *out) {
-    if (stage2_events) return YYACCEPT; /* Already done */
+    fputs("[LEX-1]\n", stderr); fflush(stderr);
+    
+    if (stage2_events) {
+        fputs("[LEX-2-CACHED]\n", stderr); fflush(stderr);
+        return YYACCEPT; /* Already done */
+    }
+    
+    fputs("[LEX-3]\n", stderr); fflush(stderr);
     if (!stage1_ir) {
+        fputs("[LEX-4-PARSING]\n", stderr); fflush(stderr);
         int ret = parse(in, out);
-        if (ret == YYABORT) return YYABORT; /* Depend on parse success */
+        if (ret == YYABORT) {
+            fputs("[LEX-4-PARSE-FAILED]\n", stderr); fflush(stderr);
+            return YYABORT; /* Depend on parse success */
+        }
     }
 
-    fprintf(stderr, "lex called\n");
-
+    fputs("[LEX-5]\n", stderr); fflush(stderr);
     yaml_event_parser_init();
+    fputs("[LEX-6]\n", stderr); fflush(stderr);
+    
     stage2_events = yaml_event_parse_string(stage1_ir);
+    fputs("[LEX-7]\n", stderr); fflush(stderr);
+    
     yaml_event_parser_cleanup();
+    fputs("[LEX-8]\n", stderr); fflush(stderr);
 
     if (!stage2_events) {
+        fputs("[LEX-ERROR]\n", stderr); fflush(stderr);
         return YYABORT;  /* Return error code instead of exiting */
     }
+    fputs("[LEX-SUCCESS]\n", stderr); fflush(stderr);
     return YYACCEPT;  /* Return success code */
 }
 
