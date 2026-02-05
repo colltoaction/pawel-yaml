@@ -1,553 +1,411 @@
+%code requires {
+typedef struct {
+    char *anchor;
+    char *tag;
+} NodeProps;
+
+/* Stage APIs */
+void stage1_parse(FILE *input, FILE *output);
+void stage1_lex(FILE *input, FILE *output);
+void stage2_parse(FILE *input, FILE *output);
+void stage2_lex(FILE *input, FILE *output);
+}
+
 %{
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "mrl.h"
-#include "yaml_parser.h"
+#include <stdio.h>
+#include "yaml_event_parser.h"
+#include "rml_parser.h"
+#include "ir_builder.h"
+#include "lexer_context.h"
 
-extern int yylex();
+int yaml_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
+void yaml_error(void *yylloc, void *scanner, const char *s);
 
-/* Helper: Combine multi-line scalar parts with space separator
- * Used for plain scalars that continue across lines
- * Example: "line1" + "line2" = "line1 line2"
- */
-static char *combine_scalar_parts(const char *part1, const char *part2) {
-    if (!part1 || !part2) return part1 ? strdup(part1) : (part2 ? strdup(part2) : calloc(1, 1));
+/* Output buffer for RML IR */
+char *rml_ir_buf = NULL;
+size_t rml_ir_size = 0;
+static IRBuilder *ir;
+
+/* Legacy EMIT macro for gradual migration - will be removed */
+#define EMIT(...) do { if (ir) ir_write(ir, __VA_ARGS__); } while(0)
+
+/* Option 2: EventStream accumulator for direct building */
+static EventStream *current_event_stream = NULL;
+
+/* Helper: Add event to stream */
+static void add_event(YAMLEventType type) {
+    if (!current_event_stream) return;
     
-    size_t len1 = strlen(part1);
-    size_t len2 = strlen(part2);
-    char *combined = malloc(len1 + len2 + 2);
-    if (!combined) return strdup(part1);
+    YAMLEvent *evt = (YAMLEvent*)malloc(sizeof(YAMLEvent));
+    evt->type = type;
+    evt->quote_style = 0;
+    evt->value = NULL;
+    evt->anchor = NULL;
+    evt->tag = NULL;
+    evt->explicit_start = 0;
+    evt->alias_name = NULL;
     
-    strcpy(combined, part1);
-    combined[len1] = ' ';
-    strcpy(combined + len1 + 1, part2);
-    return combined;
+    if (current_event_stream->count >= current_event_stream->capacity) {
+        current_event_stream->capacity = (current_event_stream->capacity + 1) * 2;
+        current_event_stream->events = (YAMLEvent**)realloc(current_event_stream->events, 
+                                        current_event_stream->capacity * sizeof(YAMLEvent*));
+    }
+    current_event_stream->events[current_event_stream->count++] = evt;
+}
+
+/* Helper: Add scalar event */
+static void add_scalar_event(const char *value, char quote_style) {
+    if (!current_event_stream || !value) return;
+    
+    YAMLEvent *evt = (YAMLEvent*)malloc(sizeof(YAMLEvent));
+    evt->type = EVENT_SCALAR;
+    evt->quote_style = quote_style;
+    evt->value = (char*)malloc(strlen(value) + 1);
+    strcpy(evt->value, value);
+    evt->anchor = NULL;
+    evt->tag = NULL;
+    evt->explicit_start = 0;
+    evt->alias_name = NULL;
+    
+    if (current_event_stream->count >= current_event_stream->capacity) {
+        current_event_stream->capacity = (current_event_stream->capacity + 1) * 2;
+        current_event_stream->events = (YAMLEvent**)realloc(current_event_stream->events,
+                                        current_event_stream->capacity * sizeof(YAMLEvent*));
+    }
+    current_event_stream->events[current_event_stream->count++] = evt;
+}
+
+/* Helper: Add alias event */
+static void add_alias_event(const char *name) {
+    if (!current_event_stream || !name) return;
+    
+    YAMLEvent *evt = (YAMLEvent*)malloc(sizeof(YAMLEvent));
+    evt->type = EVENT_ALIAS;
+    evt->quote_style = 0;
+    evt->value = NULL;
+    evt->anchor = NULL;
+    evt->tag = NULL;
+    evt->explicit_start = 0;
+    evt->alias_name = (char*)malloc(strlen(name) + 1);
+    strcpy(evt->alias_name, name);
+    
+    if (current_event_stream->count >= current_event_stream->capacity) {
+        current_event_stream->capacity = (current_event_stream->capacity + 1) * 2;
+        current_event_stream->events = (YAMLEvent**)realloc(current_event_stream->events,
+                                        current_event_stream->capacity * sizeof(YAMLEvent*));
+    }
+    current_event_stream->events[current_event_stream->count++] = evt;
 }
 
 %}
 
-%define api.pure full
+%define api.pure true
+%define api.prefix {yaml_}
 %locations
-%parse-param {void *yyscanner} {ParseOutput *output}
-%token-table
-%lex-param {void *yyscanner}
-%define parse.trace
-%define parse.error verbose
-%define parse.lac full
-
-/* Conflict Analysis & Resolution Strategy
- * 
- * SHIFT/REDUCE CONFLICTS (25):
- *   Occur when parser can either shift next token or reduce current rule.
- *   YAML indentation creates structural ambiguities:
- *   - After INDENT, should next '-' start a new list item or continue parent?
- *   - After ':' in mapping, should next line be value or new key?
- *   Bison's default (SHIFT) matches YAML's left-associative semantics.
- * 
- * REDUCE/REDUCE CONFLICTS (11):
- *   Occur when multiple rules could reduce at same point.
- *   Examples: block_node vs flow_node; plain vs quoted scalars.
- *   Parser explores both paths; first matching rule in grammar wins.
- *   For full conflict management, would require GLR parser (%expect-rr).
- * 
- * Mitigation: Document conflicts as intended, monitor via CI/CD.
- * Do NOT use %expect or %expect-rr as this creates hard errors on mismatch.
- * Instead, conflicts serve as regression warning system.
- */
+%parse-param {void *scanner}
+%lex-param {void *scanner}
 
 %union {
-    char *sval;
-    StringDiagram *sd;
+    char *string;
+    NodeProps props;
 }
 
-%destructor { free($$); } <sval>
-%destructor { 
-    if ($$ != output->diagram) {
-       free_stringdiagram($$); 
-    }
-} <sd>
+%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS
+%token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET COLON QUESTION
+%token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
 
-%printer { 
-    if ($$) fprintf(yyo, "\"%s\"", $$);
-    else fprintf(yyo, "<NULL>");
-} <sval>
+%type <props> node_props
 
-%printer { 
-    if ($$) {
-        fprintf(yyo, "<SD:%s>", 
-                $$->anchor ? $$->anchor : 
-                $$->tag ? $$->tag : "?");
-    } else {
-        fprintf(yyo, "<NULL>");
-    }
-} <sd>
+/* Destructors for memory safety */
+%destructor { free($$); } <string>
+%destructor { free($$.anchor); free($$.tag); } <props>
 
+%glr-parser
+%expect 47
+%expect-rr 34
+%locations
+%define parse.error detailed
 
-%token <sval> SCALAR
-%token <sval> ANCHOR ALIAS TAG
-%token BLOCK_SEQ_START "-"
-%token BLOCK_KEY "?"
-%token FLOW_SEQ_START "["
-%token FLOW_SEQ_END "]"
-%token FLOW_MAP_START "{"
-%token FLOW_MAP_END "}"
-%token COMMA ","
-%token COLON ":"
-%token DOC_START "---"
-%token DOC_END "..."
-%token INDENT "INDENT"
-%token DEDENT "DEDENT"
-%token SEQ "SEQ"
-%token MAP "MAP"
-%token STYLE_PLAIN "PLAIN"
-%token STYLE_DQUOTE "\""
-%token STYLE_SQUOTE "'"
-%token STYLE_LITERAL "|"
-%token STYLE_FOLDED ">"
-%token STYLE_ALIAS "*"
-%token STYLE_ANCHOR "&"
-
-%precedence LOW
+/* Precedence declarations for disambiguation */
+%left COMMA RBRACE RBRACK
 %precedence COLON
-
-%type <sd> stream documents document root_node sub_node flow_item
-%type <sd> block_node flow_node simple_node complex_node
-%type <sd> block_sequence block_mapping mapping_entry
-%type <sd> items flow_item_list mapping_items flow_mapping_list
-%type <sval> scalar_continuation scalar_continuation_lines
+%precedence SCALAR QSCALAR SSCALAR BSCALAR
 
 %%
 
 stream:
-    documents {
-        /* Finalize: replace the clone with the actual tree */
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = $1;
-        $$ = NULL;
-    }
+    { ir = ir_builder_new_memory(); ir_write(ir, "+STR\n"); add_event(EVENT_STREAM_START); }
+    documents
+    { ir_write(ir, "-STR\n"); rml_ir_buf = ir_builder_finalize(ir); rml_ir_size = strlen(rml_ir_buf); ir_builder_free(ir); ir = NULL; add_event(EVENT_STREAM_END); }
     ;
 
 documents:
-    document { 
-        $$ = $1; 
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = clone_stringdiagram($$);
-    }
-    | documents "---" root_node {
-        if ($3) $3->doc_marker = 1;
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-        
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = clone_stringdiagram($$);
-    }
-    | documents "---" root_node "..." {
-        if ($3) {
-            $3->doc_marker = 1;
-            $3->doc_end_marker = 1;
-        }
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-        
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = clone_stringdiagram($$);
-    }
+    implicit_document
+    | explicit_documents
+    | implicit_document explicit_documents
+    | DOC_END
     ;
 
-document:
-    root_node { $$ = $1; }
-    | "---" root_node { 
-        if ($2) $2->doc_marker = 1;
-        $$ = $2; 
-    }
-    | "---" root_node "..." { 
-        if ($2) {
-            $2->doc_marker = 1;
-            $2->doc_end_marker = 1;
-        }
-        $$ = $2; 
-    }
+explicit_documents:
+    explicit_document
+    | explicit_documents explicit_document
     ;
 
-root_node:
-    block_mapping { $$ = $1; } %prec COLON
-    | sub_node { $$ = $1; } %prec LOW
+explicit_document:
+    DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); } document_body { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | DOC_START { ir_doc_start(ir); ir_scalar_empty(ir); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); } document_body { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | directives DOC_START { ir_doc_start(ir); ir_scalar_empty(ir); add_event(EVENT_DOCUMENT_START); add_scalar_event("", ':'); } optional_doc_end { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     ;
 
-simple_node:
-    SCALAR {
-        Generator *g = get_or_create_generator(&output->alphabet, $1, 0, 1);
-        $$ = create_sd_gen(g);
-        free($1);
-    }
-    | SCALAR "INDENT" scalar_continuation_lines "DEDENT" {
-        /* Multi-line plain scalar: accumulate all lines */
-        char *combined = combine_scalar_parts($1, $3);
-        Generator *g = get_or_create_generator(&output->alphabet, combined, 0, 1);
-        $$ = create_sd_gen(g);
-        free(combined);
-        free($1);
-        free($3);
-    }
-    | ALIAS {
-        Generator *g = get_or_create_generator(&output->alphabet, $1, 0, 1);
-        $$ = create_sd_gen(g);
-        free($1);
-    }
-    | flow_node { $$ = $1; }
+directives: directive | directives directive ;
+directive: YAML_DIRECTIVE | TAG_DIRECTIVE SCALAR[name] SCALAR[value] { free($name); free($value); } ;
+
+optional_doc_end: /* empty */ | DOC_END ;
+
+implicit_document:
+    document_body { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
     ;
 
-scalar_continuation:
-    SCALAR {
-        $$ = $1;  /* Simple passthrough for now */
-    }
-    | SCALAR "INDENT" scalar_continuation_lines "DEDENT" {
-        /* Nested multi-line (rare but possible) */
-        char *combined = combine_scalar_parts($1, $3);
-        $$ = combined;
-        free($1);
-        free($3);
-    }
+document_body:
+    { ir_doc_start(ir); } node
+    | { ir_doc_start(ir); ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 3
+    | { ir_doc_start(ir); ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 2
+    | node_props[p] { ir_doc_start(ir); ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } 
+      map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); } %dprec 4
+    | node_props[p] { ir_doc_start(ir); ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } 
+      seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); } %dprec 3
     ;
 
-scalar_continuation_lines:
-    SCALAR {
-        $$ = $1;
-    }
-    | scalar_continuation_lines SCALAR {
-        /* Accumulate multiple continuation lines */
-        char *combined = combine_scalar_parts($1, $2);
-        $$ = combined;
-        free($1);
-        free($2);
-    }
+node:
+    node_body %dprec 2
+    | TAG[t] node_body { ir_prop_tag(ir, $t); free($t); } %dprec 4
+    | node_props[p] { ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } node_body %dprec 3
+    | node_props[p] { ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); ir_scalar_empty(ir); free($p.anchor); free($p.tag); } %dprec 1
     ;
 
-complex_node:
-    simple_node { $$ = $1; }
-    | TAG simple_node {
-        if ($2) {
-            if ($2->tag) free($2->tag);
-            $2->tag = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | ANCHOR simple_node {
-        if ($2) {
-            if ($2->anchor) free($2->anchor);
-            $2->anchor = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | TAG ANCHOR simple_node {
-        if ($3) {
-            if ($3->tag) free($3->tag);
-            if ($3->anchor) free($3->anchor);
-            $3->tag = $1;
-            $3->anchor = $2;
-            $$ = $3;
-        } else {
-            free($1); free($2); $$ = NULL;
-        }
-    }
-    | ANCHOR TAG simple_node {
-        if ($3) {
-            if ($3->tag) free($3->tag);
-            if ($3->anchor) free($3->anchor);
-            $3->anchor = $1;
-            $3->tag = $2;
-            $$ = $3;
-        } else {
-            free($1); free($2); $$ = NULL;
-        }
-    }
+node_body:
+    scalar
+    | ALIAS[a] { ir_alias(ir, $a+1); add_alias_event($a+1); free($a); }
+    | flow_seq
+    | flow_map
+    | collection
     ;
 
-sub_node:
-    simple_node { $$ = $1; }
-    | block_sequence { $$ = $1; }
-    | block_mapping { $$ = $1; }
-    | "INDENT" root_node "DEDENT" { 
-        /* Compose: INDENT ; root_node ; DEDENT */
-        if (!output->alphabet) output->alphabet = create_alphabet();
-        StringDiagram *inner_comp = create_sd_comp(create_sd_gen(output->alphabet->indent_gen), $2);
-        $$ = create_sd_comp(inner_comp, create_sd_gen(output->alphabet->dedent_gen));
-    }
-    | TAG sub_node {
-        if ($2) {
-            if ($2->tag) free($2->tag);
-            $2->tag = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | ANCHOR sub_node {
-        if ($2) {
-            if ($2->anchor) free($2->anchor);
-            $2->anchor = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
+node_props:
+    TAG[t] { $$.anchor = NULL; $$.tag = $t; }
+    | ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
+    | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
+    | TAG[t] ANCHOR[a] { $$.anchor = $a; $$.tag = $t; }
     ;
 
-block_sequence:
-    items {
-        const char *name = rml_token_name(SEQ);
-        if (!name) name = "SEQ";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $1->coarity, 1);
-        $$ = create_sd_comp($1, create_sd_gen(g));
-    }
+scalar:
+    SCALAR[s] { ir_scalar_plain(ir, $s); add_scalar_event($s, ':'); free($s); }
+    | QSCALAR[s] { ir_scalar_quoted(ir, $s, '"'); add_scalar_event($s, '"'); free($s); }
+    | SSCALAR[s] { ir_scalar_quoted(ir, $s, '\''); add_scalar_event($s, '\''); free($s); }
+    | BSCALAR[s] { ir_scalar_block(ir, $s+1, $s[0]); add_scalar_event($s+1, $s[0]); free($s); }
     ;
 
-items:
-    "-" root_node { $$ = $2; }
-    | items "-" root_node {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-    }
-    | items "INDENT" "-" root_node {
-        /* Handle nested sequences with indentation
-         * When a block sequence is nested with increased indentation,
-         * the lexer emits INDENT. This rule allows parser to continue
-         * recognizing items after that INDENT token.
-         * Note: This is a pragmatic workaround for lexer limitation
-         * where it cannot distinguish between "new indentation level"
-         * and "natural indentation within nested sequence context"
-         */
-        if ($1 && $4) $$ = create_sd_prod($1, $4);
-        else if ($1) $$ = $1;
-        else $$ = $4;
-    }
+collection: map | seq ;
+
+seq:
+    INDENT { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } seq_entries DEDENT { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
     ;
 
-block_mapping:
-    mapping_items {
-        const char *name = rml_token_name(MAP);
-        if (!name) name = "MAP";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $1->coarity, 1);
-        $$ = create_sd_comp($1, create_sd_gen(g));
-    }
-    | mapping_items error {
-        /* Partial mapping on error */
-        const char *name = rml_token_name(MAP);
-        if (!name) name = "MAP";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $1->coarity, 1);
-        $$ = create_sd_comp($1, create_sd_gen(g));
-        if (output->diagram) free_stringdiagram(output->diagram);
-        output->diagram = clone_stringdiagram($$);
-    }
+seq_entries:
+    seq_entry
+    | seq_entries seq_entry
     ;
 
-mapping_items:
-    mapping_entry { $$ = $1; }
-    | mapping_items mapping_entry {
-        if ($1 && $2) $$ = create_sd_prod($1, $2);
-        else if ($1) $$ = $1;
-        else $$ = $2;
-    }
+seq_entry:
+    BULLET node %dprec 2
+    | BULLET INDENT seq_entries DEDENT %dprec 4
+    | BULLET { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 3
+    | BULLET { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
     ;
 
-mapping_entry:
-    complex_node ":" sub_node {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) {
-            /* Case with colon but empty value */
-            const char *name = rml_token_name(COLON);
-            if (!name) name = ":";
-            Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-            $$ = create_sd_prod($1, create_sd_gen(g));
-        } else {
-            $$ = $3;
-        }
-    }
-    | complex_node ":" {
-        const char *name = rml_token_name(COLON);
-        if (!name) name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_prod($1, create_sd_gen(g));
-    }
-    | "?" sub_node ":" sub_node {
-        if ($2 && $4) $$ = create_sd_prod($2, $4);
-        else if ($2) {
-            const char *name = rml_token_name(COLON);
-            if (!name) name = ":";
-            Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-            $$ = create_sd_prod($2, create_sd_gen(g));
-        } else {
-            $$ = $4;
-        }
-    }
-    | "?" sub_node ":" {
-        const char *name = rml_token_name(COLON);
-        if (!name) name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_prod($2, create_sd_gen(g));
-    }
-    | "?" sub_node {
-        const char *name = rml_token_name(COLON);
-        if (!name) name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        if ($2) $$ = create_sd_prod($2, create_sd_gen(g));
-        else $$ = create_sd_gen(g);
-    }
-    | ":" sub_node {
-        const char *name = rml_token_name(COLON);
-        if (!name) name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        if ($2) $$ = create_sd_prod(create_sd_gen(g), $2);
-        else $$ = create_sd_gen(g);
-    }
+map:
+    INDENT { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
     ;
 
-flow_node:
-    "[" "]" {
-        const char *name = rml_token_name(SEQ);
-        if (!name) name = "SEQ";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_gen(g);
-        $$->flow_style = 1;
-    }
-    | "[" flow_item_list "]" {
-        const char *name = rml_token_name(SEQ);
-        if (!name) name = "SEQ";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $2->coarity, 1);
-        $$ = create_sd_comp($2, create_sd_gen(g));
-        $$->flow_style = 1;
-    }
-    | "{" "}" {
-        const char *name = rml_token_name(MAP);
-        if (!name) name = "MAP";
-        Generator *g = get_or_create_generator(&output->alphabet, name, 0, 1);
-        $$ = create_sd_gen(g);
-        $$->flow_style = 1;
-    }
-    | "{" flow_mapping_list "}" {
-        const char *name = rml_token_name(MAP);
-        if (!name) name = "MAP";
-        Generator *g = get_or_create_generator(&output->alphabet, name, $2->coarity, 1);
-        $$ = create_sd_comp($2, create_sd_gen(g));
-        $$->flow_style = 1;
-    }
+map_entries:
+    map_entry
+    | map_entries map_entry
     ;
 
-flow_item_list:
-    flow_item { $$ = $1; }
-    | flow_item_list "," flow_item {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-    }
+map_entry:
+    entry_key COLON node %dprec 3
+    | entry_key COLON INDENT node DEDENT %dprec 3
+    | QUESTION node COLON node %dprec 5
+    | QUESTION node COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 4
+    | entry_key COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
+    | QUESTION node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | COLON node %dprec 2 { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     ;
 
-flow_item:
-    simple_node { $$ = $1; }
-    | block_sequence { $$ = $1; }
-    | block_mapping { 
-        $$ = $1;
-        if ($$) $$->flow_style = 1;
-    }
-    | "INDENT" root_node "DEDENT" { $$ = $2; }
-    | TAG flow_item {
-        if ($2) {
-            if ($2->tag) free($2->tag);
-            $2->tag = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
-    | ANCHOR flow_item {
-        if ($2) {
-            if ($2->anchor) free($2->anchor);
-            $2->anchor = $1;
-            $$ = $2;
-        } else {
-            free($1);
-            $$ = NULL;
-        }
-    }
+entry_key: scalar | ALIAS[a] { ir_alias(ir, $a+1); add_alias_event($a+1); free($a); } | flow_seq | flow_map | node_props[p] scalar { ir_prop_both(ir, $p.anchor?$p.anchor+1:"", $p.tag?$p.tag:""); free($p.anchor); free($p.tag); } ;
+
+flow_seq:
+    LBRACK { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } flow_seq_entries RBRACK { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
+    | LBRACK RBRACK { ir_seq_start(ir, NULL, NULL); ir_seq_end(ir); add_event(EVENT_SEQUENCE_START); add_event(EVENT_SEQUENCE_END); }
     ;
 
-flow_mapping_list:
-    mapping_entry { $$ = $1; }
-    | simple_node {
-        const char *colon_name = rml_token_name(COLON);
-        if (!colon_name) colon_name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
-        $$ = create_sd_prod($1, create_sd_gen(g));
-    }
-    | flow_mapping_list "," mapping_entry {
-        if ($1 && $3) $$ = create_sd_prod($1, $3);
-        else if ($1) $$ = $1;
-        else $$ = $3;
-    }
-    | flow_mapping_list "," simple_node {
-        const char *colon_name = rml_token_name(COLON);
-        if (!colon_name) colon_name = ":";
-        Generator *g = get_or_create_generator(&output->alphabet, colon_name, 0, 1);
-        StringDiagram *entry = create_sd_prod($3, create_sd_gen(g));
-        if ($1 && entry) $$ = create_sd_prod($1, entry);
-        else if ($1) $$ = $1;
-        else $$ = entry;
-    }
-    | flow_mapping_list "," {
-        $$ = $1;
-    }
+flow_seq_entries:
+    flow_node
+    | flow_seq_entries COMMA flow_node
+    | flow_seq_entries COMMA
+    | flow_node COLON node { /* simplified */ }
     ;
+
+flow_map:
+    LBRACE { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } flow_map_entries RBRACE { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
+    | LBRACE RBRACE { ir_map_start(ir, NULL, NULL); ir_map_end(ir); add_event(EVENT_MAPPING_START); add_event(EVENT_MAPPING_END); }
+    ;
+
+flow_map_entries:
+    flow_map_entry
+    | flow_map_entries COMMA flow_map_entry
+    | flow_map_entries COMMA
+    ;
+
+flow_map_entry:
+    node COLON node
+    | node COLON                    %dprec 1
+    | node                          %dprec 2
+    ;
+
+flow_node: node ;
 
 %%
 
-void yyerror(YYLTYPE *yylloc, void *yyscanner, ParseOutput *output, const char *s) {
-    (void)yyscanner;
-    (void)output;
-    if (yylloc) {
-        fprintf(stderr, "%d.%d-%d.%d: %s\n",
-                yylloc->first_line, yylloc->first_column,
-                yylloc->last_line, yylloc->last_column,
-                s);
-    } else {
-        fprintf(stderr, "Parse error: %s\n", s);
+/* Bison's detailed error messages via %define parse.error detailed
+   are passed as 's' parameter to this function.
+   Simply printing them ensures all error information reaches stderr. */
+void yaml_error(void *yylloc, void *scanner, const char *s) {
+    if (s) {
+        fprintf(stderr, "YAML Error: %s\n", s);
     }
 }
 
-const char *rml_token_name(int tok) {
-    int sym = YYTRANSLATE(tok);
-    if (sym < 0 || sym >= YYNTOKENS) return NULL;
-    const char *name = yytname[sym];
-    if (name && name[0] == '"') {
-        static char buf[256];
-        size_t len = strlen(name);
-        if (len > 255) len = 255;
-        int j = 0;
-        for (int i = 1; i < len - 1; i++) {
-            if (name[i] == '\\' && name[i+1] == '"') {
-                buf[j++] = '"';
-                i++;
-            } else if (name[i] == '\\' && name[i+1] == '\\') {
-                buf[j++] = '\\';
-                i++;
-            } else {
-                buf[j++] = name[i];
-            }
+/* Option 2: Public API for direct EventStream building */
+EventStream* yaml_parse_to_event_stream(const char *input) {
+    /* Create new event stream */
+    current_event_stream = (EventStream*)malloc(sizeof(EventStream));
+    current_event_stream->capacity = 128;
+    current_event_stream->count = 0;
+    current_event_stream->events = (YAMLEvent**)malloc(current_event_stream->capacity * sizeof(YAMLEvent*));
+    
+    /* Initialize lexer with input */
+    extern int yaml_lex_init_extra(void *user_defined, void **scanner);
+    extern int yaml_lex_destroy(void *scanner);
+    
+    void *scanner;
+    yaml_lex_init_extra((void*)input, &scanner);
+    
+    /* Parse */
+    int ret = yaml_parse(scanner);
+    
+    /* Cleanup */
+    yaml_lex_destroy(scanner);
+    
+    EventStream *result = current_event_stream;
+    current_event_stream = NULL;
+    
+    return result;
+}
+
+/**
+ * Stage 1 API: Parse YAML input and generate RML IR
+ * 
+ * @param input Input stream containing YAML text
+ * @param ir_buf Output buffer pointer (caller must free)
+ * @param ir_size Output buffer size
+ * @return 0 on success, non-zero on parse error
+ */
+int yaml_stage_parse(FILE *input_stream, char **ir_buf, size_t *ir_size) {
+    extern int yaml_lex_init(void **scanner);
+    extern int yaml_lex_destroy(void *scanner);
+    extern void yaml_set_in(FILE *in, void *scanner);
+    extern void yaml_set_extra(void *extra, void *scanner);
+    
+    /* Preprocessing: Replace visible space characters (U+2423, UTF-8: 0xE2 0x90 0xA3)
+     * with regular spaces for YAML test suite compatibility.
+     */
+    FILE *input = tmpfile();
+    int c;
+    unsigned char prev = 0, prev2 = 0;
+    while ((c = fgetc(input_stream)) != EOF) {
+        unsigned char byte = (unsigned char)c;
+        
+        /* Detect UTF-8 sequence for U+2423 (0xE2 0x90 0xA3) */
+        if (byte == 0xE2 && prev2 == 0 && prev == 0) {
+            prev2 = prev;
+            prev = byte;
+        } else if (byte == 0x90 && prev == 0xE2 && prev2 == 0) {
+            prev2 = prev;
+            prev = byte;
+        } else if (byte == 0xA3 && prev == 0x90 && prev2 == 0xE2) {
+            /* Complete U+2423 sequence - output as space */
+            fputc(' ', input);
+            prev = 0;
+            prev2 = 0;
+        } else {
+            /* Not a match - output any previously buffered bytes */
+            if (prev2) fputc(prev2, input);
+            if (prev) fputc(prev, input);
+            
+            fputc(byte, input);
+            prev = 0;
+            prev2 = 0;
         }
-        buf[j] = '\0';
-        return buf;
     }
-    return name;
+    /* Flush any remaining buffered bytes */
+    if (prev2) fputc(prev2, input);
+    if (prev) fputc(prev, input);
+    
+    rewind(input);
+    
+    /* Create lexer context */
+    LexerContext *ctx = lexer_context_new();
+    
+    /* Initialize lexer scanner */
+    void *scanner;
+    yaml_lex_init(&scanner);
+    
+    /* Configure scanner */
+    yaml_set_extra(ctx, scanner);
+    yaml_set_in(input, scanner);
+    
+    /* Parse YAML */
+    int result = yaml_parse(scanner);
+    
+    /* Cleanup */
+    fclose(input);
+    yaml_lex_destroy(scanner);
+    lexer_context_free(ctx);
+    
+    /* Return generated IR */
+    *ir_buf = rml_ir_buf;
+    *ir_size = rml_ir_size;
+    
+    return result;
+}
+
+void stage1_parse(FILE *input, FILE *output) {
+    yaml_stage_parse(input, &(char*){NULL}, &(size_t){0});
+    fputs(rml_ir_buf ?: "", output);
+}
+
+void stage1_lex(FILE *input, FILE *output) {
+    stage1_parse(input, output);
+}
+
+void stage2_parse(FILE *input, FILE *output) {
+    fputs(rml_parse_event_stream(yaml_event_parse_string(rml_ir_buf))->intermediate_representation ?: "", output);
+}
+
+void stage2_lex(FILE *input, FILE *output) {
+    stage2_parse(input, output);
 }

@@ -38,13 +38,9 @@ typedef struct {
     int capacity;
 } EventStream;
 
-/* Initialize event parser */
+/* Stage 2 API */
 int yaml_event_parser_init(void);
-
-/* Parse event stream from string */
 EventStream* yaml_event_parse_string(const char *input);
-
-/* Cleanup */
 void yaml_event_parser_cleanup(void);
 void event_stream_free(EventStream *stream);
 

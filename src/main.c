@@ -1,9 +1,9 @@
 #include <stdio.h>
-#include "pipeline.h"
+#include "yaml.tab.h"
 
-int main(void) {
-    parse(stdin, stdout);
-    lex(stdin, stdout);
-    validate(stdin, stdout);
+int main(int argc, char **argv) {
+    (void)argc; (void)argv;
+    yaml_pipeline_run(stdin, stdout);
     return 0;
 }
+

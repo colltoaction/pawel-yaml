@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 
+void yyerror(const char *msg);
+
 /**
  * YAML Event Stream (Test-Suite Canonical Format)
  * 
@@ -156,6 +158,8 @@ int yaml_event_parser_init(void) {
 
 /* Parse event stream from string - moved from yaml_event_parser.c */
 EventStream* yaml_event_parse_string(const char *input) {
+    yaml_event_parser_init();
+    
     if (!input) return NULL;
     
     /* Create event stream */
@@ -312,6 +316,9 @@ void event_stream_free(EventStream *stream) {
 %token <sval> QUOTED_STRING IDENTIFIER   /* "value", plain_value */
 %token <cval> CHAR                       /* : " ' | > */
 
+%define parse.error detailed
+%locations
+
 %%
 
 /* TOP-LEVEL: Parse a stream of events */
@@ -332,42 +339,9 @@ event : "+STR"
       | doc_event
       | collection_start
       | collection_end
-      | "=VAL" CHAR QUOTED_STRING  /* $2=char, $3=value */
-        {
-            YAMLEvent *e = event_scalar_new($2, $3);
-            if (e && current_stream) {
-                if (current_stream->count >= current_stream->capacity) {
-                    current_stream->capacity = current_stream->capacity * 2 + 10;
-                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
-                                                                   current_stream->capacity * sizeof(YAMLEvent *));
-                }
-                current_stream->events[current_stream->count++] = e;
-            }
-        }
-      | "=VAL" CHAR IDENTIFIER  /* $2=char, $3=value */
-        {
-            YAMLEvent *e = event_scalar_new($2, $3);
-            if (e && current_stream) {
-                if (current_stream->count >= current_stream->capacity) {
-                    current_stream->capacity = current_stream->capacity * 2 + 10;
-                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
-                                                                   current_stream->capacity * sizeof(YAMLEvent *));
-                }
-                current_stream->events[current_stream->count++] = e;
-            }
-        }
-      | "=ALI" IDENTIFIER  /* $2=name */
-        {
-            YAMLEvent *e = event_alias_new($2);
-            if (e && current_stream) {
-                if (current_stream->count >= current_stream->capacity) {
-                    current_stream->capacity = current_stream->capacity * 2 + 10;
-                    current_stream->events = (YAMLEvent **)realloc(current_stream->events,
-                                                                   current_stream->capacity * sizeof(YAMLEvent *));
-                }
-                current_stream->events[current_stream->count++] = e;
-            }
-        }
+      | "=VAL" CHAR[style] QUOTED_STRING[content]
+      | "=VAL" CHAR[style] IDENTIFIER[content]
+      | "=ALI" IDENTIFIER[target]
       ;
 
 /* Document events */
@@ -377,13 +351,13 @@ doc_event : "+DOC"
 
 /* Collection events with optional anchor/tag */
 collection_start : "+SEQ"
-                 | "+SEQ" ANCHOR
-                 | "+SEQ" TAG
-                 | "+SEQ" ANCHOR TAG
+                 | "+SEQ" ANCHOR[name]
+                 | "+SEQ" TAG[uri]
+                 | "+SEQ" ANCHOR[name] TAG[uri]
                  | "+MAP"
-                 | "+MAP" ANCHOR
-                 | "+MAP" TAG
-                 | "+MAP" ANCHOR TAG
+                 | "+MAP" ANCHOR[name]
+                 | "+MAP" TAG[uri]
+                 | "+MAP" ANCHOR[name] TAG[uri]
                  ;
 
 collection_end : "-SEQ"
@@ -392,8 +366,11 @@ collection_end : "-SEQ"
 
 %%
 
-/* Error handler - can be overridden by tests */
-__attribute__((weak))
+/* Bison's detailed error messages via %define parse.error detailed
+   are passed as 'msg' parameter to this function.
+   Simply printing them ensures all error information reaches stderr. */
 void yyerror(const char *msg) {
-    fprintf(stderr, "Parse error: %s\n", msg);
+    if (msg) {
+        fprintf(stderr, "YAML Parse Error: %s\n", msg);
+    }
 }
