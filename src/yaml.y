@@ -120,11 +120,6 @@ static void add_alias_event(const char *name) {
 %destructor { free($$); } <string>
 %destructor { free($$.anchor); free($$.tag); } <props>
 
-%glr-parser
-
-%expect 140
-%expect-rr 63
-
 %locations
 %define parse.error detailed
 
