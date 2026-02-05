@@ -1,17 +1,72 @@
+%code requires {
+/* === TYPE DEFINITIONS (from common.h & event_parser.h) === */
+
+/**
+ * Node properties structure for anchor/tag pairs
+ */
+typedef struct {
+    char *anchor;
+    char *tag;
+} NodeProps;
+
+/**
+ * Stable Event Types (Alphabet for all stages)
+ * Matches values expected in event stream (300+)
+ */
+typedef enum {
+    EVENT_STREAM_START = 300,
+    EVENT_STREAM_END,
+    EVENT_DOCUMENT_START,
+    EVENT_DOCUMENT_END,
+    EVENT_SEQUENCE_START,
+    EVENT_SEQUENCE_END,
+    EVENT_MAPPING_START,
+    EVENT_MAPPING_END,
+    EVENT_SCALAR,
+    EVENT_ALIAS,
+} YAMLEventType;
+
+/**
+ * Individual YAML event representation
+ */
+typedef struct {
+    YAMLEventType type;
+    char quote_style;
+    char *value;
+    char *anchor;
+    char *tag;
+    int explicit_start;
+    char *alias_name;
+} YAMLEvent;
+
+/**
+ * Event stream container
+ */
+typedef struct {
+    YAMLEvent **events;
+    int count;
+    int capacity;
+} EventStream;
+
+/**
+ * Validation result after RML parsing
+ */
+typedef struct {
+    int is_valid;
+    char *error_message;
+    int error_line;
+    char *intermediate_representation;
+} ValidationResult;
+}
+
 %{
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include "yaml_event_parser.h"
+#include "composition.tab.h"  /* Include for type definitions */
 
-int yaml_event_lex(void);
-void yaml_event_error(const char *msg);
-#define yylex yaml_event_lex
-#define yyerror yaml_event_error
-
-/**
- * YAML Event Stream & RML Validation (Unified Stage 2 & 3)
- */
+/* Forward declaration for cleanup function */
+void event_stream_free(EventStream *stream);
 
 /* Intermediate EventStream being built */
 static EventStream *current_stream = NULL;
@@ -72,7 +127,7 @@ static YAMLEvent* event_alias_new(const char *name) {
 
 %}
 
-%define api.prefix {yaml_event_}
+%define api.prefix {composition_yy_}
 
 %union {
     char *sval;   /* String values */
@@ -98,6 +153,13 @@ static YAMLEvent* event_alias_new(const char *name) {
 
 %define parse.error detailed
 %locations
+
+%{
+int composition_lex(void);
+void composition_yy_error(const char *msg);
+#define yylex composition_lex
+#define yyerror composition_yy_error
+%}
 
 %%
 
@@ -161,13 +223,13 @@ map_pairs : %empty
 
 %%
 
-void yaml_event_error(const char *msg) {
-    fprintf(stderr, "YAML Event Parse Error: %s\n", msg);
+void event_error(const char *msg) {
+    fprintf(stderr, "Event Parse Error: %s\n", msg);
 }
 
 /* Global state for string parsing */
-extern void *yaml_event__scan_string(const char *);
-extern void yaml_event__delete_buffer(void *);
+extern void *composition__scan_string(const char *);
+extern void composition__delete_buffer(void *);
 
 int yaml_event_parser_init(void) {
     return 0;
@@ -176,8 +238,8 @@ int yaml_event_parser_init(void) {
 void yaml_event_parser_cleanup(void) {
 }
 
-/* Updated Stage 2 API: Uses Bison to parse and build EventStream */
-EventStream* yaml_event_parse_string(const char *input) {
+/* Stage 3 API: Uses Bison to parse and build EventStream */
+EventStream* event_parse_string(const char *input) {
     if (!input) return NULL;
     
     current_stream = (EventStream *)malloc(sizeof(EventStream));
@@ -186,9 +248,9 @@ EventStream* yaml_event_parse_string(const char *input) {
     current_stream->capacity = 10;
     current_stream->events = (YAMLEvent **)malloc(current_stream->capacity * sizeof(YAMLEvent *));
 
-    void *buf = yaml_event__scan_string(input);
-    int res = yaml_event_parse();
-    yaml_event__delete_buffer(buf);
+    void *buf = composition__scan_string(input);
+    int res = composition_yy_parse();
+    composition__delete_buffer(buf);
 
     if (res != 0) {
         event_stream_free(current_stream);
@@ -240,7 +302,10 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream) {
                 case EVENT_SEQUENCE_END: pos += sprintf(ir + pos, "-SEQ\n"); break;
                 case EVENT_MAPPING_START: pos += sprintf(ir + pos, "+MAP\n"); break;
                 case EVENT_MAPPING_END: pos += sprintf(ir + pos, "-MAP\n"); break;
-                case EVENT_SCALAR: pos += sprintf(ir + pos, "=VAL %c:%s\n", e->quote_style, e->value ? e->value : ""); break;
+                case EVENT_SCALAR: 
+                    if (e->quote_style == ':') pos += sprintf(ir + pos, "=VAL :%s\n", e->value ? e->value : "");
+                    else pos += sprintf(ir + pos, "=VAL %c:%s\n", e->quote_style, e->value ? e->value : "");
+                    break;
                 case EVENT_ALIAS: pos += sprintf(ir + pos, "=ALI *%s\n", e->alias_name); break;
             }
         }
@@ -256,4 +321,9 @@ void validation_result_free(ValidationResult *result) {
     free(result->error_message);
     free(result->intermediate_representation);
     free(result);
+}
+
+/* Error handler for composition stage */
+void composition_yy_error(const char *msg) {
+    fprintf(stderr, "Composition error: %s\n", msg);
 }
