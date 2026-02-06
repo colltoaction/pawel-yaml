@@ -1,5 +1,29 @@
 # YAML Parser Progress Report
 
+## ✅ PROGRESS: Phase 12 - Architectural Refactoring & Analysis (IN PROGRESS)
+**Status**: Code quality improvements and strategic planning.
+**Current Test Rate**: 127/351 (36.2%)
+
+**Completed**:
+1. ✅ "Just the Scanner" pattern refactoring - removed redundant FILE* passing
+2. ✅ Analyzed nested mapping parsing failure - root cause identified
+3. ✅ Created strategic roadmap for 50%+ pass rate
+4. ✅ Verified test suite infrastructure
+
+**Key Findings**:
+- Block mappings fail due to INDENT/DEDENT tokens appearing between map entries
+- Grammar-based fixes create unmanageable conflicts (>30 conflicts)
+- Per YACC paper: Semantic constraints belong outside grammar (not in Phase 1)
+- Recommended solution: Phase 2 validation layer, not grammar changes
+
+**Next Steps** (Priority Order):
+1. Escape sequences in quoted strings (+5-8 tests)
+2. Tags and anchors proper handling (+5-8 tests)
+3. Block scalar composition improvements (+25-40 tests)
+4. Phase 2 semantic validation for block mappings (+30-50 tests)
+
+---
+
 ## ✅ PROGRESS: Phase 11 Block Scalar Event Parser Fix (COMPLETE)
 **Status**: Event parser grammar updated to handle block scalars
 
