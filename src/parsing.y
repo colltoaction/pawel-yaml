@@ -1,5 +1,6 @@
 %code top {
-/* Type definitions are in %code requires and included via parsing.tab.h */
+/* Forward declare yyscan_t for reentrant scanner type safety */
+typedef void* yyscan_t;
 }
 
 %code requires {
@@ -95,8 +96,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 10
-%expect-rr 13
+%expect 26
+%expect-rr 16
 
 %{
 #include <stdlib.h>
@@ -127,6 +128,7 @@ extern void lexer_context_free(LexerContext *ctx);
 int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 #define yylex scanning_lex
 void parsing_yy_error(void *yylloc, void *scanner, const char *s);
+extern void* scanning_get_extra(void *scanner);
 
 /* Output buffer for RML IR */
 char *rml_ir_buf = NULL;
@@ -442,12 +444,14 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
     ScalarValue scalar;
 }
 
-%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY QMAP_KEY SMAP_KEY
+%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY QMAP_KEY SMAP_KEY QPART BPART
+%token <string> CH_RAW CH_ESC_N CH_ESC_T CH_ESC_R CH_ESC_0 CH_ESC_BS CH_ESC_QU CH_ESC_SL
 %token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET COLON QUESTION
 %token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
 
 %type <props> node_props
 %type <scalar> scalar_item
+%type <string> scalar_parts qscalar qparts qpart bscalar
 
 /* TODO Fix destructor double free in GLR mode + manual free in actions */
 /* Destructors removed to avoid double free in GLR mode + manual free in actions */
@@ -504,10 +508,58 @@ node:
     ;
 
 scalar_item:
-    SCALAR[val] { $$.type = ':'; $$.value = $val; }
-    | QSCALAR[val] { $$.type = '"'; $$.value = $val; }
+    scalar_parts { $$.type = ':'; $$.value = $1; }
+    | qscalar { $$.type = '"'; $$.value = $1; }
     | SSCALAR[val] { $$.type = '\''; $$.value = $val; }
-    | BSCALAR[val] { $$.type = $val[0]; $$.value = strdup($val+1); free($val); }
+    | bscalar { $$.type = '|'; /* Placeholder type, fix later */ $$.value = $1; }
+    ;
+
+qscalar:
+    qparts QSCALAR { $$ = $1; }
+    ;
+
+scalar_parts:
+    CH_RAW { $$ = $1; }
+    | scalar_parts CH_RAW {
+        char *s = malloc(strlen($1) + strlen($2) + 1);
+        strcpy(s, $1);
+        strcat(s, $2);
+        free($1); free($2);
+        $$ = s;
+    }
+    ;
+
+qparts:
+    %empty { $$ = strdup(""); }
+    | qparts qpart {
+        char *s = malloc(strlen($1) + strlen($2) + 1);
+        strcpy(s, $1);
+        strcat(s, $2);
+        free($1); free($2);
+        $$ = s;
+    }
+    ;
+
+qpart:
+    CH_RAW { $$ = $1; }
+    | CH_ESC_N { $$ = strdup("\n"); free($1); }
+    | CH_ESC_T { $$ = strdup("\t"); free($1); }
+    | CH_ESC_R { $$ = strdup("\r"); free($1); }
+    | CH_ESC_BS { $$ = strdup("\\"); free($1); }
+    | CH_ESC_QU { $$ = strdup("\""); free($1); }
+    | CH_ESC_SL { $$ = strdup("/"); free($1); }
+    | CH_ESC_0 { $$ = strdup("\0"); free($1); }
+    ;
+
+bscalar:
+    BPART { $$ = $1; }
+    | bscalar BPART {
+        char *s = malloc(strlen($1) + strlen($2) + 1);
+        strcpy(s, $1);
+        strcat(s, $2);
+        free($1); free($2);
+        $$ = s;
+    }
     ;
 
 node_props:
@@ -519,15 +571,15 @@ node_props:
 sequence_no_props:
     { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
     seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 3
-    | LBRACK { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
-    flow_seq_entries RBRACK { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
+    | LBRACK { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
+    flow_seq_entries RBRACK { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
     ;
 
 sequence_with_props:
     { ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
     seq_entries %dprec 3
-    | LBRACK { ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
-    flow_seq_entries RBRACK
+    | LBRACK { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
+    flow_seq_entries RBRACK { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; }
     ;
 
 seq_entries:
@@ -536,8 +588,9 @@ seq_entries:
     ;
 
 seq_entry:
-    BULLET node
-    | BULLET
+    BULLET node %dprec 1
+    | BULLET INDENT seq_entries DEDENT %dprec 2
+    | BULLET %dprec 3
     ;
 
 flow_seq_entries:
@@ -554,15 +607,15 @@ flow_seq_entry:
 mapping_no_props:
     { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
     map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
-    | LBRACE { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
-    flow_map_entries RBRACE { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
+    | LBRACE { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
+    flow_map_entries RBRACE { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; ir_map_end(ir); add_event(EVENT_MAPPING_END); }
     ;
 
 mapping_with_props:
     { ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
     map_entries
-    | LBRACE { ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
-    flow_map_entries RBRACE
+    | LBRACE { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
+    flow_map_entries RBRACE { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; }
     ;
 
 map_entries:
@@ -572,9 +625,12 @@ map_entries:
 
 
 map_entry:
-    MAP_KEY[val] { ir_scalar(ir, $val, ':', NULL, NULL); add_scalar_event($val, ':'); free($val); } COLON node
-    | QMAP_KEY[val] { ir_scalar(ir, $val, '"', NULL, NULL); add_scalar_event($val, '"'); free($val); } COLON node
-    | SMAP_KEY[val] { ir_scalar(ir, $val, '\'', NULL, NULL); add_scalar_event($val, '\''); free($val); } COLON node
+    MAP_KEY[val] { ir_scalar(ir, $val, ':', NULL, NULL); add_scalar_event($val, ':'); free($val); } COLON node %dprec 1
+    | MAP_KEY[val] { ir_scalar(ir, $val, ':', NULL, NULL); add_scalar_event($val, ':'); free($val); } COLON INDENT map_entries DEDENT %dprec 2
+    | QMAP_KEY[val] { ir_scalar(ir, $val, '"', NULL, NULL); add_scalar_event($val, '"'); free($val); } COLON node %dprec 1
+    | QMAP_KEY[val] { ir_scalar(ir, $val, '"', NULL, NULL); add_scalar_event($val, '"'); free($val); } COLON INDENT map_entries DEDENT %dprec 2
+    | SMAP_KEY[val] { ir_scalar(ir, $val, '\'', NULL, NULL); add_scalar_event($val, '\''); free($val); } COLON node %dprec 1
+    | SMAP_KEY[val] { ir_scalar(ir, $val, '\'', NULL, NULL); add_scalar_event($val, '\''); free($val); } COLON INDENT map_entries DEDENT %dprec 2
     | QUESTION node COLON node
     ;
 
@@ -603,8 +659,8 @@ extern int composition_yy_parse(void);
 
 /* Flex lexer functions - "Just the Scanner" pattern */
 /* The reentrant scanner manages its own input/output state */
-extern int scanning_lex_init_extra(void *user_defined, void **scanner);
-extern int scanning_lex_destroy(void *scanner);
+extern int scanning_lex_init_extra(void *user_defined, yyscan_t *scanner);
+extern int scanning_lex_destroy(yyscan_t scanner);
 
 /**
  * Stage 1: Parse - Scanning -> Parsing (Presentation -> Events)
@@ -614,7 +670,7 @@ extern int scanning_lex_destroy(void *scanner);
  * This simplifies the interface and relies on Flex's internal state management.
  */
 int yaml_parse(void) {
-    void *scanner;
+    yyscan_t scanner;
     LexerContext *ctx = lexer_context_new();
     if (!ctx) {
         fprintf(stderr, "Failed to create lexer context\n");
@@ -703,7 +759,7 @@ int yaml_present(void) {
  * Error handler for parsing stage
  * Called by Bison when a syntax error occurs
  */
-void parsing_yy_error(void *yylloc, void *scanner, const char *s) {
+void parsing_yy_error(void *yylloc, yyscan_t scanner, const char *s) {
     if (s) {
         fprintf(stderr, "Parse error: %s\n", s);
     } else {
