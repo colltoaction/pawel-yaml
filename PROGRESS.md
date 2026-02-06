@@ -1,8 +1,52 @@
 # YAML Parser Progress Report
 
-## Current Status (Phase 11: Feature Implementation TDD - READY TO BEGIN)
-- **Test Pass Rate**: 23.4% (82/351 tests passing)
-- **Phase**: PHASE 11 READINESS ✅ - INFRASTRUCTURE READY, FEATURE IMPLEMENTATION STARTING
+## ✅ PROGRESS: Phase 12 - Architectural Refactoring & Analysis (IN PROGRESS)
+**Status**: Code quality improvements and strategic planning.
+**Current Test Rate**: 127/351 (36.2%)
+
+**Completed**:
+1. ✅ "Just the Scanner" pattern refactoring - removed redundant FILE* passing
+2. ✅ Analyzed nested mapping parsing failure - root cause identified
+3. ✅ Created strategic roadmap for 50%+ pass rate
+4. ✅ Verified test suite infrastructure
+
+**Key Findings**:
+- Block mappings fail due to INDENT/DEDENT tokens appearing between map entries
+- Grammar-based fixes create unmanageable conflicts (>30 conflicts)
+- Per YACC paper: Semantic constraints belong outside grammar (not in Phase 1)
+- Recommended solution: Phase 2 validation layer, not grammar changes
+
+**Next Steps** (Priority Order):
+1. Escape sequences in quoted strings (+5-8 tests)
+2. Tags and anchors proper handling (+5-8 tests)
+3. Block scalar composition improvements (+25-40 tests)
+4. Phase 2 semantic validation for block mappings (+30-50 tests)
+
+---
+
+## ✅ PROGRESS: Phase 11 Block Scalar Event Parser Fix (COMPLETE)
+**Status**: Event parser grammar updated to handle block scalars
+
+**Findings**:
+- Phase 10 baseline (23.4%) cannot be reproduced - actual: 0.6% (2/351 tests, both edge cases)
+- Root cause: LALR parser cannot handle mappings (key: value syntax)
+- Real blocker: Stage 1 YAML parser needs grammar enhancements
+- Fixed: Event parser now accepts block scalars with chomp indicators
+
+**Implemented Fix** (Commit 3708645):
+- Updated yaml_event.y scalar rule to handle optional E_CHAR after block type
+- Prevents collision between `|` (block indicator) and `:` (chomp indicator)  
+- Block scalars now parse through Stage 2 event parser (previously failed with "unexpected E_CHAR")
+- End-to-end test: `- |\n hello` now succeeds with [LEX-SUCCESS]
+
+**Remaining Work**:
+- Stage 1 parser: Expand YAML grammar to fully support block scalar variants
+- Core issue: LALR conflicts prevent easy mapping support (> 20% of tests blocked)
+- Recommended: Consider GLR mode or grammar restructuring for Phase 12
+
+## Previous Status (Phase 11: Feature Implementation TDD - ON HOLD)
+- **Claimed Test Pass Rate**: 23.4% (82/351 tests passing) ⚠️ UNVERIFIED
+- **Phase**: PHASE 11 READINESS - BLOCKED PENDING BASELINE FIX
 - **Build Status**: ✅ Successful (LALR parser - 140 S/R + 63 R/R conflicts, all working)
 - **Latest Commit**: 660d378 - Phase 11 readiness assessment created
 - **Parser Status**: ✅ **PIPELINE VALIDATED** - Plain scalars, lists, documents working end-to-end
