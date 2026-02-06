@@ -13,14 +13,17 @@ extern int yaml_present(void);
 
 /* YAML Compilation Pipeline */
 int main(int argc, char **argv) {
+    /* Bison and Flex output handle */
+    extern FILE *yyout;
+
+    if (argc > 1 && strcmp(argv[1], "-dump-tokens") == 0) yyout = stdout;
     if (yaml_parse() != 0) return 1;
-    if (argc > 1 && strcmp(argv[1], "-dump-tokens") == 0) return 0;
 
+    if (argc > 1 && strcmp(argv[1], "-ast-dump") == 0) yyout = stdout;
     if (yaml_compose() != 0) return 1;
-    if (argc > 1 && strcmp(argv[1], "-ast-dump") == 0) return 0;
 
+    if (argc > 1 && strcmp(argv[1], "-emit-yaml") == 0) yyout = stdout;
     if (yaml_serialize() != 0) return 1;
-    if (argc > 1 && strcmp(argv[1], "-emit-yaml") == 0) return 0;
 
     return yaml_present();
 }

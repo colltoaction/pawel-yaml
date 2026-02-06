@@ -7,6 +7,8 @@
 %option noyywrap yylineno
 %option prefix="composition_"
 
+%x SCALAR_VAL
+
 %%
 
 "+STR"          return E_STR_START;
@@ -17,6 +19,7 @@
 "-SEQ"          return E_SEQ_END;
 "+MAP"          return E_MAP_START;
 "-MAP"          return E_MAP_END;
+
 "=VAL"          return E_SCALAR;
 "=ALI"          return E_ALIAS;
 
@@ -32,7 +35,14 @@
 }
 
 ":" {
+    BEGIN(SCALAR_VAL);
     return ':';
+}
+
+<SCALAR_VAL>[^\n\r]* {
+    yylval.sval = strdup(yytext);
+    BEGIN(0);
+    return E_IDENTIFIER;
 }
 
 "\"" {
@@ -55,18 +65,9 @@
     return E_STYLE;
 }
 
-[a-zA-Z0-9_.\-\/\!\"#\$%&'\(\)\*\+\,\.\/\:\;\<\=\>\?@\[\\\]\^\`\{\|\}\~][a-zA-Z0-9_.\-\/\!\"#\$%&'\(\)\*\+\,\.\/\:\;\<\=\>\?@\[\\\]\^\`\{\|\}\~ ]* {
+[a-zA-Z0-9_\-\.\/!]+ {
     yylval.sval = strdup(yytext);
-    /* Trim trailing space */
-    char *end = yylval.sval + strlen(yylval.sval) - 1;
-    while (end > yylval.sval && *end == ' ') *end-- = '\0';
     return E_IDENTIFIER;
-}
-
-\"[^\"]*\" {
-    yylval.sval = strdup(yytext + 1);
-    yylval.sval[strlen(yylval.sval) - 1] = '\0';  // Remove closing quote
-    return E_QUOTED_STRING;
 }
 
 [ \t]+ ;

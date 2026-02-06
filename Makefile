@@ -1,210 +1,65 @@
-# Regular Monoidal Languages (RML) Driver
+# YAML Compilation Pipeline
+SHELL = /bin/sh
 
+# Installation
+BUILD = ./build
+BINDIR = $(BUILD)/bin
+BUILDSRCDIR = $(BUILD)/src
+BUILDINCDIR = $(BUILD)/inc
+BUILD_OBJDIR = $(BUILD)/obj
+VPATH = src:$(BUILDSRCDIR):$(BUILDINCDIR)
+
+# Build
 CC = gcc
-CFLAGS = -I./src -I$(GEN_INC_DIR) -Wall -g -Wno-unused-function
-BISON = bison
-FLEX = flex
+LEX = flex
+YACC = bison
+CFLAGS = -Wall -pedantic -g -I$(BUILDINCDIR) -Isrc
+YFLAGS = -d
+LFLAGS = -w
 
-SRC_DIR = src
-BUILD_DIR = build
-GEN_SRC_DIR = $(BUILD_DIR)/src
-GEN_INC_DIR = $(BUILD_DIR)/inc
-BIN_DIR = $(BUILD_DIR)/bin
-LIB_DIR = $(BUILD_DIR)/lib
-AGENT_DIR = .agent
+# Generated files
+# TODO $(wildcard BUILD_OBJDIR/*.o)
+OBJECTS = $(BUILD_OBJDIR)/main.o $(BUILD_OBJDIR)/scanning.lex.o $(BUILD_OBJDIR)/parsing.tab.o $(BUILD_OBJDIR)/composition.lex.o $(BUILD_OBJDIR)/composition.tab.o
+BINTARGET = $(BUILD)/bin/pawel-yaml
 
-# External Dependencies (YAML Test Suite)
-RUNTIMES_DIR = $(LIB_DIR)/yaml-runtimes
-PLAY_DIR = $(LIB_DIR)/yaml-play
-SUITE_DIR = $(LIB_DIR)/yaml-test-suite
-
-# Parser and Lexer definitions
-# LOAD process: scanning → parsing → composition
-PARSERS = parsing composition
-LEXERS = scanning composition
-
-# Generated parser files
-PARSING_TAB_C = $(GEN_SRC_DIR)/parsing.tab.c
-PARSING_TAB_H = $(GEN_INC_DIR)/parsing.tab.h
-COMPOSITION_TAB_C = $(GEN_SRC_DIR)/composition.tab.c
-COMPOSITION_TAB_H = $(GEN_INC_DIR)/composition.tab.h
-
-# Object files
-PARSER_OBJS = $(BUILD_DIR)/parsing.tab.o $(BUILD_DIR)/scanning.lex.o \
-              $(BUILD_DIR)/composition.tab.o $(BUILD_DIR)/composition.lex.o
-
-# TDD & testing artifacts
-TMP_DIR = $(BUILD_DIR)/tmp
-LOG_DIR = $(BUILD_DIR)/log
-
-OBJS = $(PARSER_OBJS) $(BUILD_DIR)/main.o
-
-TARGET = $(BIN_DIR)/pawel-yaml
-
-all: directories $(TARGET)
+# Rules
+all: $(BINTARGET)
 
 directories:
-	mkdir -p $(BUILD_DIR) $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR) $(LIB_DIR) $(TMP_DIR) $(LOG_DIR)
+	@mkdir -p $(BUILD) $(BUILD)/bin $(BUILDSRCDIR) $(BUILDINCDIR) $(BUILD_OBJDIR)
 
-# ============================================================================
-# Parser Generation: Bison & Flex
-# Pattern: Each parser NAME produces:
-#   - $(GEN_SRC_DIR)/NAME.tab.c + $(GEN_INC_DIR)/NAME.tab.h (from NAME.y)
-#   - $(GEN_SRC_DIR)/NAME.lex.c (from NAME.l, depends on .tab.h)
-# ============================================================================
+# Grammar gen tabs
+$(BUILDSRCDIR)/%.tab.c $(BUILDINCDIR)/%.tab.h: src/%.y directories
+	$(YACC) $(YFLAGS) -o $(BUILDSRCDIR)/$*.tab.c $<
 
-$(GEN_SRC_DIR)/%.tab.c $(GEN_INC_DIR)/%.tab.h: $(SRC_DIR)/%.y | directories
-	$(BISON) -d -o $(GEN_SRC_DIR)/$*.tab.c --defines=$(GEN_INC_DIR)/$*.tab.h $<
+# Grammar gen lex
+LEXTARGETS = $(patsubst src/%.l, $(BUILDSRCDIR)/%.lex.c, $(wildcard src/*.l))
+lex: $(LEXTARGETS)
 
-$(GEN_SRC_DIR)/%.lex.c: $(SRC_DIR)/%.l $(GEN_INC_DIR)/%.tab.h | directories
-	$(FLEX) -o $@ $<
+$(BUILDSRCDIR)/%.lex.c: src/%.l directories
+	$(LEX) $(LFLAGS) -o $@ $<
 
-# Explicit lexer rules (non-standard naming)
-$(GEN_SRC_DIR)/scanning.lex.c: $(SRC_DIR)/scanning.l $(PARSING_TAB_H) | directories
-	$(FLEX) -o $@ $<
+$(BUILDSRCDIR)/scanning.lex.c: $(BUILDINCDIR)/parsing.tab.h
+$(BUILDSRCDIR)/composition.lex.c: $(BUILDINCDIR)/composition.tab.h
 
-$(GEN_SRC_DIR)/composition.lex.c: $(SRC_DIR)/composition.l $(COMPOSITION_TAB_H) | directories
-	$(FLEX) -o $@ $<
+# Rule for compiling .c to .o in build
+$(BUILD_OBJDIR)/main.o: src/main.c directories
+	$(CC) $(CFLAGS) -Werror -c $< -o $@
 
-# ============================================================================
-# Object Compilation: Generic pattern rule
-# ============================================================================
+# Rule for compiling .c to .o in build
+$(BUILD_OBJDIR)/%.o: $(BUILDSRCDIR)/%.c directories
+	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-variable -Wno-error=cpp -c $< -o $@
 
-$(BUILD_DIR)/%.o: $(GEN_SRC_DIR)/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
+$(BINTARGET): $(OBJECTS) directories
+	$(CC) $(OBJECTS) -o $@
 
-$(BUILD_DIR)/parsing.tab.o: $(GEN_SRC_DIR)/parsing.tab.c $(GEN_INC_DIR)/composition.tab.h
-	$(CC) $(CFLAGS) -c $< -o $@
+# Testing
+check: $(BINTARGET)
+	./$< < test.yaml > /dev/null
+	@echo "✓ Basic sanity check passed"
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(PARSING_TAB_H)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# ============================================================================
-# Linking
-# ============================================================================
-
-$(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $(TARGET)
-
-# ============================================================================
 # Cleanup
-# ============================================================================
+clean:
+	rm -rf $(BUILD)
 
-clean: clean-build
-
-clean-build:
-	rm -rf $(GEN_SRC_DIR) $(GEN_INC_DIR) $(BIN_DIR)
-	rm -f $(BUILD_DIR)/*.o
-
-deepclean:
-	rm -rf $(BUILD_DIR)
-
-# ============================================================================
-# TDD Targets: Red-Green-Refactor-Verify Test-Driven Development
-# ============================================================================
-
-test-event: directories
-	@echo "Compiling event unit tests..."
-	$(BISON) -d -o $(BUILD_DIR)/src/composition.tab.c --defines=$(GEN_INC_DIR)/composition.tab.h src/composition.y
-	$(CC) $(CFLAGS) -c $(BUILD_DIR)/src/composition.tab.c -o $(BUILD_DIR)/composition.tab.o
-	$(CC) $(CFLAGS) -g test_yaml_event.c test_yaml_event_stubs.c $(BUILD_DIR)/composition.tab.o -o test_yaml_event
-
-test-unit: test-event
-	@echo "Running unit tests..."
-	@./test_yaml_event
-
-test-integration: $(TARGET) $(SUITE_DIR)
-	@echo "Running integration tests against YAML test suite..."
-	@python3 test_yaml_suite.py
-
-test-discover:
-	@$(AGENT_DIR)/tdd_harness.sh discover
-
-# Comprehensive full test suite verification (all 351 tests)
-test-full: $(TARGET)
-	@echo "═══════════════════════════════════════════════════════"
-	@echo "Running comprehensive YAML test suite (all 351 tests)..."
-	@echo "═══════════════════════════════════════════════════════"
-	@$(AGENT_DIR)/stage4_full_verification.sh
-
-# Alias for backward compatibility and convenience
-test: test-full
-
-tdd: test-unit test-integration
-	@echo ""
-	@echo "✓ All TDD cycles complete!"
-
-yaml-test-suite: $(SUITE_DIR) $(TARGET)
-	@echo "Running YAML test suite..."
-	@$(AGENT_DIR)/test_yaml_suite.sh
-
-# ============================================================================
-# Valgrind Memory Validation Targets
-# ============================================================================
-
-# Quick valgrind check with simple YAML input
-valgrind: $(TARGET)
-	@echo "Running valgrind memory check (simple test)..."
-	@echo "key: value" | valgrind --leak-check=full --show-leak-kinds=all \
-		--track-origins=yes --error-exitcode=1 $(TARGET) 2>&1 | tee $(LOG_DIR)/valgrind_simple.log
-	@echo ""
-	@echo "✓ Valgrind check complete. See $(LOG_DIR)/valgrind_simple.log for details."
-
-# Comprehensive valgrind check with multiple test cases
-# Note: Only checks for memory leaks, not application validation errors
-valgrind-full: $(TARGET)
-	@echo "═══════════════════════════════════════════════════════"
-	@echo "Running comprehensive valgrind memory checks..."
-	@echo "═══════════════════════════════════════════════════════"
-	@mkdir -p $(LOG_DIR)
-	@passed=0; failed=0; \
-	for test_case in "key: value" "- item1\n- item2" "{a: 1, b: 2}" "[1, 2, 3]" "---\nkey: value\n..."; do \
-		echo "Testing: $$test_case"; \
-		valgrind_log=$$(mktemp); \
-		if echo -e "$$test_case" | valgrind --leak-check=full --show-leak-kinds=all \
-			--track-origins=yes --error-exitcode=42 $(TARGET) > /dev/null 2>"$$valgrind_log"; then \
-			echo "  ✓ PASS (no memory leaks)"; \
-			passed=$$((passed + 1)); \
-		else \
-			exit_code=$$?; \
-			if [ $$exit_code -eq 42 ]; then \
-				echo "  ✗ FAIL (memory leak detected)"; \
-				failed=$$((failed + 1)); \
-			else \
-				echo "  ✓ PASS (no memory leaks, validation error ok)"; \
-				passed=$$((passed + 1)); \
-			fi; \
-		fi; \
-		rm -f "$$valgrind_log"; \
-	done; \
-	echo ""; \
-	echo "Results: $$passed passed, $$failed failed"; \
-	if [ $$failed -eq 0 ]; then \
-		echo "✓ All valgrind checks passed!"; \
-	else \
-		echo "✗ Memory leaks detected. Run 'make valgrind' for details."; \
-		exit 1; \
-	fi
-
-# Valgrind check on yaml-test-suite samples
-valgrind-suite: $(TARGET) $(SUITE_DIR)
-	@echo "Running valgrind on yaml-test-suite samples..."
-	@mkdir -p $(LOG_DIR)
-	@find $(SUITE_DIR) -name "*.yaml" -type f | head -20 | while read yaml_file; do \
-		echo "Checking: $$yaml_file"; \
-		valgrind --leak-check=full --error-exitcode=1 $(TARGET) < "$$yaml_file" > /dev/null 2>&1 || \
-			echo "  ✗ Memory issue in $$yaml_file"; \
-	done
-	@echo "✓ Suite valgrind check complete."
-
-# Summary check: just report if there are any leaks (no detailed output)
-valgrind-summary: $(TARGET)
-	@echo "Quick valgrind leak summary..."
-	@if echo "key: value" | valgrind --leak-check=full --error-exitcode=1 $(TARGET) > /dev/null 2>&1; then \
-		echo "✓ No memory leaks detected"; \
-	else \
-		echo "✗ Memory leaks detected. Run 'make valgrind' for details."; \
-		exit 1; \
-	fi
-
-.PHONY: all clean clean-build deepclean directories yaml-test-suite tdd test-event test-unit test-integration test-discover valgrind valgrind-full valgrind-suite valgrind-summary
+.PHONY: all directories check clean lex

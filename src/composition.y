@@ -59,6 +59,8 @@ typedef struct {
 } ValidationResult;
 }
 
+%define api.prefix {composition_yy_}
+
 %{
 #include <stdlib.h>
 #include <string.h>
@@ -137,7 +139,7 @@ static YAMLEvent* event_alias_new(const char *name) {
 
 %}
 
-%define api.prefix {composition_yy_}
+
 
 %union {
     char *sval;   /* String values */

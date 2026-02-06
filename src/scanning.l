@@ -329,6 +329,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 %%
 
     if (CTX->first_line) {
+        
         CTX->first_line = 0;
         BEGIN(INDENT_CHECK);
     }
@@ -612,7 +613,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 
 
-[^ \t\n\r\[\]{},][^ \t\n\r,]*[ ]*/[ ]*":"[ \t\n] {
+[^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:]|[ ]|:[^ \t\n\r])*/[ ]*":"[ \t\n] {
     yylval->string = strdup(yytext);
     /* Trim trailing spaces from key */
     char *end = yylval->string + strlen(yylval->string) - 1;
@@ -621,7 +622,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return MAP_KEY;
 }
 
-[^ \t\n\r\[\]{},] {
+[^ \t\n\r\[\]{}!,&*%@|>\`'"] {
     /* Start simple scalar */
     init_scalar(CTX);
     append_scalar(CTX, yytext, yyleng);
