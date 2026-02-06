@@ -111,6 +111,16 @@ static YAMLEvent* event_collection_new(YAMLEventType type, const char *anchor, c
     return e;
 }
 
+static YAMLEvent* event_scalar_complex(char style, const char *val, const char *anchor, const char *tag) {
+    YAMLEvent *e = event_create(EVENT_SCALAR);
+    if (!e) return NULL;
+    e->quote_style = style;
+    e->value = val ? strdup(val) : NULL;
+    e->anchor = anchor ? strdup(anchor) : NULL;
+    e->tag = tag ? strdup(tag) : NULL;
+    return e;
+}
+
 static YAMLEvent* event_doc_new(int explicit) {
     YAMLEvent *e = event_create(EVENT_DOCUMENT_START);
     if (!e) return NULL;
@@ -149,7 +159,10 @@ static YAMLEvent* event_alias_new(const char *name) {
 %token <sval> E_ANCHOR                     /* &anchor */
 %token <sval> E_TAG                        /* <tag> */
 %token <sval> E_QUOTED_STRING E_IDENTIFIER /* "value", plain_value */
-%token <cval> E_CHAR                       /* : " ' | > */
+%token <cval> E_STYLE                      /* : " ' | > */
+
+%type <sval> content
+%type <cval> style_val
 
 %define parse.error detailed
 %locations
@@ -187,10 +200,23 @@ node : scalar
      | mapping
      ;
 
-scalar : "=VAL" E_CHAR[style] E_QUOTED_STRING[content] { push_event(event_scalar_new($style, $content)); free($content); }
-       | "=VAL" E_CHAR[style] E_IDENTIFIER[content]    { push_event(event_scalar_new($style, $content)); free($content); }
-       | "=VAL" E_CHAR[style]                          { push_event(event_scalar_new($style, NULL)); }
+scalar : "=VAL" style_val content { push_event(event_scalar_new($2, $3)); free($3); }
+       | "=VAL" style_val { push_event(event_scalar_new($2, NULL)); }
+       | "=VAL" E_ANCHOR[a] style_val content { push_event(event_scalar_complex($3, $4, $a, NULL)); free($4); free($a); }
+       | "=VAL" E_ANCHOR[a] style_val { push_event(event_scalar_complex($3, NULL, $a, NULL)); free($a); }
+       | "=VAL" E_TAG[t] style_val content { push_event(event_scalar_complex($3, $4, NULL, $t)); free($4); free($t); }
+       | "=VAL" E_TAG[t] style_val { push_event(event_scalar_complex($3, NULL, NULL, $t)); free($t); }
+       | "=VAL" E_ANCHOR[a] E_TAG[t] style_val content { push_event(event_scalar_complex($4, $5, $a, $t)); free($5); free($a); free($t); }
+       | "=VAL" E_ANCHOR[a] E_TAG[t] style_val { push_event(event_scalar_complex($4, NULL, $a, $t)); free($a); free($t); }
        ;
+
+style_val : E_STYLE ':' { $$ = $1; }
+          | ':'           { $$ = ':'; }
+          ;
+
+content : E_QUOTED_STRING
+        | E_IDENTIFIER
+        ;
 
 alias : "=ALI" E_IDENTIFIER[target] { push_event(event_alias_new($target)); free($target); }
       ;

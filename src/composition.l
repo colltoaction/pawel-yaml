@@ -32,32 +32,34 @@
 }
 
 ":" {
-    yylval.cval = ':';
-    return E_CHAR;
+    return ':';
 }
 
 "\"" {
     yylval.cval = '"';
-    return E_CHAR;
+    return E_STYLE;
 }
 
 "\'" {
     yylval.cval = '\'';
-    return E_CHAR;
+    return E_STYLE;
 }
 
 "|" {
     yylval.cval = '|';
-    return E_CHAR;
+    return E_STYLE;
 }
 
 ">" {
     yylval.cval = '>';
-    return E_CHAR;
+    return E_STYLE;
 }
 
-[a-zA-Z0-9_.\-\/]+ {
+[a-zA-Z0-9_.\-\/\!\"#\$%&'\(\)\*\+\,\.\/\:\;\<\=\>\?@\[\\\]\^\`\{\|\}\~][a-zA-Z0-9_.\-\/\!\"#\$%&'\(\)\*\+\,\.\/\:\;\<\=\>\?@\[\\\]\^\`\{\|\}\~ ]* {
     yylval.sval = strdup(yytext);
+    /* Trim trailing space */
+    char *end = yylval.sval + strlen(yylval.sval) - 1;
+    while (end > yylval.sval && *end == ' ') *end-- = '\0';
     return E_IDENTIFIER;
 }
 

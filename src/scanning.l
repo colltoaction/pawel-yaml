@@ -328,8 +328,6 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 %%
 
-    fprintf(stderr, "lex called\n"); fflush(stderr);
-
     if (CTX->first_line) {
         CTX->first_line = 0;
         BEGIN(INDENT_CHECK);
@@ -614,13 +612,16 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 
 
-[a-zA-Z0-9\-\._][a-zA-Z0-9\-\._ ]*/[ ]*":"[ \t\n] {
+[^ \t\n\r\[\]{},][^ \t\n\r,]*[ ]*/[ ]*":"[ \t\n] {
     yylval->string = strdup(yytext);
+    /* Trim trailing spaces from key */
+    char *end = yylval->string + strlen(yylval->string) - 1;
+    while (end > yylval->string && *end == ' ') *end-- = '\0';
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
 
-[a-zA-Z0-9\-\._]+ {
+[^ \t\n\r\[\]{},] {
     /* Start simple scalar */
     init_scalar(CTX);
     append_scalar(CTX, yytext, yyleng);
@@ -753,12 +754,14 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     return SCALAR;
 }
 
-"#" {
-    if (!check_comment_valid(CTX)) {
-        parsing_yy_error(NULL, yyscanner, "syntax error, comment without preceding whitespace");
-        /* Triggering error */
-        return SCALAR;
-    }
+[ \t]+"#" {
+    /* Skip rest of line */
+    int c;
+    while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0);
+    if (c == '\n') unput('\n');
+}
+
+^"#" {
     /* Skip rest of line */
     int c;
     while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0);

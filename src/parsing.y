@@ -34,6 +34,11 @@ typedef struct {
     char **argv;
 } LexerContext;
 
+typedef struct {
+    char type;
+    char *value;
+} ScalarValue;
+
 /* === TYPE DEFINITIONS (from common.h) === */
 /**
  * Node properties structure for anchor/tag pairs
@@ -90,8 +95,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 15
-%expect-rr 14
+%expect 10
+%expect-rr 13
 
 %{
 #include <stdlib.h>
@@ -365,31 +370,16 @@ static void ir_map_end(IRBuilder *b) {
     ir_write(b, "-MAP\n");
 }
 
-/**
- * Plain scalar value
- * Format: =VAL ::value
- */
-static void ir_scalar_plain(IRBuilder *b, const char *value) {
+static void ir_scalar(IRBuilder *b, const char *value, char style, const char *anchor, const char *tag) {
     if (!value) value = "";
-    ir_write(b, "=VAL :%s\n", value);
-}
-
-/**
- * Quoted scalar value
- * Format: =VAL ":value or =VAL ':value
- */
-static void ir_scalar_quoted(IRBuilder *b, const char *value, char quote) {
-    if (!value) value = "";
-    ir_write(b, "=VAL %c:%s\n", quote, value);
-}
-
-/**
- * Block scalar value
- * Format: =VAL |:value or =VAL >:value
- */
-static void ir_scalar_block(IRBuilder *b, const char *value, char type) {
-    if (!value) value = "";
-    ir_write(b, "=VAL %c:%s\n", type, value);
+    ir_write(b, "=VAL");
+    if (anchor) ir_write(b, " &%s", anchor);
+    if (tag) ir_write(b, " !%s", tag);
+    if (style == ':') {
+        ir_write(b, " :%s\n", value);
+    } else {
+        ir_write(b, " %c:%s\n", style, value);
+    }
 }
 
 /**
@@ -414,8 +404,7 @@ static void ir_alias(IRBuilder *b, const char *name) {
  * Format: P:&anchor
  */
 static void ir_prop_anchor(IRBuilder *b, const char *anchor) {
-    if (!anchor) return;
-    ir_write(b, "P:&%s\n", anchor);
+    /* Deprecated */
 }
 
 /**
@@ -423,8 +412,7 @@ static void ir_prop_anchor(IRBuilder *b, const char *anchor) {
  * Format: P:!tag
  */
 static void ir_prop_tag(IRBuilder *b, const char *tag) {
-    if (!tag) return;
-    ir_write(b, "P:!%s\n", tag);
+    /* Deprecated */
 }
 
 /**
@@ -432,12 +420,7 @@ static void ir_prop_tag(IRBuilder *b, const char *tag) {
  * Format: P:&anchor !tag
  */
 static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
-    if (!anchor && !tag) return;
-    ir_write(b, "P:");
-    if (anchor) ir_write(b, "&%s", anchor);
-    if (anchor && tag) ir_write(b, " ");
-    if (tag) ir_write(b, "!%s", tag);
-    ir_write(b, "\n");
+    /* Deprecated - properties now passed directly to node emission */
 }
 
 /* === END INLINED: ir_builder.c === */
@@ -453,6 +436,7 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %union {
     char *string;
     NodeProps props;
+    ScalarValue scalar;
 }
 
 %token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY QMAP_KEY SMAP_KEY
@@ -460,10 +444,13 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
 
 %type <props> node_props
+%type <scalar> scalar_item
 
-/* Destructors for memory safety */
-%destructor { free($$); } <string>
-%destructor { free($$.anchor); free($$.tag); } <props>
+/* TODO Fix destructor double free in GLR mode + manual free in actions */
+/* Destructors removed to avoid double free in GLR mode + manual free in actions */
+/* %destructor { if ($$) { free($$); $$ = NULL; } } <string> */
+/* %destructor { if ($$.anchor) { free($$.anchor); $$.anchor = NULL; } if ($$.tag) { free($$.tag); $$.tag = NULL; } } <props> */
+/* %destructor { if ($$.value) { free($$.value); $$.value = NULL; } } <scalar> */
 
 %locations
 %define parse.error detailed
@@ -504,23 +491,20 @@ implicit_document:
     ;
 
 node:
-    plain_node
-    ;
-
-plain_node:
-    SCALAR[val] { ir_scalar_plain(ir, $val); add_scalar_event($val, ':'); free($val); }
-    | QSCALAR[val] { ir_scalar_quoted(ir, $val, '"'); add_scalar_event($val, '"'); free($val); }
-    | SSCALAR[val] { ir_scalar_quoted(ir, $val, '\''); add_scalar_event($val, '\''); free($val); }
-    | BSCALAR[val] { ir_scalar_block(ir, $val+1, $val[0]); add_scalar_event($val+1, $val[0]); free($val); }
-    | TAG[t] node_body { ir_prop_tag(ir, $t); free($t); }
-    | node_props[p] node_body { ir_prop_both(ir, $p.anchor, $p.tag); free($p.anchor); free($p.tag); }
+    scalar_item[s] { ir_scalar(ir, $s.value, $s.type, NULL, NULL); add_scalar_event($s.value, $s.type); free($s.value); }
+    | node_props[p] scalar_item[s] { ir_scalar(ir, $s.value, $s.type, $p.anchor, $p.tag); add_scalar_event($s.value, $s.type); free($s.value); free($p.anchor); free($p.tag); }
     | ALIAS[a] { ir_alias(ir, $a); add_alias_event($a); free($a); }
-    | sequence
-    | mapping
+    | sequence_no_props
+    | node_props[p] sequence_with_props { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); }
+    | mapping_no_props
+    | node_props[p] mapping_with_props { ir_map_end(ir); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); }
     ;
 
-node_body: 
-    plain_node
+scalar_item:
+    SCALAR[val] { $$.type = ':'; $$.value = $val; }
+    | QSCALAR[val] { $$.type = '"'; $$.value = $val; }
+    | SSCALAR[val] { $$.type = '\''; $$.value = $val; }
+    | BSCALAR[val] { $$.type = $val[0]; $$.value = strdup($val+1); free($val); }
     ;
 
 node_props:
@@ -529,11 +513,18 @@ node_props:
     | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
     ;
 
-sequence:
+sequence_no_props:
     { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
     seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 3
     | LBRACK { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
     flow_seq_entries RBRACK { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
+    ;
+
+sequence_with_props:
+    { ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
+    seq_entries %dprec 3
+    | LBRACK { ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
+    flow_seq_entries RBRACK
     ;
 
 seq_entries:
@@ -557,11 +548,18 @@ flow_seq_entry:
     | %empty
     ;
 
-mapping:
+mapping_no_props:
     { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
     map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
     | LBRACE { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
     flow_map_entries RBRACE { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
+    ;
+
+mapping_with_props:
+    { ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
+    map_entries
+    | LBRACE { ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
+    flow_map_entries RBRACE
     ;
 
 map_entries:
@@ -571,9 +569,9 @@ map_entries:
 
 
 map_entry:
-    MAP_KEY[val] { ir_scalar_plain(ir, $val); add_scalar_event($val, ':'); free($val); } COLON node
-    | QMAP_KEY[val] { ir_scalar_quoted(ir, $val, '"'); add_scalar_event($val, '"'); free($val); } COLON node
-    | SMAP_KEY[val] { ir_scalar_quoted(ir, $val, '\''); add_scalar_event($val, '\''); free($val); } COLON node
+    MAP_KEY[val] { ir_scalar(ir, $val, ':', NULL, NULL); add_scalar_event($val, ':'); free($val); } COLON node
+    | QMAP_KEY[val] { ir_scalar(ir, $val, '"', NULL, NULL); add_scalar_event($val, '"'); free($val); } COLON node
+    | SMAP_KEY[val] { ir_scalar(ir, $val, '\'', NULL, NULL); add_scalar_event($val, '\''); free($val); } COLON node
     | QUESTION node COLON node
     ;
 
@@ -630,12 +628,25 @@ int yaml_parse(void) {
     return result;
 }
 
+/* Global state for string parsing from Flex */
+extern void *composition__scan_string(const char *);
+extern void composition__delete_buffer(void *);
+
 /**
  * Stage 2: Compose - Events -> Representation (IR)
  * Composes IR from event stream
  */
 int yaml_compose(void) {
-    return composition_yy_parse();
+    if (!rml_ir_buf) {
+        fprintf(stderr, "No IR buffer to compose\n");
+        return 1;
+    }
+    
+    void *buf = composition__scan_string(rml_ir_buf);
+    int result = composition_yy_parse();
+    composition__delete_buffer(buf);
+    
+    return result;
 }
 
 /**
