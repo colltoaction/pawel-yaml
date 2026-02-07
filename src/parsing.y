@@ -96,8 +96,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 26
-%expect-rr 16
+%expect 43
+%expect-rr 53
 
 %{
 #include <stdlib.h>
@@ -140,6 +140,10 @@ FILE *yyout = NULL;
 
 /* Current event stream being built */
 static EventStream *current_event_stream = NULL;
+
+/* Error tracking for extensive recovery */
+static int parse_error_count = 0;
+#define RECOVER(msg) do { fprintf(stderr, "[PARSE] %s\n", (msg)); parse_error_count++; yyerrok; } while(0)
 
 /* Helper: Add event to the stream */
 static void add_event(YAMLEventType type) {
@@ -485,6 +489,7 @@ documents:
 explicit_documents:
     explicit_document
     | explicit_documents explicit_document
+    | explicit_documents error { RECOVER("Skipping malformed document"); }
     ;
 
 explicit_document:
@@ -505,7 +510,7 @@ node:
     | node_props[p] sequence_with_props { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); }
     | mapping_no_props
     | node_props[p] mapping_with_props { ir_map_end(ir); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); }
-    | error { yyerrok; fprintf(stderr, "[PARSE] Skipping malformed node\n"); }
+    | error { RECOVER("Recovering at node boundary"); }
     ;
 
 scalar_item:
@@ -567,6 +572,7 @@ node_props:
     ANCHOR[a] { $$.anchor = $a; $$.tag = NULL; }
     | TAG[t] { $$.anchor = NULL; $$.tag = $t; }
     | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
+    | error { RECOVER("Invalid node properties"); $$.anchor = NULL; $$.tag = NULL; }
     ;
 
 sequence_no_props:
@@ -592,6 +598,7 @@ seq_entry:
     BULLET node %dprec 1
     | BULLET INDENT seq_entries DEDENT %dprec 2
     | BULLET %dprec 3
+    | BULLET error { RECOVER("Malformed sequence item"); } %dprec 4
     ;
 
 flow_seq_entries:
@@ -603,6 +610,7 @@ flow_seq_entries:
 flow_seq_entry:
     node
     | %empty
+    | error { RECOVER("Malformed flow sequence entry"); }
     ;
 
 mapping_no_props:
@@ -633,6 +641,11 @@ map_entry:
     | SMAP_KEY[val] { ir_scalar(ir, $val, '\'', NULL, NULL); add_scalar_event($val, '\''); free($val); } COLON node %dprec 1
     | SMAP_KEY[val] { ir_scalar(ir, $val, '\'', NULL, NULL); add_scalar_event($val, '\''); free($val); } COLON INDENT map_entries DEDENT %dprec 2
     | QUESTION node COLON node
+    | MAP_KEY error { RECOVER("Malformed mapping entry"); }
+    | QMAP_KEY error { RECOVER("Malformed mapping entry"); }
+    | SMAP_KEY error { RECOVER("Malformed mapping entry"); }
+    | QUESTION error { RECOVER("Malformed complex mapping entry"); }
+    | error { RECOVER("Invalid mapping structure"); }
     ;
 
 flow_map_entries:
@@ -645,6 +658,7 @@ flow_map_entry:
     node COLON node
     | node
     | %empty
+    | error { RECOVER("Malformed flow mapping entry"); }
     ;
 
 %%
@@ -685,8 +699,16 @@ int yaml_parse(void) {
         return 1;
     }
     
+    /* Reset error count for this run */
+    parse_error_count = 0;
+    
     /* Scanner now manages stdin internally; just parse */
     int result = parsing_yy_parse(scanner);
+    
+    /* If errors occurred but we recovered, still signal failure to caller */
+    if (parse_error_count > 0 && result == 0) {
+        result = 1;
+    }
     
     /* Cleanup */
     scanning_lex_destroy(scanner);
@@ -759,15 +781,18 @@ int yaml_present(void) {
 /**
  * Error handler for parsing stage
  * Called by Bison when a syntax error occurs
+ * 
+ * This function is invoked automatically by the parser when:
+ * - A syntax error is detected (unexpected token)
+ * - Error recovery is initiated (via 'error' token in grammar)
+ * 
+ * The parser will attempt to recover by:
+ * 1. Discarding tokens until it finds a valid synchronization point
+ * 2. Matching the 'error' token in the grammar
+ * 3. Calling yyerrok to resume normal parsing
  */
 void parsing_yy_error(void *yylloc, yyscan_t scanner, const char *s) {
-    (void)scanner; /* Unused in this implementation */
-    YYLTYPE *loc = (YYLTYPE*)yylloc;
-    
-    if (loc && loc->first_line > 0) {
-        fprintf(stderr, "[PARSE] Error at line %d, column %d: %s\n", 
-                loc->first_line, loc->first_column, s ? s : "syntax error");
-    } else {
-        fprintf(stderr, "[PARSE] Error: %s\n", s ? s : "syntax error");
-    }
+    (void)yylloc; (void)scanner;
+    parse_error_count++;
+    fprintf(stderr, "[PARSE] %s\n", s);
 }
