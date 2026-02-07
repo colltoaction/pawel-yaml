@@ -434,6 +434,7 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 
 %define api.pure true
 %define api.prefix {parsing_yy_}
+%define parse.error verbose
 %locations
 %parse-param {void *scanner}
 %lex-param {void *scanner}
@@ -460,7 +461,6 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 /* %destructor { if ($$.value) { free($$.value); $$.value = NULL; } } <scalar> */
 
 %locations
-%define parse.error detailed
 
 /* Precedence declarations for disambiguation */
 %left COMMA RBRACE RBRACK
@@ -760,9 +760,13 @@ int yaml_present(void) {
  * Called by Bison when a syntax error occurs
  */
 void parsing_yy_error(void *yylloc, yyscan_t scanner, const char *s) {
-    if (s) {
-        fprintf(stderr, "Parse error: %s\n", s);
+    (void)scanner; /* Unused in this implementation */
+    YYLTYPE *loc = (YYLTYPE*)yylloc;
+    
+    if (loc && loc->first_line > 0) {
+        fprintf(stderr, "[PARSE] Error at line %d, column %d: %s\n", 
+                loc->first_line, loc->first_column, s ? s : "syntax error");
     } else {
-        fprintf(stderr, "Parse error: syntax error\n");
+        fprintf(stderr, "[PARSE] Error: %s\n", s ? s : "syntax error");
     }
 }

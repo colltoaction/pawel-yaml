@@ -353,5 +353,5 @@ void validation_result_free(ValidationResult *result) {
 
 /* Error handler for composition stage */
 void composition_yy_error(const char *msg) {
-    fprintf(stderr, "Composition error: %s\n", msg);
+    fprintf(stderr, "[COMPOSITION] Error: %s\n", msg ? msg : "syntax error");
 }
