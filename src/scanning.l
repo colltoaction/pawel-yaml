@@ -477,6 +477,14 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     yyless(yyleng - 1);
     return QMAP_KEY;
 }
+
+'[^']*': {
+    size_t len = yyleng;
+    if (len > 2 && yytext[len-1] == ':' && yytext[len-2] == '\'') yytext[len-2] = '\0';
+    yylval->string = strdup(yytext + 1);
+    yyless(yyleng - 1);
+    return SMAP_KEY;
+}
 \" {
     BEGIN(QUOTED);
 }
