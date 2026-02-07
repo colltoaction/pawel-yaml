@@ -383,7 +383,7 @@ static void ir_scalar(IRBuilder *b, const char *value, char style, const char *a
     if (style == ':') {
         ir_write(b, " :%s\n", value);
     } else {
-        ir_write(b, " %c:%s\n", style, value);
+        ir_write(b, " %c :%s\n", style, value);
     }
 }
 
