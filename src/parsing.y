@@ -505,6 +505,7 @@ node:
     | node_props[p] sequence_with_props { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); }
     | mapping_no_props
     | node_props[p] mapping_with_props { ir_map_end(ir); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); }
+    | error { yyerrok; fprintf(stderr, "[PARSE] Skipping malformed node\n"); }
     ;
 
 scalar_item:
