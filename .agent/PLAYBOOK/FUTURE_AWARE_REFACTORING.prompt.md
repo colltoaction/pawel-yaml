@@ -2,13 +2,16 @@
 
 Use future-aware rebasing to keep each historical commit aligned with the final architecture.
 The default and required commit-selection method is the cost-based `O(log n)` running-total bisect strategy.
+No non-bisect commit selection is allowed.
 
 ## Core Strategy (Default)
 
 ### Cost Model
-1. Choose a baseline commit `B` and list commits `C[1..n]` from `B..HEAD` in chronological order.
-2. For each commit `C[i]`, compute `commit_total[i]` as total changed lines for that commit.
-3. Compute running totals:
+1. Set baseline commit `B` to branch root by default:
+`B=$(git rev-list --max-parents=0 HEAD | tail -n1)`.
+2. List commits `C[1..n]` from `B..HEAD` in chronological order.
+3. For each commit `C[i]`, compute `commit_total[i]` as total changed lines for that commit.
+4. Compute running totals:
 `running_total[i] = running_total[i-1] + commit_total[i]`, with `running_total[0] = 0`.
 
 ### Heavy-Path Bisect (Log-Scale Selection)
@@ -24,11 +27,40 @@ if `left_growth >= right_growth`, recurse to `[start, mid]`; otherwise recurse t
 
 Expected target count: approximately `O(log n)` commits.
 
+### Command Reference (Cost Model)
+Use these commands to generate deterministic commit weights from branch root.
+
+```bash
+B=$(git rev-list --max-parents=0 HEAD | tail -n1)
+mkdir -p build/tmp
+
+git rev-list --reverse --topo-order HEAD | awk '
+BEGIN { OFS="\t"; running=0; i=0; print "idx","sha","commit_total","running_total" }
+{
+  sha=$0
+  cmd="git show --numstat --format=\"\" " sha
+  total=0
+  while ((cmd | getline line) > 0) {
+    n=split(line,a,"\t")
+    if (n >= 2 && a[1] ~ /^[0-9]+$/ && a[2] ~ /^[0-9]+$/) total += a[1] + a[2]
+  }
+  close(cmd)
+  i += 1
+  running += total
+  print i, sha, total, running
+}' > build/tmp/running_totals.tsv
+```
+Optional override when using a non-root baseline:
+`BASE_PARENT=$(git rev-parse --verify <baseline>^)`
+then replace `git rev-list --reverse --topo-order HEAD` with
+`git rev-list --reverse "$BASE_PARENT..HEAD"`.
+
 ## Prerequisites (Run First)
 1. Ensure parser builds:
 `make clean && make`
 2. Prepare harness prerequisites (automated):
 `make setup`
+   - On first run this may clone from GitHub.
 
 ## Divide Report (Required)
 Record one entry for each split decision during divide stage.
@@ -46,29 +78,47 @@ Required fields:
 
 ### 1. Plan
 1. Define refactoring goal.
-2. Identify baseline `B`.
+2. Identify baseline `B` (default: branch root).
 3. Run cost model and heavy-path bisect.
 4. Produce the divide report before editing commits.
 5. Capture immutable refs for rebase:
 `TIP_REF=$(git rev-parse --verify HEAD)`
-`BASE_PARENT=$(git rev-parse --verify <baseline>^)`
+`B=$(git rev-list --max-parents=0 HEAD | tail -n1)`
+`BASE_PARENT=$(git rev-parse --verify <baseline>^)` (only if using non-root baseline override)
 
 ### 2. Rebase
-1. Start interactive rebase from the parent of the first target commit:
-`git rebase -i "$BASE_PARENT"`
+1. Start interactive rebase:
+`git rebase -i --root`
+   - Non-root baseline override: `git rebase -i "$BASE_PARENT"`
 2. Mark selected target commits as `edit`.
 3. Leave non-target commits as `pick`.
 
-### 3. Stop Protocol (At Each Edited Commit)
+### 3. Stop Protocol (At Each Edited Commit, Mandatory TDD Cycle)
 1. Sync infrastructure:
 `git checkout "$TIP_REF" -- .agent/tooling.sh`
-2. Apply refactor scoped to this commit.
+2. Run one full TDD cycle for this stop:
+- RED: run target test and capture failing evidence.
+- GREEN: implement minimal change to satisfy target behavior.
+- REFACTOR: clean structure while preserving GREEN behavior.
 3. Verify:
 `make clean && make`
+`make check`
 `./.agent/tooling.sh tdd:test <ID>`
 4. Continue:
 `git add <files>`
 `git rebase --continue`
+
+### 4. Per-Stop TDD Record (Required)
+For each `edit` stop, record:
+- Stop index
+- Commit SHA
+- Test ID
+- RED evidence (failing command/result)
+- GREEN evidence (passing command/result)
+- Refactor scope (files/functions)
+- Final gate status: `pass` or `blocked`
+
+If blocked (e.g., fixture/network unavailable), record exact blocker and still continue with build verification.
 
 ## Conflict Protocol: Inspect-Align-Continue
 Use this only when conflicts occur.
@@ -81,10 +131,13 @@ Use this only when conflicts occur.
 - Adopt updated tooling files immediately.
 3. Verify build and tests:
 `make clean && make`
+`make check`
 `./.agent/tooling.sh tdd:test <ID>`
 4. Continue rebase:
 `git add <files>`
 `git rebase --continue`
+
+After conflict resolution, still complete the per-stop TDD cycle record for that stop.
 
 ## Bounded-Work Constraints (Mandatory)
 - No unbounded work: each stage must have explicit input, output, and stop condition.
@@ -95,6 +148,8 @@ Use this only when conflicts occur.
 
 ## Done Criteria
 - Selected commits were chosen by the running-total heavy-path bisect strategy.
+- Baseline starts at branch root unless a non-root override is explicitly documented.
 - Divide report exists with one entry per split.
-- Each edited commit passes build and targeted harness verification.
+- Each edited commit has one RED/GREEN/REFACTOR TDD cycle record.
+- Each edited commit passes build and targeted harness verification (or is explicitly marked blocked with reason).
 - Rebase completes with clean, architecture-aligned history.

@@ -82,6 +82,10 @@ yaml-test-suite:
 		echo "Run: git clone https://github.com/yaml/yaml-test-suite.git build/lib/yaml-test-suite"; \
 		exit 1; \
 	}
+	@ls build/lib/yaml-test-suite/src/*.yaml >/dev/null 2>&1 || { \
+		echo "ERROR: yaml-test-suite source directory exists but contains no *.yaml test files"; \
+		exit 1; \
+	}
 
 fuzz-lexer: $(BINTARGET)
 	ITERATIONS=$${ITERATIONS:-300} TIMEOUT_SEC=$${TIMEOUT_SEC:-2} ./lexer_fuzz_chaos.sh $${SEED:-1337}
@@ -97,7 +101,8 @@ fuzz-lexer-replay-strict: $(BINTARGET)
 
 # Cleanup
 clean:
-	rm -rf $(BUILD)
+	@mkdir -p $(BUILD)
+	rm -rf $(BINDIR) $(BUILDSRCDIR) $(BUILDINCDIR) $(BUILD_OBJDIR) $(BUILD)/log $(BUILD)/tmp
 
 .PHONY: all directories check clean lex fuzz-lexer fuzz-lexer-strict fuzz-lexer-replay fuzz-lexer-replay-strict
 .PHONY: setup ensure-test-failures yaml-test-suite
