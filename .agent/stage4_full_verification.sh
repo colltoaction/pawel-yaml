@@ -6,6 +6,9 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 SUITE_DIR="build/lib/yaml-test-suite/src"
+if [[ ! -d "$SUITE_DIR" ]]; then
+    SUITE_DIR=".agent/lib/yaml-test-suite/src"
+fi
 PARSER="./build/bin/pawel-yaml"
 LOG_FILE="build/log/stage4_results.log"
 TMP_DIR="build/tmp"
@@ -25,7 +28,7 @@ echo ""
 
 # Verify prerequisites
 if [[ ! -d "$SUITE_DIR" ]]; then
-    echo -e "${RED}ERROR: yaml-test-suite not found at $SUITE_DIR${NC}"
+    echo -e "${RED}ERROR: yaml-test-suite not found at build/lib/yaml-test-suite/src or .agent/lib/yaml-test-suite/src${NC}"
     exit 1
 fi
 

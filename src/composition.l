@@ -23,7 +23,7 @@
 "=VAL"          return E_SCALAR;
 "=ALI"          return E_ALIAS;
 
-"&"[a-zA-Z0-9_]+ {
+"&"[a-zA-Z0-9_:/\.-]+ {
     yylval.sval = strdup(yytext + 1);
     return E_ANCHOR;
 }
@@ -34,15 +34,33 @@
     return E_TAG;
 }
 
+"!!"[a-zA-Z0-9_:/\.-]+ {
+    yylval.sval = strdup(yytext + 2);
+    return E_TAG;
+}
+
+"!"[a-zA-Z0-9_:/\.-]+ {
+    yylval.sval = strdup(yytext + 1);
+    return E_TAG;
+}
+
+"!" {
+    yylval.sval = strdup("!");
+    return E_TAG;
+}
+
 ":" {
     BEGIN(SCALAR_VAL);
     return ':';
 }
 
-<SCALAR_VAL>[^\n\r]* {
+<SCALAR_VAL>[^\n\r]+ {
     yylval.sval = strdup(yytext);
     BEGIN(0);
     return E_IDENTIFIER;
+}
+<SCALAR_VAL>\r?\n {
+    BEGIN(0);
 }
 
 "\"" {
@@ -65,7 +83,12 @@
     return E_STYLE;
 }
 
-[a-zA-Z0-9_\-\.\/!]+ {
+"*"[a-zA-Z0-9_:/\.-]+ {
+    yylval.sval = strdup(yytext + 1);
+    return E_IDENTIFIER;
+}
+
+[a-zA-Z0-9_\-\.\/!][a-zA-Z0-9_\-\.\/!:]* {
     yylval.sval = strdup(yytext);
     return E_IDENTIFIER;
 }

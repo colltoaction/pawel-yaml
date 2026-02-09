@@ -10,6 +10,7 @@
 !test_yaml_suite.py
 !extract_test_yaml.py
 !extract_test_info.py
+!lexer_fuzz_chaos.sh
 
 # Preservation
 !build/tmp/

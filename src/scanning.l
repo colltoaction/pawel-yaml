@@ -36,6 +36,9 @@ LexerContext *lexer_context_new(void) {
     /* Initialize document state */
     ctx->first_line = 1;
     ctx->last_was_value = 0;
+    ctx->at_line_start = 1;
+    ctx->complex_key_pending = 0;
+    ctx->pending_colon = 0;
     
     /* Initialize block scalar state */
     ctx->block_scalar.type = '\0';
@@ -95,6 +98,9 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->pending_dedents = 0;
     ctx->first_line = 1;
     ctx->last_was_value = 0;
+    ctx->at_line_start = 1;
+    ctx->complex_key_pending = 0;
+    ctx->pending_colon = 0;
     
     ctx->block_scalar.type = '\0';
     ctx->block_scalar.indent = -1;
@@ -290,6 +296,8 @@ static int check_scalar_continuation() {
     return 0;
 }
 
+
+
 /* static void init_scalar(LexerContext *ctx) {
     ctx_scalar_init(ctx);
 } */
@@ -324,6 +332,10 @@ static int check_scalar_continuation() {
 %x QUOTED
 
 NSCAL [a-zA-Z0-9\-\._%:/]
+VSPACE \xE2\x90\xA3
+TAG_TOKEN ("!!"{NSCAL}+|"!"{NSCAL}+"!"{NSCAL}*|"!"{NSCAL}+)
+PKEY_HEAD [^ \t\n\r\[\]{}!,&*%@|>\`'"]
+PKEY_BODY [^:\n\r]*
 
 %%
 
@@ -339,13 +351,17 @@ NSCAL [a-zA-Z0-9\-\._%:/]
         return DEDENT;
     }
 
+    /* Synthetic ':' after explicit-key shorthand '? key' */
+    if (CTX->pending_colon) {
+        CTX->pending_colon = 0;
+        CTX->at_line_start = 0;
+        CTX->expecting_value = 1;
+        return COLON_IMPLICIT;
+    }
+
+
 <INDENT_CHECK>[ \t]*#[^\n]* {
     /* Line with only whitespace and comment - skip it, stay in INDENT_CHECK */
-    BEGIN(INDENT_CHECK);
-}
-
-<INDENT_CHECK>[ \t]*\n {
-    /* Blank line - skip it, stay in INDENT_CHECK */
     BEGIN(INDENT_CHECK);
 }
 
@@ -360,12 +376,13 @@ NSCAL [a-zA-Z0-9\-\._%:/]
         if (yytext[i] == ' ') {
             indent++;
         } else if (yytext[i] == '\t') {
-            fprintf(stderr, "syntax error, tabs used for indentation\n");
-            exit(1);
+            parsing_yy_error(yylloc, yyscanner, "syntax error, tabs used for indentation");
+            return 0;
         }
     }
     
     BEGIN(INITIAL);
+    CTX->at_line_start = 1;
     int cur = CTX->indent_stack[CTX->indent_sp];
     if (indent > cur) {
         if (CTX->indent_sp < 99) {
@@ -388,6 +405,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     /* Not an indent - likely at column 0 */
     yyless(0);
     BEGIN(INITIAL);
+    CTX->at_line_start = 1;
     int cur = CTX->indent_stack[CTX->indent_sp];
     if (0 < cur) {
         while (0 < CTX->indent_stack[CTX->indent_sp]) {
@@ -433,24 +451,125 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 <DIRECTIVE_MODE>{
     [ \t]+          { /* skip space */ }
     \n              { BEGIN(INITIAL); }
+    "!!!"{NSCAL}*   { parsing_yy_error(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
     "!"{NSCAL}+"!"  { yylval->string = strdup(yytext); return TAG; }
     "!!"{NSCAL}+    { yylval->string = strdup(yytext); return TAG; }
     "!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
     [^ \t\n]+       { yylval->string = strdup(yytext); return SCALAR; }
 }
-"-"/[ \t\n]      { CTX->expecting_value = 1; return BULLET; }
-":"/[ \t\n]      { CTX->expecting_value = 1; return COLON; }
-"?"/[ \t\n]      { CTX->expecting_value = 1; return QUESTION; }
-"!"              { yylval->string = strdup("!"); return TAG; }
-"!!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
-"!"{NSCAL}+"!"{NSCAL}* { yylval->string = strdup(yytext); return TAG; }
-"!"{NSCAL}+      { yylval->string = strdup(yytext); return TAG; }
-"&"{NSCAL}+      { yylval->string = strdup(yytext); return ANCHOR; }
-"*"{NSCAL}+      { yylval->string = strdup(yytext); CTX->expecting_value = 0; return ALIAS; }
-"["              { CTX->flow_level++; CTX->expecting_value = 1; return LBRACK; }
-"]"              { if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACK; }
-"{"              { CTX->flow_level++; CTX->expecting_value = 1; return LBRACE; }
-"}"              { if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACE; }
+"-"[ \t]*"#"[^\n]*\n {
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 1;
+    if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
+    return BULLET_EOL;
+}
+"-"[ \t]*\n {
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 1;
+    if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
+    return BULLET_EOL;
+}
+"-"/[ \t\n]      { CTX->at_line_start = 0; CTX->expecting_value = 1; return BULLET; }
+":"/[ \t\n] {
+    if (CTX->complex_key_pending) {
+        CTX->complex_key_pending = 0;
+        CTX->at_line_start = 0;
+        CTX->expecting_value = 1;
+        return COLON;
+    }
+    if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value) {
+        /* Missing block mapping key, e.g. ": value" */
+        yylval->string = strdup("");
+        CTX->at_line_start = 0;
+        CTX->expecting_value = 0;
+        yyless(0); /* Rescan ':' as the actual separator token */
+        return MAP_KEY;
+    }
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 1;
+    return COLON;
+}
+":"/[ \t]*[,}]   { CTX->at_line_start = 0; if (CTX->flow_level > 0) { CTX->expecting_value = 1; return COLON_EMPTY; } CTX->expecting_value = 1; return COLON; }
+":"/{VSPACE}     { CTX->at_line_start = 0; CTX->expecting_value = 1; return COLON; }
+
+"?"[ ]+[^:\n\r]+[ ]*\n {
+    /* If next logical line starts with ':', this is a complex key, not shorthand. */
+    int look_buf[256];
+    int look_n = 0;
+    int c = input(yyscanner);
+    while ((c == ' ' || c == '\t') && look_n < 255) {
+        look_buf[look_n++] = c;
+        c = input(yyscanner);
+    }
+    if (c != EOF && c != 0 && look_n < 255) {
+        look_buf[look_n++] = c;
+    }
+    for (int i = look_n - 1; i >= 0; i--) {
+        unput(look_buf[i]);
+    }
+    if (c == ':') {
+        yyless(1);
+        CTX->at_line_start = 0;
+        CTX->complex_key_pending = 1;
+        CTX->expecting_value = 1;
+        return QUESTION;
+    }
+
+    char *raw = strdup(yytext + 1);
+    char *p = raw;
+    while (*p == ' ' || *p == '\t') p++;
+    yylval->string = strdup(p);
+    free(raw);
+    char *end = yylval->string + strlen(yylval->string);
+    while (end > yylval->string && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ' || end[-1] == '\t')) end--;
+    *end = '\0';
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+    CTX->pending_colon = 1;
+    if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
+    return MAP_KEY;
+}
+
+"?"/[ \t\n]      { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
+"?"/{VSPACE}     { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
+"!!!"{NSCAL}*    { parsing_yy_error(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
+{TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Tagged plain map key, e.g. "!!str key: value" -> keep only key text here. */
+    char *text = strdup(yytext);
+    char *sp = strchr(text, ' ');
+    if (!sp) {
+        yylval->string = text;
+    } else {
+        while (*sp == ' ') sp++;
+        yylval->string = strdup(sp);
+        free(text);
+    }
+    /* Trim trailing spaces before ':' and drop trailing ':' if included */
+    char *end = yylval->string + strlen(yylval->string);
+    while (end > yylval->string && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == ':')) {
+        end--;
+    }
+    *end = '\0';
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+    return MAP_KEY;
+}
+"!"              { CTX->at_line_start = 0; yylval->string = strdup("!"); return TAG; }
+"!!"{NSCAL}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
+"!"{NSCAL}+"!"{NSCAL}* { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
+"!"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
+"&"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); return ANCHOR; }
+"*"{NSCAL}+/[ ]*":"([ \t]|{VSPACE}) {
+    CTX->at_line_start = 0;
+    yylval->string = strdup(yytext + 1);
+    CTX->expecting_value = 0;
+    return MAP_KEY;
+}
+"*"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; return ALIAS; }
+"["              { CTX->at_line_start = 0; CTX->flow_level++; CTX->expecting_value = 1; return LBRACK; }
+"]"              { CTX->at_line_start = 0; if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACK; }
+"{"              { CTX->at_line_start = 0; CTX->flow_level++; CTX->expecting_value = 1; return LBRACE; }
+"}"              { CTX->at_line_start = 0; if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACE; }
 ":"              { 
     if (CTX->expecting_value && CTX->flow_level > 0) {
          yylval->string = strdup(":");
@@ -468,21 +587,27 @@ NSCAL [a-zA-Z0-9\-\._%:/]
          return ':'; 
     }
 }
-","              { CTX->expecting_value = 1; return COMMA; }
+","              { CTX->at_line_start = 0; CTX->expecting_value = 1; return COMMA; }
 
-\"[^\"]*\": {
+\"[^\"]*\"[ ]*: {
     size_t len = yyleng;
-    if (len > 2 && yytext[len-1] == ':' && yytext[len-2] == '"') yytext[len-2] = '\0';
+    while (len > 0 && yytext[len - 1] == ':') len--;
+    while (len > 0 && yytext[len - 1] == ' ') len--;
+    if (len > 1 && yytext[len - 1] == '"') yytext[len - 1] = '\0';
     yylval->string = strdup(yytext + 1);
     yyless(yyleng - 1);
+    CTX->at_line_start = 0;
     return QMAP_KEY;
 }
 
-'[^']*': {
+'[^']*'[ ]*: {
     size_t len = yyleng;
-    if (len > 2 && yytext[len-1] == ':' && yytext[len-2] == '\'') yytext[len-2] = '\0';
+    while (len > 0 && yytext[len - 1] == ':') len--;
+    while (len > 0 && yytext[len - 1] == ' ') len--;
+    if (len > 1 && yytext[len - 1] == '\'') yytext[len - 1] = '\0';
     yylval->string = strdup(yytext + 1);
     yyless(yyleng - 1);
+    CTX->at_line_start = 0;
     return SMAP_KEY;
 }
 \" {
@@ -509,7 +634,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     \n { yylval->string = strdup("\n"); return CH_RAW; }
     
     <<EOF>> {
-        parsing_yy_error(NULL, yyscanner, "syntax error, unterminated quoted string");
+        parsing_yy_error(yylloc, yyscanner, "syntax error, unterminated quoted string");
         BEGIN(INITIAL);
         return 0;
     }
@@ -592,23 +717,50 @@ NSCAL [a-zA-Z0-9\-\._%:/]
 
 
 
-[^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:]|[ ]|:[^ \t\n\r])*/[ ]*":"[ \t\n] {
+[^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
+    if (CTX->flow_level > 0) {
+        /* In flow context, parse key text incrementally; avoid swallowing commas/brackets. */
+        yyless(1);
+        if (yytext[0] == ':') {
+            CTX->expecting_value = 1;
+            return COLON;
+        }
+        yylval->string = strdup(yytext);
+        CTX->expecting_value = 0;
+        BEGIN(PLAIN_SCALAR_CONT);
+        return CH_RAW;
+    }
+    if (CTX->at_line_start && yytext[0] == '-' && yyleng > 1 &&
+        (yytext[1] == ' ' || yytext[1] == '\t')) {
+        /* Reuse BULLET tokenization for sequence indicators at line start. */
+        yyless(1);
+        CTX->at_line_start = 0;
+        CTX->expecting_value = 1;
+        return BULLET;
+    }
     yylval->string = strdup(yytext);
     /* Trim trailing spaces from key */
     char *end = yylval->string + strlen(yylval->string) - 1;
     while (end > yylval->string && *end == ' ') *end-- = '\0';
+    CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
 
 [^ \t\n\r\[\]{}!,&*%@|>\`'"] {
     yylval->string = strdup(yytext);
+    CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     BEGIN(PLAIN_SCALAR_CONT);
     return CH_RAW;
 }
 
 ":"[a-zA-Z0-9\-\._]+ {
+    if (CTX->flow_level > 0 && !CTX->expecting_value) {
+        yyless(1);
+        CTX->expecting_value = 1;
+        return COLON;
+    }
     yylval->string = strdup(yytext);
     CTX->expecting_value = 0;
     BEGIN(PLAIN_SCALAR_CONT);
@@ -621,6 +773,45 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     BEGIN(INITIAL);
 }
 
+<PLAIN_SCALAR_CONT>\n[ ]*-[ \t][^\n\r]*/\n {
+    /* A nested/sibling block sequence indicator terminates plain continuation. */
+    yyless(0);
+    BEGIN(INITIAL);
+}
+
+<PLAIN_SCALAR_CONT>\n[ ]*-[ \t]*\n {
+    /* Also terminate on bare dash items ("-" with optional trailing spaces). */
+    yyless(0);
+    BEGIN(INITIAL);
+}
+
+<PLAIN_SCALAR_CONT>\n[ ]*\n[ ]+[^:\n\r]*/\n {
+    /* Blank line + indented continuation => preserve one logical newline. */
+    const char *p = yytext + 1; /* skip first newline */
+    while (*p == ' ') p++;
+    if (*p == '\n') p++;
+    while (*p == ' ') p++;
+    size_t n = strlen(p);
+    char *s = malloc(n + 2);
+    s[0] = '\n';
+    memcpy(s + 1, p, n + 1);
+    yylval->string = s;
+    return CH_RAW;
+}
+
+<PLAIN_SCALAR_CONT>\n[ ]+[^:\n\r]*/\n {
+    /* Indented continuation line => fold to space. */
+    const char *p = yytext + 1; /* skip newline */
+    while (*p == ' ') p++;
+    size_t n = strlen(p);
+    char *s = malloc(n + 2);
+    s[0] = ' ';
+    memcpy(s + 1, p, n + 1);
+    yylval->string = s;
+    return CH_RAW;
+}
+
+<PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>":" { yylval->string = strdup(":"); return CH_RAW; }
@@ -649,6 +840,7 @@ NSCAL [a-zA-Z0-9\-\._%:/]
     if (c == '\n') unput('\n');
 }
 [ \t\r]+       { CTX->last_was_value = 0; /* skip whitespace */ }
+{VSPACE}+      { CTX->last_was_value = 0; /* yaml-test-suite visible space marker */ }
 .                { return yytext[0]; }
 
 <<EOF>> {
