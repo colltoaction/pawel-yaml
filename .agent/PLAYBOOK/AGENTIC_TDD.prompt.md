@@ -27,5 +27,12 @@ Complexity is handled incrementally through disciplined, test-backed progress.
 3. **REFACTOR**: Improve structure with tests still green.
 4. **REPEAT**: Take the next baby step.
 
+## Rebase Integration
+When used with future-aware rebasing, each `edit` stop is one mandatory TDD micro-cycle:
+1. RED on target test
+2. GREEN with minimal fix
+3. REFACTOR while preserving GREEN
+4. Record evidence for that stop
+
 ## Significance
 Even large architectures can be built from scratch with disciplined TDD when progress is incremental and verified.
