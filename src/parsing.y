@@ -99,8 +99,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 57
-%expect-rr 79
+%expect 62
+%expect-rr 89
 
 %{
 #include <stdlib.h>
@@ -580,15 +580,14 @@ stream:
     ;
 
 documents:
-    directives documents
+    %empty
     | implicit_document
-    | explicit_documents
-    | implicit_document explicit_documents
     | implicit_document DOC_END
     | implicit_document DOC_END explicit_documents
+    | explicit_documents
+    | implicit_document explicit_documents
     | DOC_END
     | DOC_END explicit_documents
-    | DOC_END documents
     ;
 
 directives:
@@ -618,6 +617,15 @@ explicit_document:
     | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
     DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    node
+    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    INDENT node DEDENT
+    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     ;
 
 optional_doc_end:
@@ -633,6 +641,7 @@ implicit_document:
 node:
     scalar_item[s] { ir_scalar(ir, $s.value, $s.type, NULL, NULL); add_scalar_event($s.value, $s.type); free($s.value); }
     | node_props[p] scalar_item[s] { ir_scalar(ir, $s.value, $s.type, $p.anchor, $p.tag); add_scalar_event($s.value, $s.type); free($s.value); free($p.anchor); free($p.tag); }
+    | node_props[p] { ir_scalar(ir, "", ':', $p.anchor, $p.tag); add_scalar_event("", ':'); free($p.anchor); free($p.tag); }
     | ALIAS[a] { ir_alias(ir, $a); add_alias_event($a); free($a); }
     | sequence_no_props
     | node_props[p] sequence_with_props { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); }
@@ -779,9 +788,10 @@ flow_map_entries:
     ;
 
 flow_map_entry:
-    node COLON node %dprec 2
-    | node COLON_EMPTY { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
-    | node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
+    node COLON node %dprec 3
+    | node COLON_EMPTY { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | node COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
     | error { RECOVER("Malformed flow mapping entry"); }
     ;
 
