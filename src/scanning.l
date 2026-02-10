@@ -689,8 +689,8 @@ PKEY_BODY [^:\n\r]*
     CTX->last_was_value = 1;
     return SSCALAR;
 }
-"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; BEGIN(BLOCK_SCALAR); return BPART; }
-">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; BEGIN(BLOCK_SCALAR); return BPART; }
+"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
+">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
 
 <BLOCK_SCALAR>^[ \t]*\n {
     yylval->string = strdup("\n");
