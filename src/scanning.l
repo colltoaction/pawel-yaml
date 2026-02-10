@@ -604,9 +604,83 @@ PKEY_BODY [^:\n\r]*
     return MAP_KEY;
 }
 "*"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; return ALIAS; }
-"["              { CTX->at_line_start = 0; CTX->flow_level++; CTX->expecting_value = 1; return LBRACK; }
+"["              {
+    if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
+        int depth = 1;
+        int look_buf[4096];
+        int look_n = 0;
+        int c;
+        int found = 0;
+        while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
+            look_buf[look_n++] = c;
+            if (c == '\n') break;
+            if (c == '[' || c == '{') depth++;
+            if (c == ']' || c == '}') depth--;
+            if (depth == 0) {
+                while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
+                    look_buf[look_n++] = c;
+                    if (c == ':') { found = 1; break; }
+                    if (c == '\n' || c == '#') break;
+                    if (c != ' ' && c != '\t') break;
+                }
+                break;
+            }
+        }
+        for (int i = look_n - 1; i >= 0; i--) {
+            unput(look_buf[i]);
+        }
+        if (found) {
+            yyless(0);
+            CTX->at_line_start = 0;
+            CTX->complex_key_pending = 1;
+            CTX->expecting_value = 1;
+            return QUESTION;
+        }
+    }
+    CTX->at_line_start = 0;
+    CTX->flow_level++;
+    CTX->expecting_value = 1;
+    return LBRACK;
+}
 "]"              { CTX->at_line_start = 0; if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACK; }
-"{"              { CTX->at_line_start = 0; CTX->flow_level++; CTX->expecting_value = 1; return LBRACE; }
+"{"              {
+    if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
+        int depth = 1;
+        int look_buf[4096];
+        int look_n = 0;
+        int c;
+        int found = 0;
+        while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
+            look_buf[look_n++] = c;
+            if (c == '\n') break;
+            if (c == '[' || c == '{') depth++;
+            if (c == ']' || c == '}') depth--;
+            if (depth == 0) {
+                while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
+                    look_buf[look_n++] = c;
+                    if (c == ':') { found = 1; break; }
+                    if (c == '\n' || c == '#') break;
+                    if (c != ' ' && c != '\t') break;
+                }
+                break;
+            }
+        }
+        for (int i = look_n - 1; i >= 0; i--) {
+            unput(look_buf[i]);
+        }
+        if (found) {
+            yyless(0);
+            CTX->at_line_start = 0;
+            CTX->complex_key_pending = 1;
+            CTX->expecting_value = 1;
+            return QUESTION;
+        }
+    }
+    CTX->at_line_start = 0;
+    CTX->flow_level++;
+    CTX->expecting_value = 1;
+    return LBRACE;
+}
 "}"              { CTX->at_line_start = 0; if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACE; }
 ":"              { 
     if (CTX->expecting_value && CTX->flow_level > 0) {
