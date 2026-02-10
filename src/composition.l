@@ -34,13 +34,8 @@
     return E_TAG;
 }
 
-"!!"[a-zA-Z0-9_:/\.-]+ {
-    yylval.sval = strdup(yytext + 2);
-    return E_TAG;
-}
-
-"!"[a-zA-Z0-9_:/\.-]+ {
-    yylval.sval = strdup(yytext + 1);
+"!"[a-zA-Z0-9_:/\.\-!%]+ {
+    yylval.sval = strdup(yytext);
     return E_TAG;
 }
 
