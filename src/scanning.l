@@ -745,7 +745,7 @@ PKEY_BODY [^:\n\r]*
 
 
 
-[^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
+[^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:\[\]{}]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
     if (CTX->flow_level > 0) {
         /* In flow context, parse key text incrementally; avoid swallowing commas/brackets. */
         yyless(1);
