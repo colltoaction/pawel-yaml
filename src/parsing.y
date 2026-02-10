@@ -580,7 +580,8 @@ stream:
     ;
 
 documents:
-    implicit_document
+    %empty
+    | implicit_document
     | implicit_document DOC_END
     | implicit_document DOC_END explicit_documents
     | explicit_documents
