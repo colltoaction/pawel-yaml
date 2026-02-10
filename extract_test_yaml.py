@@ -14,6 +14,7 @@ def convert_special_chars(text):
     if not text:
         return text
     # Tab representations (longest first to avoid partial matches)
+    text = text.replace('\u2014\u2014\u2014\u2014\u00BB', '\t')  # ————»
     text = text.replace('\u2014\u2014\u2014\u00BB', '\t')  # ———»
     text = text.replace('\u2014\u2014\u00BB', '\t')          # ——»
     text = text.replace('\u2014\u00BB', '\t')                # —»
