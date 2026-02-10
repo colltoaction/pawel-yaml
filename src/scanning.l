@@ -507,19 +507,44 @@ PKEY_BODY [^:\n\r]*
 
 "?"[ ]+[^:\n\r]+[ ]*\n {
     /* If next logical line starts with ':', this is a complex key, not shorthand. */
-    int look_buf[256];
+    int look_buf[1024];
     int look_n = 0;
     int c = input(yyscanner);
-    while ((c == ' ' || c == '\t') && look_n < 255) {
-        look_buf[look_n++] = c;
-        c = input(yyscanner);
+    
+    /* Skip whitespace, blank lines, and comments to find next real content */
+    while (look_n < 1023) {
+        if (c == ' ' || c == '\t') {
+            look_buf[look_n++] = c;
+            c = input(yyscanner);
+        } else if (c == '\n') {
+            /* Blank line - skip it */
+            look_buf[look_n++] = c;
+            c = input(yyscanner);
+        } else if (c == '#') {
+            /* Comment - skip to end of line */
+            look_buf[look_n++] = c;
+            while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0 && look_n < 1023) {
+                look_buf[look_n++] = c;
+            }
+            if (c == '\n' && look_n < 1023) {
+                look_buf[look_n++] = c;
+                c = input(yyscanner);
+            }
+        } else {
+            break;
+        }
     }
-    if (c != EOF && c != 0 && look_n < 255) {
+    
+    /* Save the final character we looked at */
+    if (c != EOF && c != 0 && look_n < 1023) {
         look_buf[look_n++] = c;
     }
+    
+    /* Put everything back */
     for (int i = look_n - 1; i >= 0; i--) {
         unput(look_buf[i]);
     }
+    
     if (c == ':') {
         yyless(1);
         CTX->at_line_start = 0;
