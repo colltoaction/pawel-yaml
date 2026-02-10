@@ -877,6 +877,12 @@ PKEY_BODY [^:\n\r]*
     return CH_RAW;
 }
 
+<PLAIN_SCALAR_CONT>[ \t]+/#[^\n\r]* {
+    /* Comment starts after whitespace; terminate scalar before comment. */
+    yyless(0);
+    BEGIN(INITIAL);
+}
+
 <PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { yylval->string = strdup(yytext); return CH_RAW; }
