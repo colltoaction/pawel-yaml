@@ -779,6 +779,15 @@ PKEY_BODY [^:\n\r]*
     \\\\ { yylval->string = strdup("\\\\"); return CH_ESC_BS; }
     \\\" { yylval->string = strdup("\\\""); return CH_ESC_QU; }
     \\\/ { yylval->string = strdup("\\/"); return CH_ESC_SL; }
+    \\. {
+        if (yytext[1] == '.') {
+            parsing_yy_error(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
+            BEGIN(INITIAL);
+            return 0;
+        }
+        yylval->string = strdup(yytext);
+        return CH_RAW;
+    }
     \\0 { yylval->string = strdup("\\0"); return CH_ESC_0; }
     
     [^\\\"\n]+ { yylval->string = strdup(yytext); return CH_RAW; }
