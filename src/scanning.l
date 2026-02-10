@@ -804,13 +804,28 @@ PKEY_BODY [^:\n\r]*
 "|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
 ">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
 
-<BLOCK_SCALAR>^[ \t]*\n {
+<BLOCK_SCALAR>^([ \t]|{VSPACE})*\n {
     yylval->string = strdup("\n");
     return BPART;
 }
 
-<BLOCK_SCALAR>^[ \t]+ {
-    int indent = yyleng;
+<BLOCK_SCALAR>^([ \t]|{VSPACE})+ {
+    int indent = 0;
+    int i = 0;
+    while (i < yyleng) {
+        unsigned char ch = (unsigned char)yytext[i];
+        if (ch == ' ' || ch == '\t') {
+            indent++;
+            i++;
+        } else if (ch == 0xE2 && (i + 2) < yyleng &&
+                   (unsigned char)yytext[i + 1] == 0x90 &&
+                   (unsigned char)yytext[i + 2] == 0xA3) {
+            indent++;
+            i += 3;
+        } else {
+            i++;
+        }
+    }
     if (CTX->block_scalar.indent == -1) {
         CTX->block_scalar.indent = indent;
     }
@@ -821,10 +836,9 @@ PKEY_BODY [^:\n\r]*
         int line_len = 0;
         int c;
         int skip = CTX->block_scalar.indent;
-        int consumed = yyleng;
         
         /* copy extra spaces if indent > block_indent */
-        for (int i = 0; i < (consumed - skip); i++) {
+        for (int i = 0; i < (indent - skip); i++) {
             if (line_len < 4095) line_buf[line_len++] = ' ';
         }
         
