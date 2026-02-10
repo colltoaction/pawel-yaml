@@ -100,7 +100,7 @@ int yaml_present(void);
 
 %glr-parser
 %expect 57
-%expect-rr 55
+%expect-rr 79
 
 %{
 #include <stdlib.h>
@@ -580,11 +580,26 @@ stream:
     ;
 
 documents:
-    YAML_DIRECTIVE documents
+    directives documents
     | implicit_document
     | explicit_documents
     | implicit_document explicit_documents
+    | implicit_document DOC_END
+    | implicit_document DOC_END explicit_documents
     | DOC_END
+    | DOC_END explicit_documents
+    | DOC_END documents
+    ;
+
+directives:
+    directive
+    | directives directive
+    ;
+
+directive:
+    YAML_DIRECTIVE
+    | TAG_DIRECTIVE SCALAR SCALAR { free($2); free($3); }
+    | TAG_DIRECTIVE TAG SCALAR { free($2); free($3); }
     ;
 
 explicit_documents:
@@ -596,10 +611,18 @@ explicit_documents:
 explicit_document:
     DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
     node
-    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
     | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
     INDENT node DEDENT
-    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    ;
+
+optional_doc_end:
+    %empty
+    | DOC_END
     ;
 
 implicit_document:
@@ -699,12 +722,12 @@ flow_seq_entries:
     %empty
     | flow_seq_entry
     | flow_seq_entries COMMA flow_seq_entry
+    | flow_seq_entries COMMA
     ;
 
 flow_seq_entry:
     node
     | node COLON node %dprec 1
-    | %empty
     | error { RECOVER("Malformed flow sequence entry"); }
     ;
 
@@ -752,13 +775,13 @@ flow_map_entries:
     %empty
     | flow_map_entry
     | flow_map_entries COMMA flow_map_entry
+    | flow_map_entries COMMA
     ;
 
 flow_map_entry:
     node COLON node %dprec 2
     | node COLON_EMPTY { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
     | node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
-    | %empty
     | error { RECOVER("Malformed flow mapping entry"); }
     ;
 
