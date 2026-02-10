@@ -733,9 +733,9 @@ PKEY_BODY [^:\n\r]*
 }
 
 <BLOCK_SCALAR>. {
-    /* Non-indented line starts with a character */
+    /* Non-indented line starts with a character - check indentation */
     yyless(0);
-    BEGIN(INITIAL);
+    BEGIN(INDENT_CHECK);
 }
 
 <BLOCK_SCALAR><<EOF>> {
