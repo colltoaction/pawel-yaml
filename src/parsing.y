@@ -99,8 +99,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 57
-%expect-rr 79
+%expect 61
+%expect-rr 52
 
 %{
 #include <stdlib.h>
@@ -580,15 +580,13 @@ stream:
     ;
 
 documents:
-    directives documents
-    | implicit_document
-    | explicit_documents
-    | implicit_document explicit_documents
+    implicit_document
     | implicit_document DOC_END
     | implicit_document DOC_END explicit_documents
+    | explicit_documents
+    | implicit_document explicit_documents
     | DOC_END
     | DOC_END explicit_documents
-    | DOC_END documents
     ;
 
 directives:
@@ -618,6 +616,15 @@ explicit_document:
     | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
     DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    node
+    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    INDENT node DEDENT
+    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     ;
 
 optional_doc_end:
