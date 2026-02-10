@@ -5,7 +5,9 @@ Adopt the theoretical framework of **Regular Monoidal Languages** to build a hig
 ---
 
 ## 📊 Status: Growing Parser Completeness
-- **Baseline**: ~60% pass rate.
+- **Current**: 73.22% pass rate (257/351 tests)
+- **Baseline**: 55.84% pass rate (196/351 tests)
+- **Progress**: +61 tests fixed through systematic TDD
 - **Engine**: Unified RML architecture in `src/mrl.y` and `src/mrl.l`.
 - **Methodology**: 100% Agentic TDD with 0% dead-code architecture.
 
