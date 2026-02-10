@@ -1,5 +1,61 @@
 # YAML Parser Progress Report
 
+## ✅ PROGRESS: Phase 13 - Lexer State Management & Regression Resolution (COMPLETE)
+**Status**: All identified regressions fixed. Parser stabilized.
+**Current Test Rate**: 257/351 (73.22%)
+
+**Completed** (9 TDD Cycles Total):
+1. ✅ Cycles 1-3: Unicode, ambiguity, tags, directives (196 → 241 tests)
+2. ✅ Cycle 4 (UDR7): Flow maps as values - MAP_KEY pattern fix (249 → 250)
+3. ✅ Cycle 5 (Q5MG): Tabs before flow indicators - INDENT_CHECK lookahead (250 → 251)
+4. ✅ Cycle 6 (X8DW): Complex keys with comments - enhanced lookahead (251 → 252)
+5. ✅ Cycle 7 (P76L): Inline comments after scalars - termination rule (252 → 254)
+6. ✅ Cycle 8 (6CA3): Em-dash tab markers - test extractor update (254 → 256)
+7. ✅ Cycle 9 (LX3P): Implicit flow keys - QUESTION injection (256 → 257)
+
+**Key Technical Achievements**:
+- **Lexer Lookahead Patterns**: Implemented sophisticated lookahead for complex key detection (skips blank lines and comments)
+- **Flow Collection Keys**: Added implicit complex key detection via QUESTION token injection for `[...]:\n` and `{...}:` patterns
+- **Tab Handling**: Distinguished indentation tabs (forbidden) from separator tabs (allowed) using flow indicator lookahead
+- **Comment Edge Cases**: Proper termination of plain scalars before inline comments
+- **Test Infrastructure**: Extended extract_test_yaml.py to handle 4-em-dash tab markers
+
+**Parser Stability**:
+- GLR conflicts remain stable: %expect 62, %expect-rr 89
+- No grammar modifications needed for cycles 4-9 (pure lexer improvements)
+- Clean git history: 12 atomic commits with detailed messages
+
+**Next Steps**:
+1. Categorize remaining 94 failures (feature work vs bugs)
+2. Target high-impact categories (plain scalars, anchors/aliases)
+3. Aim for 80% pass rate milestone (281/351 tests, +24 tests)
+
+---
+
+## ✅ PROGRESS: Phase 12 - Architectural Refactoring & Analysis (COMPLETE)
+**Status**: Code quality improvements and strategic planning.
+**Current Test Rate**: 127/351 (36.2%) [Historical record]
+
+**Completed**:
+1. ✅ "Just the Scanner" pattern refactoring - removed redundant FILE* passing
+2. ✅ Analyzed nested mapping parsing failure - root cause identified
+3. ✅ Created strategic roadmap for 50%+ pass rate
+4. ✅ Verified test suite infrastructure
+
+**Key Findings**:
+- Block mappings fail due to INDENT/DEDENT tokens appearing between map entries
+- Grammar-based fixes create unmanageable conflicts (>30 conflicts)
+- Per YACC paper: Semantic constraints belong outside grammar (not in Phase 1)
+- Recommended solution: Phase 2 validation layer, not grammar changes
+
+**Next Steps** (Priority Order):
+1. Escape sequences in quoted strings (+5-8 tests)
+2. Tags and anchors proper handling (+5-8 tests)
+3. Block scalar composition improvements (+25-40 tests)
+4. Phase 2 semantic validation for block mappings (+30-50 tests)
+
+---
+
 ## ✅ PROGRESS: Phase 11 Block Scalar Event Parser Fix (COMPLETE)
 **Status**: Event parser grammar updated to handle block scalars
 
