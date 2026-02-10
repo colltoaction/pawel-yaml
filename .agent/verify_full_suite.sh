@@ -102,7 +102,7 @@ EOF
     if [[ $? -ne 0 ]]; then
         echo -e "${YELLOW}SKIP${NC}: $test_id (extraction failed)"
         echo "SKIP: $test_id - Extraction failed" >> "$RESULTS_FILE"
-        ((SKIP_COUNT++))
+        SKIP_COUNT=$((SKIP_COUNT + 1))
         continue
     fi
     
@@ -125,11 +125,11 @@ EOF
         if $parser_failed; then
             echo -e "${GREEN}✓${NC} PASS: $test_id (correctly rejected)"
             echo "PASS: $test_id - Expected failure" >> "$RESULTS_FILE"
-            ((PASS_COUNT++))
+            PASS_COUNT=$((PASS_COUNT + 1))
         else
             echo -e "${RED}✗${NC} FAIL: $test_id (should have failed)"
             echo "FAIL: $test_id - Should have been rejected" >> "$RESULTS_FILE"
-            ((FAIL_COUNT++))
+            FAIL_COUNT=$((FAIL_COUNT + 1))
         fi
     else
         # Test should pass
@@ -138,11 +138,11 @@ EOF
             echo "FAIL: $test_id - Unexpected parse error" >> "$RESULTS_FILE"
             # Log first few lines of error
             echo "$parser_output" | head -n 3 >> "$RESULTS_FILE"
-            ((FAIL_COUNT++))
+            FAIL_COUNT=$((FAIL_COUNT + 1))
         else
             echo -e "${GREEN}✓${NC} PASS: $test_id"
             echo "PASS: $test_id" >> "$RESULTS_FILE"
-            ((PASS_COUNT++))
+            PASS_COUNT=$((PASS_COUNT + 1))
         fi
     fi
 done

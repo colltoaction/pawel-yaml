@@ -857,7 +857,7 @@ PKEY_BODY [^:\n\r]*
 
 
 
-[^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:\[\]{}]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
+[^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
     if (CTX->flow_level > 0) {
         /* In flow context, parse key text incrementally; avoid swallowing commas/brackets. */
         yyless(1);
@@ -962,10 +962,21 @@ PKEY_BODY [^:\n\r]*
 <PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>":" { yylval->string = strdup(":"); return CH_RAW; }
 
-<PLAIN_SCALAR_CONT>"\n"|[\{\}\[\],] {
+<PLAIN_SCALAR_CONT>"\n" {
     /* Terminator for plain scalar */
     yyless(0);
     BEGIN(INITIAL);
+}
+
+<PLAIN_SCALAR_CONT>[\{\}\[\],] {
+    if (CTX->flow_level > 0) {
+        /* Flow indicators terminate plain scalars in flow context. */
+        yyless(0);
+        BEGIN(INITIAL);
+    } else {
+        yylval->string = strdup(yytext);
+        return CH_RAW;
+    }
 }
 
 <PLAIN_SCALAR_CONT><<EOF>> {
