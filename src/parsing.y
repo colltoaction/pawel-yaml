@@ -786,9 +786,10 @@ flow_map_entries:
     ;
 
 flow_map_entry:
-    node COLON node %dprec 2
-    | node COLON_EMPTY { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
-    | node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
+    node COLON node %dprec 3
+    | node COLON_EMPTY { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | node COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
     | error { RECOVER("Malformed flow mapping entry"); }
     ;
 

@@ -590,25 +590,53 @@ PKEY_BODY [^:\n\r]*
 ","              { CTX->at_line_start = 0; CTX->expecting_value = 1; return COMMA; }
 
 \"[^\"]*\"[ ]*: {
+    // Extract quoted content
     size_t len = yyleng;
+    // Remove trailing ':'
     while (len > 0 && yytext[len - 1] == ':') len--;
+    // Remove trailing spaces
     while (len > 0 && yytext[len - 1] == ' ') len--;
+    // Remove closing quote for content extraction
     if (len > 1 && yytext[len - 1] == '"') yytext[len - 1] = '\0';
-    yylval->string = strdup(yytext + 1);
-    yyless(yyleng - 1);
-    CTX->at_line_start = 0;
-    return QMAP_KEY;
+    yylval->string = strdup(yytext + 1);  // Skip opening quote
+    
+    if (CTX->flow_level > 0) {
+        // Flow context: return as QSCALAR, put back colon and spaces
+        yyless(len);  // Keep only the quoted string part
+        CTX->expecting_value = 0;
+        CTX->last_was_value = 1;
+        return QSCALAR;
+    } else {
+        // Block context: return as QMAP_KEY, put back only colon
+        yyless(yyleng - 1);
+        CTX->at_line_start = 0;
+        return QMAP_KEY;
+    }
 }
 
 '[^']*'[ ]*: {
+    // Extract quoted content
     size_t len = yyleng;
+    // Remove trailing ':'
     while (len > 0 && yytext[len - 1] == ':') len--;
+    // Remove trailing spaces
     while (len > 0 && yytext[len - 1] == ' ') len--;
+    // Remove closing quote for content extraction
     if (len > 1 && yytext[len - 1] == '\'') yytext[len - 1] = '\0';
-    yylval->string = strdup(yytext + 1);
-    yyless(yyleng - 1);
-    CTX->at_line_start = 0;
-    return SMAP_KEY;
+    yylval->string = strdup(yytext + 1);  // Skip opening quote
+    
+    if (CTX->flow_level > 0) {
+        // Flow context: return as SSCALAR, put back colon and spaces
+        yyless(len);  // Keep only the quoted string part
+        CTX->expecting_value = 0;
+        CTX->last_was_value = 1;
+        return SSCALAR;
+    } else {
+        // Block context: return as SMAP_KEY, put back only colon
+        yyless(yyleng - 1);
+        CTX->at_line_start = 0;
+        return SMAP_KEY;
+    }
 }
 \" {
     BEGIN(QUOTED);
