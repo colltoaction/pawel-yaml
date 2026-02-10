@@ -1,0 +1,44 @@
+cycle_num: 7
+title: Documentation & Build Infrastructure
+branch: refactor/prod-cycle7
+target_files: "*.md, *.sh, Makefile"
+scope: Documentation consolidation and script cleanup
+lines_total: 518
+risk_level: 🟢 VERY LOW
+estimated_time: 1 hour
+target_reduction: 40-60
+target_lines: 458-478
+
+situation: |
+  Pure documentation and infrastructure work. No code impact. Focuses on eliminating
+  duplication in refactoring guides and consolidating utility scripts.
+
+refactoring_opportunities: |
+  1. Extract common TDD protocol from CYCLE*.md files into template
+  2. Consolidate 6 cycle9_*.sh scripts into single cycle9.sh with subcommands
+  3. Merge utility scripts (check_*.sh, debug_*.sh) into dev-utils.sh
+  4. Remove obsolete documentation files
+
+baseline_commands: |
+  wc -l *.md *.sh | tail -1  # Total documentation lines
+
+green_phase: |
+  1. Create CYCLE_REFACTORING_TEMPLATE.md with common structure
+  2. Convert CYCLE*.md to lightweight YAML configs
+  3. Design cycle9.sh with plan|rebase|replan subcommands
+  4. Consolidate utility scripts
+
+refactor_approach: |
+  - Replace 4 verbose .md files with template + YAML configs
+  - Merge 6 cycle9 scripts into 1 with option flags
+  - Consolidate 8 utility scripts into single dev-utils.sh
+
+specific_changes: |
+  1. Create template, convert docs to YAML (save ~150-200 lines)
+  2. Merge cycle9_*.sh → cycle9.sh (save ~80-100 lines)
+  3. Remove obsolete progress files (save ~50 lines)
+
+hints: |
+  Pattern: Template Extraction - Identify repeated sections across files
+  Pattern: Script Consolidation - Use case/esac for subcommand routing
+  Pattern: YAML Configs - Store variable data, reference template for structure

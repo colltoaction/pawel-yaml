@@ -1,0 +1,42 @@
+cycle_num: 5
+title: Lexer Refinement
+branch: refactor/prod-cycle5
+target_files: src/scanning.l
+scope: Lexer refinements and state management
+lines_total: 854
+risk_level: 🟢 LOW
+estimated_time: 1-2 hours
+target_reduction: 25
+target_lines: 830
+
+situation: |
+  Lexer refinement targeting state optimization and dead code removal.
+  File: src/scanning.l (lexer implementation).
+
+refactoring_opportunities: |
+  1. Lexer State Optimization - Review for redundant states, consolidate token patterns
+  2. Scanner Context Simplification - Reduce state variables, improve transitions
+  3. Performance Tuning - Simplify regex patterns, consolidate overlapping tokens
+
+baseline_commands: |
+  grep -c "^[a-z_]*:" src/scanning.l  # Count token patterns
+
+green_phase: |
+  1. Identify unused scanner states or duplicate patterns
+  2. Find commented-out functions and wrappers
+  3. Locate overlapping token matchers
+
+refactor_approach: |
+  - Remove commented-out context functions
+  - Delete unused wrapper functions  
+  - Consolidate similar token patterns
+
+specific_changes: |
+  1. Remove dead code (commented functions, unused wrappers)
+  2. Consolidate whitespace/comment token patterns
+  3. Simplify scanner state transitions
+
+hints: |
+  Pattern: Dead Functions - Remove all /* commented function blocks */
+  Pattern: Wrapper Functions - Delete push/pop wrappers if unused
+  Pattern: Token Consolidation - Merge similar regex patterns
