@@ -372,13 +372,26 @@ PKEY_BODY [^:\n\r]*
 
 <INDENT_CHECK>[ \t]* {
     int indent = 0;
+    int has_tab = 0;
     for (int i=0; i<yyleng; i++) {
         if (yytext[i] == ' ') {
             indent++;
         } else if (yytext[i] == '\t') {
+            has_tab = 1;
+            /* Tabs OK before flow indicators, error otherwise */
+        }
+    }
+    
+    if (has_tab) {
+        /* Check if next char is flow indicator */
+        int c = input(yyscanner);
+        if (c != EOF && c != 0) unput(c);
+        if (c != '[' && c != '{') {
             parsing_yy_error(yylloc, yyscanner, "syntax error, tabs used for indentation");
             return 0;
         }
+        /* Tab before flow indicator - treat as indent 0 */
+        indent = 0;
     }
     
     BEGIN(INITIAL);
