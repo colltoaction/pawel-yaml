@@ -333,6 +333,7 @@ static int check_scalar_continuation() {
 
 NSCAL [a-zA-Z0-9\-\._%:/]
 VSPACE \xE2\x90\xA3
+VEND \xE2\x88\x8E
 TAG_TOKEN ("!!"{NSCAL}+|"!"{NSCAL}+"!"{NSCAL}*|"!"{NSCAL}+)
 PKEY_HEAD [^ \t\n\r\[\]{}!,&*%@|>\`'"]
 PKEY_BODY [^:\n\r]*
@@ -365,8 +366,18 @@ PKEY_BODY [^:\n\r]*
     BEGIN(INDENT_CHECK);
 }
 
-<INDENT_CHECK>[ \t]*\n {
+<INDENT_CHECK>({VSPACE}|[ \t])*{VEND}[^\n]*\n {
+    /* yaml-test-suite end marker line - skip it */
+    BEGIN(INDENT_CHECK);
+}
+
+<INDENT_CHECK>({VSPACE}|[ \t])*\n {
     /* Blank line - skip it, stay in INDENT_CHECK */
+    BEGIN(INDENT_CHECK);
+}
+
+<INDENT_CHECK>({VSPACE}|[ \t])*{VEND} {
+    /* End marker without newline */
     BEGIN(INDENT_CHECK);
 }
 
@@ -1012,6 +1023,7 @@ PKEY_BODY [^:\n\r]*
 }
 [ \t\r]+       { CTX->last_was_value = 0; /* skip whitespace */ }
 {VSPACE}+      { CTX->last_was_value = 0; /* yaml-test-suite visible space marker */ }
+{VEND}         { CTX->last_was_value = 0; /* yaml-test-suite end marker */ }
 .                { return yytext[0]; }
 
 <<EOF>> {
