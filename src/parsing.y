@@ -474,6 +474,51 @@ static void emit_map_key(const ScalarValue *k) {
     }
 }
 
+/**
+ * Parse anchored map key from lexer-provided tab-delimited format
+ * Input: "&anchor\tkey" (from ANCHOR_MAP_KEY token)
+ * Output: Populates scalar.anchor and scalar.value fields
+ * 
+ * Format contract with lexer:
+ * - Anchor name with '&' prefix
+ * - Tab delimiter (\t)
+ * - Key text (already trimmed by lexer)
+ */
+static ScalarValue parse_anchored_map_key(char *delimited_string) {
+    ScalarValue result;
+    result.type = ':';
+    result.anchor = NULL;
+    result.value = NULL;
+    
+    if (!delimited_string) {
+        result.value = strdup("");
+        return result;
+    }
+    
+    /* Find tab delimiter */
+    char *tab = strchr(delimited_string, '\t');
+    if (tab) {
+        /* Split at tab: "&anchor" and "key" */
+        *tab = '\0';
+        
+        /* Extract anchor name (skip '&' prefix if present) */
+        const char *anchor_start = delimited_string;
+        if (anchor_start[0] == '&') anchor_start++;
+        result.anchor = strdup(anchor_start);
+        
+        /* Extract key text */
+        result.value = strdup(tab + 1);
+        
+        free(delimited_string);
+    } else {
+        /* No delimiter: treat as plain key (fallback) */
+        result.anchor = NULL;
+        result.value = delimited_string;
+    }
+    
+    return result;
+}
+
 static char *concat_and_free(char *left, char *right) {
     size_t left_len;
     size_t right_len;
@@ -769,21 +814,7 @@ map_key:
     MAP_KEY[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; }
     | QMAP_KEY[val] { $$.type = '"'; $$.value = $val; $$.anchor = NULL; }
     | SMAP_KEY[val] { $$.type = '\''; $$.value = $val; $$.anchor = NULL; }
-    | ANCHOR_MAP_KEY[val] {
-        /* Lexer returns "&anchor\tkey" */
-        char *tab = strchr($val, '\t');
-        if (tab) {
-            *tab = '\0';
-            $$.anchor = strdup($val[0] == '&' ? $val + 1 : $val);  /* Skip '&' prefix */
-            $$.value = strdup(tab + 1);
-            free($val);
-        } else {
-            /* Fallback: treat as plain key */
-            $$.anchor = NULL;
-            $$.value = $val;
-        }
-        $$.type = ':';
-    }
+    | ANCHOR_MAP_KEY[val] { $$ = parse_anchored_map_key($val); }
     ;
 
 map_entry:
