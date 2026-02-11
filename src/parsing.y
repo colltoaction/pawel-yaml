@@ -39,8 +39,9 @@ typedef struct {
 } LexerContext;
 
 typedef struct {
-    char type;
-    char *value;
+    char type;      /* Quote style: ':', '"', '\'', '*' (alias), '&' (anchored) */
+    char *value;    /* Key text */
+    char *anchor;   /* Anchor name (without '&' prefix) or NULL */
 } ScalarValue;
 
 /* === TYPE DEFINITIONS (from common.h) === */
@@ -99,8 +100,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 62
-%expect-rr 89
+%expect 65
+%expect-rr 94
 
 %{
 #include <stdlib.h>
@@ -461,11 +462,14 @@ static void ir_alias(IRBuilder *b, const char *name) {
 
 static void emit_map_key(const ScalarValue *k) {
     if (!k || !k->value) return;
+    
     if (k->type == '*') {
+        /* Alias as map key */
         ir_alias(ir, k->value);
         add_alias_event(k->value);
     } else {
-        ir_scalar(ir, k->value, k->type, NULL, NULL);
+        /* Regular key (plain, quoted, or anchored) */
+        ir_scalar(ir, k->value, k->type, k->anchor, NULL);
         add_scalar_event(k->value, k->type);
     }
 }
@@ -540,7 +544,7 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
     ScalarValue scalar;
 }
 
-%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY QMAP_KEY SMAP_KEY QPART BPART
+%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY QMAP_KEY SMAP_KEY ANCHOR_MAP_KEY QPART BPART
 %token BAD_TAG
 %token <string> CH_RAW CH_ESC_N CH_ESC_T CH_ESC_R CH_ESC_0 CH_ESC_BS CH_ESC_QU CH_ESC_SL
 %token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET BULLET_EOL COLON COLON_EMPTY COLON_IMPLICIT QUESTION
@@ -720,7 +724,7 @@ seq_entries:
 seq_entry:
     BULLET node %dprec 5
     | BULLET BULLET { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } node INDENT seq_entries DEDENT { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 6
-    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); free($k.value); } COLON node INDENT map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
+    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node INDENT map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
     | BULLET_EOL INDENT { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 4
     | BULLET_EOL INDENT seq_entries DEDENT %dprec 3
     | BULLET error { RECOVER("Malformed sequence item"); } %dprec 2
@@ -762,16 +766,31 @@ map_entries:
     ;
 
 map_key:
-    MAP_KEY[val] { $$.type = ':'; $$.value = $val; }
-    | QMAP_KEY[val] { $$.type = '"'; $$.value = $val; }
-    | SMAP_KEY[val] { $$.type = '\''; $$.value = $val; }
+    MAP_KEY[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; }
+    | QMAP_KEY[val] { $$.type = '"'; $$.value = $val; $$.anchor = NULL; }
+    | SMAP_KEY[val] { $$.type = '\''; $$.value = $val; $$.anchor = NULL; }
+    | ANCHOR_MAP_KEY[val] {
+        /* Lexer returns "&anchor\tkey" */
+        char *tab = strchr($val, '\t');
+        if (tab) {
+            *tab = '\0';
+            $$.anchor = strdup($val[0] == '&' ? $val + 1 : $val);  /* Skip '&' prefix */
+            $$.value = strdup(tab + 1);
+            free($val);
+        } else {
+            /* Fallback: treat as plain key */
+            $$.anchor = NULL;
+            $$.value = $val;
+        }
+        $$.type = ':';
+    }
     ;
 
 map_entry:
-    map_key[k] { emit_map_key(&$k); free($k.value); } COLON node %dprec 1
-    | map_key[k] { emit_map_key(&$k); free($k.value); } COLON INDENT node DEDENT %dprec 2
-    | map_key[k] { emit_map_key(&$k); free($k.value); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
-    | map_key[k] { emit_map_key(&$k); free($k.value); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node %dprec 1
+    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON INDENT node DEDENT %dprec 2
+    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | QUESTION node COLON node
     | MAP_KEY error { RECOVER("Malformed mapping entry"); }
     | QMAP_KEY error { RECOVER("Malformed mapping entry"); }

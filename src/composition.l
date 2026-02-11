@@ -23,7 +23,7 @@
 "=VAL"          return E_SCALAR;
 "=ALI"          return E_ALIAS;
 
-"&"[a-zA-Z0-9_:/\.-]+ {
+"&"[^ \t\n\r<>:*]+ {
     yylval.sval = strdup(yytext + 1);
     return E_ANCHOR;
 }
@@ -78,7 +78,7 @@
     return E_STYLE;
 }
 
-"*"[a-zA-Z0-9_:/\.-]+ {
+"*"[^ \t\n\r<>:*]+ {
     yylval.sval = strdup(yytext + 1);
     return E_IDENTIFIER;
 }

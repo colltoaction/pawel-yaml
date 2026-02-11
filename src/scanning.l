@@ -332,6 +332,8 @@ static int check_scalar_continuation() {
 %x QUOTED
 
 NSCAL [a-zA-Z0-9\-\._%:/]
+ANCHOR_CHAR [^ \t\n\r\[\]{},]
+ALIAS_CHAR [^ \t\n\r\[\]{},]
 VSPACE \xE2\x90\xA3
 VEND \xE2\x88\x8E
 TAG_TOKEN ("!!"{NSCAL}+|"!"{NSCAL}+"!"{NSCAL}*|"!"{NSCAL}+)
@@ -583,7 +585,7 @@ PKEY_BODY [^:\n\r]*
 "?"/{VSPACE}     { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
 "!!!"{NSCAL}*    { parsing_yy_error(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
 {TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Tagged plain map key, e.g. "!!str key: value" -> keep only key text here. */
+    /* Tagged map key: !!str key: value (tag prefix is discarded, only key text returned) */
     char *text = strdup(yytext);
     char *sp = strchr(text, ' ');
     if (!sp) {
@@ -607,14 +609,33 @@ PKEY_BODY [^:\n\r]*
 "!!"{NSCAL}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+"!"{NSCAL}* { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
-"&"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); return ANCHOR; }
-"*"{NSCAL}+/[ ]*":"([ \t]|{VSPACE}) {
+"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Anchored map key: &anchor key: value (returns tab-delimited "&anchor\tkey") */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+    
+    /* Replace first space with tab as delimiter, trim trailing spaces */
+    char *text = strdup(yytext);
+    char *space = strchr(text, ' ');
+    if (space) {
+        *space = '\t';  /* Tab delimiter: "&anchor\tkey" */
+        /* Trim trailing spaces from key part */
+        char *end = text + strlen(text);
+        while (end > space && (end[-1] == ' ' || end[-1] == '\t')) end--;
+        *end = '\0';
+    }
+    yylval->string = text;
+    return ANCHOR_MAP_KEY;
+}
+"&"{ANCHOR_CHAR}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return ANCHOR; }
+"*"{ALIAS_CHAR}+/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Alias as map key: *alias: value (returns alias name without '*' prefix) */
     CTX->at_line_start = 0;
     yylval->string = strdup(yytext + 1);
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
-"*"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; return ALIAS; }
+"*"{ALIAS_CHAR}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; return ALIAS; }
 "["              {
     if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
         int depth = 1;
@@ -892,6 +913,7 @@ PKEY_BODY [^:\n\r]*
 
 
 [^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Plain map key: key: value (complex pattern allows colons inside key text) */
     if (CTX->flow_level > 0) {
         /* In flow context, parse key text incrementally; avoid swallowing commas/brackets. */
         yyless(1);
@@ -991,7 +1013,6 @@ PKEY_BODY [^:\n\r]*
     BEGIN(INITIAL);
 }
 
-<PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { yylval->string = strdup(yytext); return CH_RAW; }
 <PLAIN_SCALAR_CONT>":" { yylval->string = strdup(":"); return CH_RAW; }
