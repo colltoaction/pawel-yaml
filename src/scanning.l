@@ -296,7 +296,47 @@ static int check_scalar_continuation() {
     return 0;
 }
 
+/**
+ * Trim trailing whitespace (spaces and tabs) from string in-place
+ * Returns pointer to the same string for chaining
+ */
+static char *trim_trailing_spaces(char *str) {
+    if (!str) return str;
+    char *end = str + strlen(str);
+    while (end > str && (end[-1] == ' ' || end[-1] == '\t')) {
+        end--;
+    }
+    *end = '\0';
+    return str;
+}
 
+/**
+ * Extract key text after a prefix token (tag or anchor) for map key patterns
+ * Input: "prefix key_text" where prefix is followed by spaces
+ * Output: "key_text" with trailing spaces trimmed
+ * Caller must free the returned string
+ */
+static char *extract_key_after_prefix(const char *text) {
+    if (!text) return strdup("");
+    
+    /* Find first space after prefix */
+    const char *space = strchr(text, ' ');
+    if (!space) return strdup(text);
+    
+    /* Skip spaces to get to key text */
+    while (*space == ' ') space++;
+    
+    char *key = strdup(space);
+    trim_trailing_spaces(key);
+    
+    /* Also trim trailing colon if present (from lookahead) */
+    size_t len = strlen(key);
+    if (len > 0 && key[len - 1] == ':') {
+        key[len - 1] = '\0';
+    }
+    
+    return key;
+}
 
 /* static void init_scalar(LexerContext *ctx) {
     ctx_scalar_init(ctx);
@@ -586,21 +626,7 @@ PKEY_BODY [^:\n\r]*
 "!!!"{NSCAL}*    { parsing_yy_error(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
 {TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Tagged map key: !!str key: value (tag prefix is discarded, only key text returned) */
-    char *text = strdup(yytext);
-    char *sp = strchr(text, ' ');
-    if (!sp) {
-        yylval->string = text;
-    } else {
-        while (*sp == ' ') sp++;
-        yylval->string = strdup(sp);
-        free(text);
-    }
-    /* Trim trailing spaces before ':' and drop trailing ':' if included */
-    char *end = yylval->string + strlen(yylval->string);
-    while (end > yylval->string && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == ':')) {
-        end--;
-    }
-    *end = '\0';
+    yylval->string = extract_key_after_prefix(yytext);
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     return MAP_KEY;
@@ -614,15 +640,12 @@ PKEY_BODY [^:\n\r]*
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     
-    /* Replace first space with tab as delimiter, trim trailing spaces */
+    /* Split on first space: "&anchor key" -> "&anchor\tkey" */
     char *text = strdup(yytext);
     char *space = strchr(text, ' ');
     if (space) {
-        *space = '\t';  /* Tab delimiter: "&anchor\tkey" */
-        /* Trim trailing spaces from key part */
-        char *end = text + strlen(text);
-        while (end > space && (end[-1] == ' ' || end[-1] == '\t')) end--;
-        *end = '\0';
+        *space = '\t';  /* Tab delimiter separates anchor from key */
+        trim_trailing_spaces(space + 1);  /* Trim key part only */
     }
     yylval->string = text;
     return ANCHOR_MAP_KEY;
@@ -935,9 +958,7 @@ PKEY_BODY [^:\n\r]*
         return BULLET;
     }
     yylval->string = strdup(yytext);
-    /* Trim trailing spaces from key */
-    char *end = yylval->string + strlen(yylval->string) - 1;
-    while (end > yylval->string && *end == ' ') *end-- = '\0';
+    trim_trailing_spaces(yylval->string);  /* Remove trailing spaces from key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     return MAP_KEY;
