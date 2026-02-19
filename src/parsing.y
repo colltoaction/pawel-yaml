@@ -36,6 +36,7 @@ typedef struct {
     char scalar_type;
     int semantic_error_count;
     int semantic_indent_tab_count;
+    int semantic_flow_glue_count;
     int argc;
     char **argv;
 } LexerContext;
@@ -157,9 +158,10 @@ static int validate_lexical_semantics(const LexerContext *ctx) {
     if (ctx->semantic_error_count <= 0) return 0;
 
     fprintf(stderr,
-            "[SEMANTIC] indentation policy violations: %d (tab-leading lines: %d)\n",
+            "[SEMANTIC] policy violations: %d (tab-leading lines: %d, flow-glue lines: %d)\n",
             ctx->semantic_error_count,
-            ctx->semantic_indent_tab_count);
+            ctx->semantic_indent_tab_count,
+            ctx->semantic_flow_glue_count);
     return 1;
 }
 

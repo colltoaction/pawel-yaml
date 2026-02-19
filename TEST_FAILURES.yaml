@@ -1,15 +1,14 @@
 meta:
-  generated_at: '2026-02-20T20:18:35Z'
+  generated_at: '2026-02-20T20:20:25Z'
   suite_dir: build/lib/yaml-test-suite/src
   total_tests: 351
-  total_passes: 263
-  total_failures: 88
+  total_passes: 265
+  total_failures: 86
   scoring: fail-true-aware
 failing:
 - 5LLU
 - 5TRB
 - 5WE3
-- 62EZ
 - 6BFJ
 - 6KGN
 - 6S55
@@ -62,7 +61,6 @@ failing:
 - MUS6
 - N4JP
 - NKF9
-- P2EQ
 - PW8X
 - Q9WF
 - QB6E
