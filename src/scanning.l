@@ -62,6 +62,7 @@ LexerContext *lexer_context_new(void) {
     ctx->semantic_indent_tab_count = 0;
     ctx->semantic_flow_glue_count = 0;
     ctx->semantic_flow_comma_count = 0;
+    ctx->semantic_flow_leading_comma_count = 0;
     ctx->semantic_inline_key_count = 0;
     
     return ctx;
@@ -125,6 +126,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->semantic_indent_tab_count = 0;
     ctx->semantic_flow_glue_count = 0;
     ctx->semantic_flow_comma_count = 0;
+    ctx->semantic_flow_leading_comma_count = 0;
     ctx->semantic_inline_key_count = 0;
 }
 
@@ -763,6 +765,25 @@ PKEY_BODY [^:\n\r]*
     }
     CTX->at_line_start = 0;
     CTX->flow_level++;
+    {
+        int look_buf[1024];
+        int look_n = 0;
+        int c = input(yyscanner);
+        while (look_n < 1023 && (c == ' ' || c == '\t' || c == '\n' || c == '\r')) {
+            look_buf[look_n++] = c;
+            c = input(yyscanner);
+        }
+        if (c != EOF && c != 0 && look_n < 1023) {
+            look_buf[look_n++] = c;
+        }
+        if (c == ',') {
+            CTX->semantic_error_count++;
+            CTX->semantic_flow_leading_comma_count++;
+        }
+        for (int i = look_n - 1; i >= 0; i--) {
+            unput(look_buf[i]);
+        }
+    }
     CTX->expecting_value = 1;
     return LBRACK;
 }
