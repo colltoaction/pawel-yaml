@@ -2,13 +2,11 @@ meta:
   generated_at: '2026-02-19'
   suite_dir: build/lib/yaml-test-suite/src
   total_tests: 351
-  total_failures: 87
-  total_passes: 264
+  total_failures: 83
+  total_passes: 268
 failing_tests:
   - 5LLU
-  - 5TRB
   - 5WE3
-  - 62EZ
   - 6BFJ
   - 6KGN
   - 6S55
@@ -51,7 +49,6 @@ failing_tests:
   - HRE5
   - JKF3
   - JTV5
-  - JY7Z
   - KK5P
   - M5C3
   - M5DY
@@ -59,7 +56,6 @@ failing_tests:
   - MUS6
   - N4JP
   - NKF9
-  - P2EQ
   - PW8X
   - Q9WF
   - QB6E

@@ -11,6 +11,7 @@
 
 /* Forward declaration for error handling */
 void parsing_yy_error(void *yylloc, yyscan_t scanner, const char *msg);
+#define yyerror parsing_yy_error
 
 /* Lexer context - replaces all global variables */
 #define CTX yyextra
@@ -552,7 +553,7 @@ PKEY_BODY [^:\n\r]*
 <DIRECTIVE_MODE>{
     [ \t]+          { /* skip space */ }
     \n              { BEGIN(INITIAL); }
-    "!!!"{NSCAL}*   { parsing_yy_error(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
+    "!!!"{NSCAL}*   { yyerror(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
     "!"{NSCAL}+"!"  { yylval->string = strdup(yytext); return TAG; }
     "!!"{NSCAL}+    { yylval->string = strdup(yytext); return TAG; }
     "!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
@@ -658,7 +659,7 @@ PKEY_BODY [^:\n\r]*
 
 "?"/[ \t\n]      { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
 "?"/{VSPACE}     { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
-"!!!"{NSCAL}*    { parsing_yy_error(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
+"!!!"{NSCAL}*    { yyerror(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
 {TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Tagged map key: !!str key: value (tag prefix is discarded, only key text returned) */
     yylval->string = extract_key_after_prefix(yytext);
@@ -877,7 +878,7 @@ PKEY_BODY [^:\n\r]*
     \\\/ { yylval->string = strdup("\\/"); return CH_ESC_SL; }
     \\. {
         if (yytext[1] == '.') {
-            parsing_yy_error(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
+            yyerror(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
             BEGIN(INITIAL);
             return 0;
         }
@@ -887,10 +888,15 @@ PKEY_BODY [^:\n\r]*
     \\0 { yylval->string = strdup("\\0"); return CH_ESC_0; }
     
     [^\\\"\n]+ { yylval->string = strdup(yytext); return CH_RAW; }
+    \n("---"|"...")([ \t]|#|\r?\n) {
+        yyerror(yylloc, yyscanner, "syntax error, document marker inside quoted string");
+        BEGIN(INITIAL);
+        return 0;
+    }
     \n { yylval->string = strdup("\n"); return CH_RAW; }
     
     <<EOF>> {
-        parsing_yy_error(yylloc, yyscanner, "syntax error, unterminated quoted string");
+        yyerror(yylloc, yyscanner, "syntax error, unterminated quoted string");
         BEGIN(INITIAL);
         return 0;
     }
