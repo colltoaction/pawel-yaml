@@ -11,7 +11,6 @@
 
 /* Forward declaration for error handling */
 void parsing_yy_error(void *yylloc, yyscan_t scanner, const char *msg);
-#define yyerror parsing_yy_error
 
 /* Lexer context - replaces all global variables */
 #define CTX yyextra
@@ -24,8 +23,6 @@ void parsing_yy_error(void *yylloc, yyscan_t scanner, const char *msg);
 LexerContext *lexer_context_new(void) {
     LexerContext *ctx = (LexerContext*)malloc(sizeof(LexerContext));
     if (!ctx) return NULL;
-    
-    ctx->arena_current = NULL;
     
     /* Initialize indentation tracking */
     ctx->indent_stack[0] = 0;
@@ -46,8 +43,6 @@ LexerContext *lexer_context_new(void) {
     /* Initialize block scalar state */
     ctx->block_scalar.type = '\0';
     ctx->block_scalar.indent = -1;
-    ctx->block_scalar.leading_empty_max_indent = 0;
-    ctx->block_scalar.first_content_seen = 0;
     
     /* Initialize scalar accumulation buffer */
     ctx->scalar.content = (char*)malloc(1024);
@@ -61,23 +56,8 @@ LexerContext *lexer_context_new(void) {
     ctx->indent_context_sp = 0;
     ctx->scalar_base_indent = 0;
     ctx->scalar_type = '\0';
-    ctx->quoted_value_closed_on_line = 0;
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
-    ctx->semantic_indent_mismatch_count = 0;
-    ctx->semantic_directive_mid_doc_count = 0;
-    ctx->semantic_flow_glue_count = 0;
-    ctx->semantic_flow_comma_count = 0;
-    ctx->semantic_flow_leading_comma_count = 0;
-    ctx->semantic_flow_comment_comma_count = 0;
-    ctx->semantic_flow_key_newline_count = 0;
-    ctx->semantic_multiline_qkey_count = 0;
-    ctx->semantic_inline_key_count = 0;
-    ctx->flow_implicit_key_candidate = 0;
-    ctx->flow_delim_sp = 0;
-    ctx->semantic_flow_indent_count = 0;
-    ctx->open_document_started = 1;
-    ctx->yaml_directive_seen = 0;
     
     return ctx;
 }
@@ -94,37 +74,6 @@ static LexerContext *lexer_context_new_with_args(int argc, char **argv) {
     return ctx;
 }
 
-#define ARENA_CHUNK_SIZE 16384
-
-void* arena_alloc(LexerContext *ctx, size_t size) {
-    if (!ctx) return NULL;
-    /* Align size to 8 bytes */
-    size = (size + 7) & ~7;
-    
-    if (!ctx->arena_current || ctx->arena_current->size + size > ctx->arena_current->capacity) {
-        size_t cap = ARENA_CHUNK_SIZE > size ? ARENA_CHUNK_SIZE : size;
-        struct ArenaChunk *chunk = malloc(sizeof(struct ArenaChunk));
-        chunk->data = malloc(cap);
-        chunk->size = 0;
-        chunk->capacity = cap;
-        chunk->next = ctx->arena_current;
-        ctx->arena_current = chunk;
-    }
-    
-    void *ptr = ctx->arena_current->data + ctx->arena_current->size;
-    ctx->arena_current->size += size;
-    return ptr;
-}
-
-char* arena_strdup(LexerContext *ctx, const char *s) {
-    if (!s) return NULL;
-    size_t len = strlen(s) + 1;
-    char *dup = arena_alloc(ctx, len);
-    if (!dup) return NULL;
-    memcpy(dup, s, len);
-    return dup;
-}
-
 /**
  * Free lexer context and all associated resources
  */
@@ -132,13 +81,6 @@ void lexer_context_free(LexerContext *ctx) {
     if (ctx) {
         if (ctx->scalar.content) {
             free(ctx->scalar.content);
-        }
-        struct ArenaChunk *curr = ctx->arena_current;
-        while (curr) {
-            struct ArenaChunk *next = curr->next;
-            free(curr->data);
-            free(curr);
-            curr = next;
         }
         free(ctx);
     }
@@ -164,8 +106,6 @@ static void lexer_context_reset(LexerContext *ctx) {
     
     ctx->block_scalar.type = '\0';
     ctx->block_scalar.indent = -1;
-    ctx->block_scalar.leading_empty_max_indent = 0;
-    ctx->block_scalar.first_content_seen = 0;
     
     ctx->scalar.len = 0;
     if (ctx->scalar.content) {
@@ -175,23 +115,8 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->indent_context_sp = 0;
     ctx->scalar_base_indent = 0;
     ctx->scalar_type = '\0';
-    ctx->quoted_value_closed_on_line = 0;
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
-    ctx->semantic_indent_mismatch_count = 0;
-    ctx->semantic_directive_mid_doc_count = 0;
-    ctx->semantic_flow_glue_count = 0;
-    ctx->semantic_flow_comma_count = 0;
-    ctx->semantic_flow_leading_comma_count = 0;
-    ctx->semantic_flow_comment_comma_count = 0;
-    ctx->semantic_flow_key_newline_count = 0;
-    ctx->semantic_multiline_qkey_count = 0;
-    ctx->semantic_inline_key_count = 0;
-    ctx->flow_implicit_key_candidate = 0;
-    ctx->flow_delim_sp = 0;
-    ctx->semantic_flow_indent_count = 0;
-    ctx->open_document_started = 1;
-    ctx->yaml_directive_seen = 0;
 }
 
 /**
@@ -395,17 +320,17 @@ static char *trim_trailing_spaces(char *str) {
  * Output: "key_text" with trailing spaces trimmed
  * Caller must free the returned string
  */
-static char *extract_key_after_prefix(LexerContext *ctx, const char *text) {
-    if (!text) return arena_strdup(ctx, "");
+static char *extract_key_after_prefix(const char *text) {
+    if (!text) return strdup("");
     
     /* Find first space after prefix */
     const char *space = strchr(text, ' ');
-    if (!space) return arena_strdup(ctx, text);
+    if (!space) return strdup(text);
     
     /* Skip spaces to get to key text */
     while (*space == ' ') space++;
     
-    char *key = arena_strdup(ctx, space);
+    char *key = strdup(space);
     trim_trailing_spaces(key);
     
     /* Also trim trailing colon if present (from lookahead) */
@@ -415,13 +340,6 @@ static char *extract_key_after_prefix(LexerContext *ctx, const char *text) {
     }
     
     return key;
-}
-
-static int flow_close_follow_char_ok(int c) {
-    if (c == EOF || c == 0) return 1;
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 1;
-    if (c == ',' || c == ':' || c == ']' || c == '}' || c == '#') return 1;
-    return 0;
 }
 
 /* static void init_scalar(LexerContext *ctx) {
@@ -449,10 +367,6 @@ static int flow_close_follow_char_ok(int c) {
 %option bison-locations
 %option prefix="scanning_"
 %option extra-type="LexerContext *"
-
-%{
-
-%}
 
 %x BLOCK_SCALAR
 %x BLOCK_CONTENT
@@ -567,43 +481,6 @@ PKEY_BODY [^:\n\r]*
             CTX->semantic_indent_tab_count++;
         }
     }
-
-    {
-        int look_buf[3];
-        int look_n = 0;
-        int c = input(yyscanner);
-        int is_doc_end_marker = 0;
-
-        if (c != EOF && c != 0) {
-            look_buf[look_n++] = c;
-            for (int i = 0; i < 2; i++) {
-                int d = input(yyscanner);
-                if (d == EOF || d == 0) break;
-                look_buf[look_n++] = d;
-            }
-        }
-
-        for (int i = look_n - 1; i >= 0; i--) {
-            unput(look_buf[i]);
-        }
-
-        if (look_n >= 3 &&
-            look_buf[0] == '.' &&
-            look_buf[1] == '.' &&
-            look_buf[2] == '.') {
-            is_doc_end_marker = 1;
-        }
-
-        if (look_n > 0) {
-            if (look_buf[0] == '%') {
-                /* keep current directive allowance */
-            } else if (is_doc_end_marker) {
-                CTX->open_document_started = 1;
-            } else if (look_buf[0] != '#') {
-                CTX->open_document_started = 0;
-            }
-        }
-    }
     
     BEGIN(INITIAL);
     CTX->at_line_start = 1;
@@ -618,11 +495,6 @@ PKEY_BODY [^:\n\r]*
             if (CTX->indent_sp > 0) CTX->indent_sp--;
             CTX->pending_dedents++;
         }
-        if (indent != CTX->indent_stack[CTX->indent_sp]) {
-            yyerror(yylloc, yyscanner, "syntax error, invalid dedent level");
-            CTX->semantic_error_count++;
-            CTX->semantic_indent_mismatch_count++;
-        }
         if (CTX->pending_dedents > 0) {
             CTX->pending_dedents--;
             return DEDENT;
@@ -632,10 +504,6 @@ PKEY_BODY [^:\n\r]*
 
 <INDENT_CHECK>. {
     /* Not an indent - likely at column 0 */
-    int first_char = yytext[0];
-    if (first_char != '%' && first_char != '#' && first_char != '.') {
-        CTX->open_document_started = 0;
-    }
     yyless(0);
     BEGIN(INITIAL);
     CTX->at_line_start = 1;
@@ -666,216 +534,53 @@ PKEY_BODY [^:\n\r]*
 }
 
 \n {
-    CTX->quoted_value_closed_on_line = 0;
     /* In flow context, newlines are just whitespace, don't check indentation */
-    if (CTX->flow_delim_sp == 0) {
+    if (CTX->flow_level == 0) {
         BEGIN(INDENT_CHECK);
-    } else {
-        int top = CTX->flow_delim_sp - 1;
-        if (top >= 0 &&
-            (CTX->flow_indent_required_stack[top] || CTX->flow_implicit_key_candidate)) {
-            int look_buf[4096];
-            int look_n = 0;
-            int indent = 0;
-            int first_content = -1;
-            int c;
-            int close_ch = (CTX->flow_delim_stack[top] == '{') ? '}' : ']';
-            int baseline = CTX->flow_indent_ref_stack[top];
-
-            while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
-                look_buf[look_n++] = c;
-
-                if (c == ' ') {
-                    indent++;
-                    continue;
-                }
-                if (c == '\t') {
-                    indent++;
-                    continue;
-                }
-                if (c == '\r') {
-                    continue;
-                }
-                if (c == '\n') {
-                    indent = 0;
-                    continue;
-                }
-                if (c == '#') {
-                    while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
-                        look_buf[look_n++] = c;
-                        if (c == '\n') break;
-                    }
-                    indent = 0;
-                    continue;
-                }
-
-                first_content = c;
-                break;
-            }
-
-            for (int i = look_n - 1; i >= 0; i--) {
-                unput(look_buf[i]);
-            }
-
-            if (CTX->flow_implicit_key_candidate &&
-                first_content == ':' &&
-                CTX->flow_delim_stack[top] == '[') {
-                yyerror(yylloc, yyscanner, "syntax error, implicit flow key followed by newline");
-                CTX->semantic_error_count++;
-                CTX->semantic_flow_key_newline_count++;
-            }
-
-            if (CTX->flow_indent_required_stack[top] &&
-                first_content >= 0 &&
-                first_content != close_ch &&
-                indent <= baseline) {
-                yyerror(yylloc, yyscanner, "syntax error, wrong indentation in flow sequence");
-                CTX->semantic_error_count++;
-                CTX->semantic_flow_indent_count++;
-            }
-        }
-        CTX->flow_implicit_key_candidate = 0;
     }
     /* Otherwise skip the newline in flow context */
 }
 
 
 
-"%TAG"           {
-    if (!CTX->open_document_started) {
-        yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
-        CTX->semantic_error_count++;
-        CTX->semantic_directive_mid_doc_count++;
-    }
-    BEGIN(DIRECTIVE_MODE);
-    return TAG_DIRECTIVE;
-}
-"%YAML"[ ]?"1"[.,][0-9][ \t]+[^#\n][^\n]* {
-    if (CTX->yaml_directive_seen) {
-        yyerror(yylloc, yyscanner, "syntax error, duplicate %YAML directive");
-        CTX->semantic_error_count++;
-    } else {
-        CTX->yaml_directive_seen = 1;
-    }
-    yyerror(yylloc, yyscanner, "syntax error, extra content on %YAML directive");
-    CTX->semantic_error_count++;
-    if (!CTX->open_document_started) {
-        CTX->semantic_directive_mid_doc_count++;
-    }
-    return YAML_DIRECTIVE;
-}
-"%YAML"[ ]?"1"[.,][0-9]"#"[^\n]* {
-    if (CTX->yaml_directive_seen) {
-        yyerror(yylloc, yyscanner, "syntax error, duplicate %YAML directive");
-        CTX->semantic_error_count++;
-    } else {
-        CTX->yaml_directive_seen = 1;
-    }
-    yyerror(yylloc, yyscanner, "syntax error, missing whitespace before %YAML comment");
-    CTX->semantic_error_count++;
-    if (!CTX->open_document_started) {
-        CTX->semantic_directive_mid_doc_count++;
-    }
-    return YAML_DIRECTIVE;
-}
-"%YAML"[ ]?"1"[.,][0-9][ \t]*(#[^\n]*)?  {
-    if (CTX->yaml_directive_seen) {
-        yyerror(yylloc, yyscanner, "syntax error, duplicate %YAML directive");
-        CTX->semantic_error_count++;
-    } else {
-        CTX->yaml_directive_seen = 1;
-    }
-    if (!CTX->open_document_started) {
-        yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
-        CTX->semantic_error_count++;
-        CTX->semantic_directive_mid_doc_count++;
-    }
-    return YAML_DIRECTIVE;
-}
-"%"[a-zA-Z][^\n]* {
-    if (!CTX->open_document_started) {
-        yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
-        CTX->semantic_error_count++;
-        CTX->semantic_directive_mid_doc_count++;
-    }
-    /* Unknown directive - skip */
-}
-"---"[ \t]+"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    yyerror(yylloc, yyscanner, "syntax error, anchored mapping key is not allowed on document-start line");
-    CTX->semantic_error_count++;
-    yyless(3);
-    CTX->expecting_value = 1;
-    CTX->last_was_value = 0;
-    CTX->flow_implicit_key_candidate = 0;
-    CTX->open_document_started = 0;
-    CTX->yaml_directive_seen = 0;
-    return DOC_START;
-}
-"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 0; CTX->yaml_directive_seen = 0; return DOC_START; }
-"..."[ \t]*[^ \t\n\r#] { yyerror(yylloc, yyscanner, "content after document-end marker"); CTX->semantic_error_count++; CTX->semantic_doc_end_inline_count++; yyless(3); CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
-"..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
+"%TAG"           { BEGIN(DIRECTIVE_MODE); return TAG_DIRECTIVE; }
+"%YAML"[ ]?"1"[.,][0-9]  { return YAML_DIRECTIVE; }
+"%"[a-zA-Z][^\n]* { /* Unknown directive - skip */ }
+"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; return DOC_START; }
+"..."            { CTX->expecting_value = 1; return DOC_END; }
 
 <DIRECTIVE_MODE>{
     [ \t]+          { /* skip space */ }
     \n              { BEGIN(INITIAL); }
-    "!!!"{NSCAL}*   { yyerror(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
-    "!"{NSCAL}+"!"  { yylval->string = arena_strdup(CTX, yytext); return TAG; }
-    "!!"{NSCAL}+    { yylval->string = arena_strdup(CTX, yytext); return TAG; }
-    "!"{NSCAL}+     { yylval->string = arena_strdup(CTX, yytext); return TAG; }
-    [^ \t\n]+       { yylval->string = arena_strdup(CTX, yytext); return SCALAR; }
+    "!!!"{NSCAL}*   { parsing_yy_error(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
+    "!"{NSCAL}+"!"  { yylval->string = strdup(yytext); return TAG; }
+    "!!"{NSCAL}+    { yylval->string = strdup(yytext); return TAG; }
+    "!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
+    [^ \t\n]+       { yylval->string = strdup(yytext); return SCALAR; }
 }
 "-"[ \t]*"#"[^\n]*\n {
     CTX->at_line_start = 0;
     CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
     if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
     return BULLET_EOL;
 }
 "-"[ \t]*\n {
     CTX->at_line_start = 0;
     CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
     if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
     return BULLET_EOL;
 }
-"-"/[ \t\n]      { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return BULLET; }
-"-"[ \t]*"," {
-    if (CTX->flow_delim_sp > 0) {
-        yyerror(yylloc, yyscanner, "syntax error, bare dash is not a valid flow scalar");
-        CTX->semantic_error_count++;
-    }
-    yyless(1);
-    yylval->string = arena_strdup(CTX, "-");
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
-    BEGIN(PLAIN_SCALAR_CONT);
-    return CH_RAW;
-}
-"-"[ \t]*"]" {
-    if (CTX->flow_delim_sp > 0) {
-        yyerror(yylloc, yyscanner, "syntax error, bare dash is not a valid flow scalar");
-        CTX->semantic_error_count++;
-    }
-    yyless(1);
-    yylval->string = arena_strdup(CTX, "-");
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
-    BEGIN(PLAIN_SCALAR_CONT);
-    return CH_RAW;
-}
+"-"/[ \t\n]      { CTX->at_line_start = 0; CTX->expecting_value = 1; return BULLET; }
 ":"/[ \t\n] {
     if (CTX->complex_key_pending) {
         CTX->complex_key_pending = 0;
         CTX->at_line_start = 0;
         CTX->expecting_value = 1;
-        CTX->flow_implicit_key_candidate = 0;
         return COLON;
     }
     if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value) {
         /* Missing block mapping key, e.g. ": value" */
-        yylval->string = arena_strdup(CTX, "");
+        yylval->string = strdup("");
         CTX->at_line_start = 0;
         CTX->expecting_value = 0;
         yyless(0); /* Rescan ':' as the actual separator token */
@@ -883,43 +588,88 @@ PKEY_BODY [^:\n\r]*
     }
     CTX->at_line_start = 0;
     CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
     return COLON;
 }
-":"/[ \t]*[,}]   {
-    CTX->at_line_start = 0;
-    CTX->flow_implicit_key_candidate = 0;
-    if (CTX->flow_level > 0) {
+":"/[ \t]*[,}]   { CTX->at_line_start = 0; if (CTX->flow_level > 0) { CTX->expecting_value = 1; return COLON_EMPTY; } CTX->expecting_value = 1; return COLON; }
+":"/{VSPACE}     { CTX->at_line_start = 0; CTX->expecting_value = 1; return COLON; }
+
+"?"[ ]+[^:\n\r]+[ ]*\n {
+    /* If next logical line starts with ':', this is a complex key, not shorthand. */
+    int look_buf[1024];
+    int look_n = 0;
+    int c = input(yyscanner);
+    
+    /* Skip whitespace, blank lines, and comments to find next real content */
+    while (look_n < 1023) {
+        if (c == ' ' || c == '\t') {
+            look_buf[look_n++] = c;
+            c = input(yyscanner);
+        } else if (c == '\n') {
+            /* Blank line - skip it */
+            look_buf[look_n++] = c;
+            c = input(yyscanner);
+        } else if (c == '#') {
+            /* Comment - skip to end of line */
+            look_buf[look_n++] = c;
+            while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0 && look_n < 1023) {
+                look_buf[look_n++] = c;
+            }
+            if (c == '\n' && look_n < 1023) {
+                look_buf[look_n++] = c;
+                c = input(yyscanner);
+            }
+        } else {
+            break;
+        }
+    }
+    
+    /* Save the final character we looked at */
+    if (c != EOF && c != 0 && look_n < 1023) {
+        look_buf[look_n++] = c;
+    }
+    
+    /* Put everything back */
+    for (int i = look_n - 1; i >= 0; i--) {
+        unput(look_buf[i]);
+    }
+    
+    if (c == ':') {
+        yyless(1);
+        CTX->at_line_start = 0;
+        CTX->complex_key_pending = 1;
         CTX->expecting_value = 1;
-        return COLON_EMPTY;
+        return QUESTION;
     }
-    if (CTX->expecting_value) {
-        yylval->string = arena_strdup(CTX, ":");
-        CTX->expecting_value = 0;
-        BEGIN(PLAIN_SCALAR_CONT);
-        return CH_RAW;
-    }
-    CTX->expecting_value = 1;
-    return COLON;
+
+    char *raw = strdup(yytext + 1);
+    char *p = raw;
+    while (*p == ' ' || *p == '\t') p++;
+    yylval->string = strdup(p);
+    free(raw);
+    char *end = yylval->string + strlen(yylval->string);
+    while (end > yylval->string && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ' || end[-1] == '\t')) end--;
+    *end = '\0';
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+    CTX->pending_colon = 1;
+    if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
+    return MAP_KEY;
 }
-":"/{VSPACE}     { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return COLON; }
-
-
 
 "?"/[ \t\n]      { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
 "?"/{VSPACE}     { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
-"!!!"{NSCAL}*    { yyerror(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
+"!!!"{NSCAL}*    { parsing_yy_error(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
 {TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Tagged map key: !!str key: value (tag prefix is discarded, only key text returned) */
-    yylval->string = extract_key_after_prefix(CTX, yytext);
+    yylval->string = extract_key_after_prefix(yytext);
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
-"!"              { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, "!"); return TAG; }
-"!!"{NSCAL}+     { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); return TAG; }
-"!"{NSCAL}+"!"{NSCAL}* { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); return TAG; }
-"!"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); return TAG; }
+"!"              { CTX->at_line_start = 0; yylval->string = strdup("!"); return TAG; }
+"!!"{NSCAL}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
+"!"{NSCAL}+"!"{NSCAL}* { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
+"!"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
 "&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Anchored map key: &anchor key: value (returns tab-delimited "&anchor\tkey") */
     CTX->at_line_start = 0;
@@ -935,34 +685,11 @@ PKEY_BODY [^:\n\r]*
     yylval->string = text;
     return ANCHOR_MAP_KEY;
 }
-"&"{ANCHOR_CHAR}+[ \t]+"-"/[ \t\n] {
-    int anchor_len = 0;
-    yyerror(yylloc, yyscanner, "syntax error, anchor cannot prefix a sequence indicator on the same line");
-    CTX->semantic_error_count++;
-
-    while (anchor_len < yyleng &&
-           yytext[anchor_len] != ' ' &&
-           yytext[anchor_len] != '\t') {
-        anchor_len++;
-    }
-
-    yylval->string = (char*)malloc((size_t)anchor_len + 1);
-    if (!yylval->string) {
-        yyerror(yylloc, yyscanner, "memory allocation failed");
-        return 0;
-    }
-    memcpy(yylval->string, yytext, (size_t)anchor_len);
-    yylval->string[anchor_len] = '\0';
-
-    yyless(anchor_len);
-    CTX->at_line_start = 0;
-    return ANCHOR;
-}
-"&"{ANCHOR_CHAR}+     { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); return ANCHOR; }
+"&"{ANCHOR_CHAR}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return ANCHOR; }
 "*"{ALIAS_CHAR}+[ ]+/":"([ \t\n]|{VSPACE}) {
     /* Alias map key with explicit separating whitespace before ':' */
     CTX->at_line_start = 0;
-    yylval->string = arena_strdup(CTX, yytext + 1);
+    yylval->string = strdup(yytext + 1);
     trim_trailing_spaces(yylval->string);
     CTX->expecting_value = 0;
     return MAP_KEY;
@@ -972,22 +699,19 @@ PKEY_BODY [^:\n\r]*
 
     if (CTX->expecting_value) {
         /* Value-position alias ending with ':' keeps the ':' in the alias name. */
-        yylval->string = arena_strdup(CTX, yytext);
+        yylval->string = strdup(yytext);
         CTX->expecting_value = 0;
-        if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
         return ALIAS;
     }
 
     /* Key-position alias: split before ':' and let parser consume ':' token. */
     yyless(yyleng - 1);
-    yylval->string = arena_strdup(CTX, yytext + 1);
+    yylval->string = strdup(yytext + 1);
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
-"*"{ALIAS_CHAR}+      { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); CTX->expecting_value = 0; if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1; return ALIAS; }
+"*"{ALIAS_CHAR}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; return ALIAS; }
 "["              {
-    int require_flow_indent = (CTX->flow_delim_sp == 0 && !CTX->at_line_start);
-    int flow_ref_indent = CTX->indent_stack[CTX->indent_sp];
     if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
         int depth = 1;
         int look_buf[4096];
@@ -1021,55 +745,12 @@ PKEY_BODY [^:\n\r]*
         }
     }
     CTX->at_line_start = 0;
-    CTX->flow_implicit_key_candidate = 0;
-    if (CTX->flow_delim_sp < 100) {
-        CTX->flow_delim_stack[CTX->flow_delim_sp] = '[';
-        CTX->flow_indent_ref_stack[CTX->flow_delim_sp] = flow_ref_indent;
-        CTX->flow_indent_required_stack[CTX->flow_delim_sp] = require_flow_indent;
-        CTX->flow_delim_sp++;
-    }
     CTX->flow_level++;
-    {
-        int look_buf[1024];
-        int look_n = 0;
-        int c = input(yyscanner);
-        while (look_n < 1023 && (c == ' ' || c == '\t' || c == '\n' || c == '\r')) {
-            look_buf[look_n++] = c;
-            c = input(yyscanner);
-        }
-        if (c != EOF && c != 0 && look_n < 1023) {
-            look_buf[look_n++] = c;
-        }
-        if (c == ',') {
-            CTX->semantic_error_count++;
-            CTX->semantic_flow_leading_comma_count++;
-        }
-        for (int i = look_n - 1; i >= 0; i--) {
-            unput(look_buf[i]);
-        }
-    }
     CTX->expecting_value = 1;
     return LBRACK;
 }
-"]"              {
-    int c = input(yyscanner);
-    if (c != EOF && c != 0) unput(c);
-    if (!flow_close_follow_char_ok(c)) {
-        CTX->semantic_error_count++;
-        CTX->semantic_flow_glue_count++;
-    }
-    if (CTX->flow_delim_sp > 0) {
-        CTX->flow_delim_sp--;
-    }
-    CTX->at_line_start = 0;
-    if (CTX->flow_level > 0) CTX->flow_level--;
-    CTX->expecting_value = 0;
-    CTX->flow_implicit_key_candidate = (CTX->flow_delim_sp > 0);
-    return RBRACK;
-}
+"]"              { CTX->at_line_start = 0; if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACK; }
 "{"              {
-    int require_flow_indent = (CTX->flow_delim_sp == 0 && !CTX->at_line_start);
-    int flow_ref_indent = CTX->indent_stack[CTX->indent_sp];
     if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
         int depth = 1;
         int look_buf[4096];
@@ -1103,96 +784,46 @@ PKEY_BODY [^:\n\r]*
         }
     }
     CTX->at_line_start = 0;
-    CTX->flow_implicit_key_candidate = 0;
-    if (CTX->flow_delim_sp < 100) {
-        CTX->flow_delim_stack[CTX->flow_delim_sp] = '{';
-        CTX->flow_indent_ref_stack[CTX->flow_delim_sp] = flow_ref_indent;
-        CTX->flow_indent_required_stack[CTX->flow_delim_sp] = require_flow_indent;
-        CTX->flow_delim_sp++;
-    }
     CTX->flow_level++;
     CTX->expecting_value = 1;
     return LBRACE;
 }
-"}"              {
-    int c = input(yyscanner);
-    if (c != EOF && c != 0) unput(c);
-    if (!flow_close_follow_char_ok(c)) {
-        CTX->semantic_error_count++;
-        CTX->semantic_flow_glue_count++;
-    }
-    if (CTX->flow_delim_sp > 0) {
-        CTX->flow_delim_sp--;
-    }
-    CTX->at_line_start = 0;
-    if (CTX->flow_level > 0) CTX->flow_level--;
-    CTX->expecting_value = 0;
-    CTX->flow_implicit_key_candidate = (CTX->flow_delim_sp > 0);
-    return RBRACE;
-}
+"}"              { CTX->at_line_start = 0; if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACE; }
 ":"              { 
     if (CTX->expecting_value && CTX->flow_level > 0) {
-         yylval->string = arena_strdup(CTX, ":");
+         yylval->string = strdup(":");
          CTX->expecting_value = 0;
-         CTX->flow_implicit_key_candidate = 0;
          BEGIN(PLAIN_SCALAR_CONT);
          return CH_RAW;
     } else if (CTX->expecting_value && CTX->flow_level == 0) {
-         yylval->string = arena_strdup(CTX, ":");
-         CTX->flow_implicit_key_candidate = 0;
+         yylval->string = strdup(":");
          BEGIN(PLAIN_SCALAR_CONT);
          return CH_RAW;
     } else if (CTX->flow_level > 0) {
          CTX->expecting_value = 1;
-         CTX->flow_implicit_key_candidate = 0;
          return COLON; 
     } else {
          return ':'; 
     }
 }
-","/"#" {
-    if (CTX->flow_level > 0) {
-        CTX->semantic_error_count++;
-        CTX->semantic_flow_comment_comma_count++;
-    }
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
-    return COMMA;
-}
-","/[ \t]*"," {
-    if (CTX->flow_level > 0) {
-        CTX->semantic_error_count++;
-        CTX->semantic_flow_comma_count++;
-    }
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
-    return COMMA;
-}
-","              { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return COMMA; }
+","              { CTX->at_line_start = 0; CTX->expecting_value = 1; return COMMA; }
 
 \"[^\"]*\"[ ]*: {
     // Extract quoted content
     size_t len = yyleng;
-    if (CTX->flow_level == 0 && (strchr(yytext, '\n') || strchr(yytext, '\r'))) {
-        CTX->semantic_error_count++;
-        CTX->semantic_multiline_qkey_count++;
-    }
     // Remove trailing ':'
     while (len > 0 && yytext[len - 1] == ':') len--;
     // Remove trailing spaces
     while (len > 0 && yytext[len - 1] == ' ') len--;
     // Remove closing quote for content extraction
     if (len > 1 && yytext[len - 1] == '"') yytext[len - 1] = '\0';
-    yylval->string = arena_strdup(CTX, yytext + 1);  // Skip opening quote
+    yylval->string = strdup(yytext + 1);  // Skip opening quote
     
     if (CTX->flow_level > 0) {
         // Flow context: return as QSCALAR, put back colon and spaces
         yyless(len);  // Keep only the quoted string part
         CTX->expecting_value = 0;
         CTX->last_was_value = 1;
-        CTX->flow_implicit_key_candidate = 1;
         return QSCALAR;
     } else {
         // Block context: return as QMAP_KEY, put back only colon
@@ -1205,24 +836,19 @@ PKEY_BODY [^:\n\r]*
 '[^']*'[ ]*: {
     // Extract quoted content
     size_t len = yyleng;
-    if (CTX->flow_level == 0 && (strchr(yytext, '\n') || strchr(yytext, '\r'))) {
-        CTX->semantic_error_count++;
-        CTX->semantic_multiline_qkey_count++;
-    }
     // Remove trailing ':'
     while (len > 0 && yytext[len - 1] == ':') len--;
     // Remove trailing spaces
     while (len > 0 && yytext[len - 1] == ' ') len--;
     // Remove closing quote for content extraction
     if (len > 1 && yytext[len - 1] == '\'') yytext[len - 1] = '\0';
-    yylval->string = arena_strdup(CTX, yytext + 1);  // Skip opening quote
+    yylval->string = strdup(yytext + 1);  // Skip opening quote
     
     if (CTX->flow_level > 0) {
         // Flow context: return as SSCALAR, put back colon and spaces
         yyless(len);  // Keep only the quoted string part
         CTX->expecting_value = 0;
         CTX->last_was_value = 1;
-        CTX->flow_implicit_key_candidate = 1;
         return SSCALAR;
     } else {
         // Block context: return as SMAP_KEY, put back only colon
@@ -1240,71 +866,34 @@ PKEY_BODY [^:\n\r]*
         BEGIN(INITIAL);
         CTX->expecting_value = 0;
         CTX->last_was_value = 1;
-        CTX->quoted_value_closed_on_line = 1;
-        if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
         return QSCALAR; 
     }
     
-    \\n { yylval->string = arena_strdup(CTX, "\\n"); return CH_ESC_N; }
-    \\t { yylval->string = arena_strdup(CTX, "\\t"); return CH_ESC_T; }
-    \\r { yylval->string = arena_strdup(CTX, "\\r"); return CH_ESC_R; }
-    \\\\ { yylval->string = arena_strdup(CTX, "\\\\"); return CH_ESC_BS; }
-    \\\" { yylval->string = arena_strdup(CTX, "\\\""); return CH_ESC_QU; }
-    \\\' {
-        yyerror(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
-        BEGIN(INITIAL);
-        return 0;
-    }
-    \\\/ { yylval->string = arena_strdup(CTX, "\\/"); return CH_ESC_SL; }
+    \\n { yylval->string = strdup("\\n"); return CH_ESC_N; }
+    \\t { yylval->string = strdup("\\t"); return CH_ESC_T; }
+    \\r { yylval->string = strdup("\\r"); return CH_ESC_R; }
+    \\\\ { yylval->string = strdup("\\\\"); return CH_ESC_BS; }
+    \\\" { yylval->string = strdup("\\\""); return CH_ESC_QU; }
+    \\\/ { yylval->string = strdup("\\/"); return CH_ESC_SL; }
     \\. {
         if (yytext[1] == '.') {
-            yyerror(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
+            parsing_yy_error(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
             BEGIN(INITIAL);
             return 0;
         }
-        yylval->string = arena_strdup(CTX, yytext);
+        yylval->string = strdup(yytext);
         return CH_RAW;
     }
-    \\0 { yylval->string = arena_strdup(CTX, "\\0"); return CH_ESC_0; }
+    \\0 { yylval->string = strdup("\\0"); return CH_ESC_0; }
     
-    [^\\\"\n]+ { yylval->string = arena_strdup(CTX, yytext); return CH_RAW; }
-    \n("---"|"...")([ \t]|#|\r?\n) {
-        yyerror(yylloc, yyscanner, "syntax error, document marker inside quoted string");
-        BEGIN(INITIAL);
-        return 0;
-    }
-    \n { yylval->string = arena_strdup(CTX, "\n"); return CH_RAW; }
+    [^\\\"\n]+ { yylval->string = strdup(yytext); return CH_RAW; }
+    \n { yylval->string = strdup("\n"); return CH_RAW; }
     
     <<EOF>> {
-        yyerror(yylloc, yyscanner, "syntax error, unterminated quoted string");
+        parsing_yy_error(yylloc, yyscanner, "syntax error, unterminated quoted string");
         BEGIN(INITIAL);
         return 0;
     }
-}
-\'(\'\'|[^\'])*\n("---"|"...")([ \t]|#|\r?\n)(\'\'|[^\'])*\'  {
-    yyerror(yylloc, yyscanner, "syntax error, document marker inside single-quoted string");
-    CTX->semantic_error_count++;
-
-    int len = strlen(yytext);
-    char *content = malloc(len);
-    int j = 0;
-
-    for (int i = 1; i < len - 1; i++) {
-        if (yytext[i] == '\'' && yytext[i+1] == '\'') {
-            content[j++] = '\'';
-            i++;
-        } else {
-            content[j++] = yytext[i];
-        }
-    }
-    content[j] = '\0';
-
-    yylval->string = content;
-    CTX->expecting_value = 0;
-    CTX->last_was_value = 1;
-    CTX->quoted_value_closed_on_line = 1;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
-    return SSCALAR;
 }
 \'(\'\'|[^\'])*\'  { 
     /* Single-quoted string: '' is escaped quote, [^'] is any char except quote */
@@ -1326,70 +915,22 @@ PKEY_BODY [^:\n\r]*
     yylval->string = content;
     CTX->expecting_value = 0;
     CTX->last_was_value = 1;
-    CTX->quoted_value_closed_on_line = 1;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
     return SSCALAR;
 }
-"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      {
-    CTX->expecting_value = 0;
-    CTX->last_was_value = 0;
-    CTX->block_scalar.type = '|';
-    CTX->block_scalar.indent = -1;
-    CTX->block_scalar.leading_empty_max_indent = 0;
-    CTX->block_scalar.first_content_seen = 0;
-    BEGIN(BLOCK_SCALAR);
-}
-">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      {
-    CTX->expecting_value = 0;
-    CTX->last_was_value = 0;
-    CTX->block_scalar.type = '>';
-    CTX->block_scalar.indent = -1;
-    CTX->block_scalar.leading_empty_max_indent = 0;
-    CTX->block_scalar.first_content_seen = 0;
-    BEGIN(BLOCK_SCALAR);
-}
+"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
+">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
 
 <BLOCK_SCALAR>^([ \t]|{VSPACE})*\n {
-    int indent = 0;
-    int i = 0;
-    int had_tab_in_prefix = 0;
-    while (i < yyleng && yytext[i] != '\n') {
-        unsigned char ch = (unsigned char)yytext[i];
-        if (ch == ' ' || ch == '\t') {
-            if (ch == '\t') had_tab_in_prefix = 1;
-            indent++;
-            i++;
-        } else if (ch == 0xE2 && (i + 2) < yyleng &&
-                   (unsigned char)yytext[i + 1] == 0x90 &&
-                   (unsigned char)yytext[i + 2] == 0xA3) {
-            indent++;
-            i += 3;
-        } else {
-            i++;
-        }
-    }
-    if (!CTX->block_scalar.first_content_seen &&
-        !had_tab_in_prefix &&
-        indent > CTX->block_scalar.leading_empty_max_indent) {
-        CTX->block_scalar.leading_empty_max_indent = indent;
-    }
-    yylval->string = arena_strdup(CTX, "\n");
+    yylval->string = strdup("\n");
     return BPART;
 }
 
 <BLOCK_SCALAR>^([ \t]|{VSPACE})+ {
     int indent = 0;
     int i = 0;
-    int had_tab_in_prefix = 0;
-    char line_buf[4096];
-    int line_len = 0;
-    int c;
-    int is_blank_line = 1;
-
     while (i < yyleng) {
         unsigned char ch = (unsigned char)yytext[i];
         if (ch == ' ' || ch == '\t') {
-            if (ch == '\t') had_tab_in_prefix = 1;
             indent++;
             i++;
         } else if (ch == 0xE2 && (i + 2) < yyleng &&
@@ -1401,65 +942,32 @@ PKEY_BODY [^:\n\r]*
             i++;
         }
     }
-
-    while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0) {
-        if (line_len < 4095) line_buf[line_len++] = c;
-        if (c != ' ' && c != '\t') {
-            is_blank_line = 0;
-        }
-    }
-    if (c == '\n') line_buf[line_len++] = '\n';
-    line_buf[line_len] = '\0';
-
-    if (!CTX->block_scalar.first_content_seen) {
-        if (is_blank_line && !had_tab_in_prefix) {
-            if (indent > CTX->block_scalar.leading_empty_max_indent) {
-                CTX->block_scalar.leading_empty_max_indent = indent;
-            }
-        } else {
-            CTX->block_scalar.first_content_seen = 1;
-            if (indent < CTX->block_scalar.leading_empty_max_indent) {
-                yyerror(yylloc, yyscanner, "syntax error, wrong indentation after leading empty block-scalar lines");
-                CTX->semantic_error_count++;
-            }
-        }
-    }
-
     if (CTX->block_scalar.indent == -1) {
         CTX->block_scalar.indent = indent;
     }
     
     if (indent >= CTX->block_scalar.indent) {
         /* This is content line */
+        char line_buf[4096];
+        int line_len = 0;
+        int c;
         int skip = CTX->block_scalar.indent;
         
         /* copy extra spaces if indent > block_indent */
-        if (indent > skip) {
-            int extra = indent - skip;
-            char out_buf[4096];
-            int out_len = 0;
-            for (int k = 0; k < extra && out_len < 4095; k++) {
-                out_buf[out_len++] = ' ';
-            }
-            for (int k = 0; line_buf[k] != '\0' && out_len < 4095; k++) {
-                out_buf[out_len++] = line_buf[k];
-            }
-            out_buf[out_len] = '\0';
-            yylval->string = arena_strdup(CTX, out_buf);
-        } else {
-            yylval->string = arena_strdup(CTX, line_buf);
+        for (int i = 0; i < (indent - skip); i++) {
+            if (line_len < 4095) line_buf[line_len++] = ' ';
         }
+        
+        while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0) {
+            if (line_len < 4095) line_buf[line_len++] = c;
+        }
+        if (c == '\n') line_buf[line_len++] = '\n';
+        line_buf[line_len] = '\0';
+        
+        yylval->string = strdup(line_buf);
         return BPART;
     } else {
         /* End of block scalar - line is less indented */
-        int push_start = line_len - 1;
-        if (line_len > 0 && line_buf[line_len - 1] == '\n') {
-            push_start = line_len - 2;
-            unput('\n');
-        }
-        for (int k = push_start; k >= 0; k--) {
-            unput(line_buf[k]);
-        }
         yyless(0); 
         BEGIN(INITIAL);
         /* No token, grammar will reduce bscalar */
@@ -1481,21 +989,15 @@ PKEY_BODY [^:\n\r]*
 
 [^ \t\n\r\[\]{}!,&*%@|>\`'":]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Plain map key: key: value (complex pattern allows colons inside key text) */
-    if (CTX->flow_level == 0 && !CTX->at_line_start && !CTX->expecting_value && CTX->quoted_value_closed_on_line) {
-        CTX->semantic_error_count++;
-        CTX->semantic_inline_key_count++;
-    }
     if (CTX->flow_level > 0) {
         /* In flow context, parse key text incrementally; avoid swallowing commas/brackets. */
         yyless(1);
         if (yytext[0] == ':') {
             CTX->expecting_value = 1;
-            CTX->flow_implicit_key_candidate = 0;
             return COLON;
         }
-        yylval->string = arena_strdup(CTX, yytext);
+        yylval->string = strdup(yytext);
         CTX->expecting_value = 0;
-        CTX->flow_implicit_key_candidate = 1;
         BEGIN(PLAIN_SCALAR_CONT);
         return CH_RAW;
     }
@@ -1507,19 +1009,17 @@ PKEY_BODY [^:\n\r]*
         CTX->expecting_value = 1;
         return BULLET;
     }
-    yylval->string = arena_strdup(CTX, yytext);
+    yylval->string = strdup(yytext);
     trim_trailing_spaces(yylval->string);  /* Remove trailing spaces from key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-    CTX->quoted_value_closed_on_line = 0;
     return MAP_KEY;
 }
 
 [^ \t\n\r\[\]{}!,&*%@|>\`'"] {
-    yylval->string = arena_strdup(CTX, yytext);
+    yylval->string = strdup(yytext);
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
     BEGIN(PLAIN_SCALAR_CONT);
     return CH_RAW;
 }
@@ -1528,12 +1028,10 @@ PKEY_BODY [^:\n\r]*
     if (CTX->flow_level > 0 && !CTX->expecting_value) {
         yyless(1);
         CTX->expecting_value = 1;
-        CTX->flow_implicit_key_candidate = 0;
         return COLON;
     }
-    yylval->string = arena_strdup(CTX, yytext);
+    yylval->string = strdup(yytext);
     CTX->expecting_value = 0;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
     BEGIN(PLAIN_SCALAR_CONT);
     return CH_RAW;
 }
@@ -1588,9 +1086,9 @@ PKEY_BODY [^:\n\r]*
     BEGIN(INITIAL);
 }
 
-<PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = arena_strdup(CTX, yytext); return CH_RAW; }
-<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { yylval->string = arena_strdup(CTX, yytext); return CH_RAW; }
-<PLAIN_SCALAR_CONT>":" { yylval->string = arena_strdup(CTX, ":"); return CH_RAW; }
+<PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = strdup(yytext); return CH_RAW; }
+<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { yylval->string = strdup(yytext); return CH_RAW; }
+<PLAIN_SCALAR_CONT>":" { yylval->string = strdup(":"); return CH_RAW; }
 
 <PLAIN_SCALAR_CONT>"\n" {
     /* Terminator for plain scalar */
@@ -1604,7 +1102,7 @@ PKEY_BODY [^:\n\r]*
         yyless(0);
         BEGIN(INITIAL);
     } else {
-        yylval->string = arena_strdup(CTX, yytext);
+        yylval->string = strdup(yytext);
         return CH_RAW;
     }
 }
