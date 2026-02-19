@@ -53,6 +53,7 @@ typedef struct {
     int flow_delim_sp;
     int semantic_flow_indent_count;
     int open_document_started;
+    int yaml_directive_seen;
     int argc;
     char **argv;
 } LexerContext;
