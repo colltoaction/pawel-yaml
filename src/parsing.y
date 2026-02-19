@@ -34,6 +34,8 @@ typedef struct {
     int indent_context_sp;
     int scalar_base_indent;
     char scalar_type;
+    int semantic_error_count;
+    int semantic_indent_tab_count;
     int argc;
     char **argv;
 } LexerContext;
@@ -149,6 +151,17 @@ static EventStream *current_event_stream = NULL;
 static int parse_error_count = 0;
 #define RECOVER(msg) do { fprintf(stderr, "[PARSE] %s\n", (msg)); parse_error_count++; } while(0)
 #define RECOVER_SYNC(msg) do { fprintf(stderr, "[PARSE] %s\n", (msg)); parse_error_count++; yyerrok; } while(0)
+
+static int validate_lexical_semantics(const LexerContext *ctx) {
+    if (!ctx) return 0;
+    if (ctx->semantic_error_count <= 0) return 0;
+
+    fprintf(stderr,
+            "[SEMANTIC] indentation policy violations: %d (tab-leading lines: %d)\n",
+            ctx->semantic_error_count,
+            ctx->semantic_indent_tab_count);
+    return 1;
+}
 
 static YAMLEvent *new_event(YAMLEventType type) {
     YAMLEvent *evt = (YAMLEvent*)malloc(sizeof(YAMLEvent));
@@ -888,6 +901,10 @@ int yaml_parse(void) {
     
     /* Scanner now manages stdin internally; just parse */
     int result = parsing_yy_parse(scanner);
+
+    if (result == 0 && validate_lexical_semantics(ctx) != 0) {
+        result = 1;
+    }
     
     /* If errors occurred but we recovered, still signal failure to caller */
     if (parse_error_count > 0 && result == 0) {

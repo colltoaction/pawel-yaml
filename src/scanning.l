@@ -56,6 +56,8 @@ LexerContext *lexer_context_new(void) {
     ctx->indent_context_sp = 0;
     ctx->scalar_base_indent = 0;
     ctx->scalar_type = '\0';
+    ctx->semantic_error_count = 0;
+    ctx->semantic_indent_tab_count = 0;
     
     return ctx;
 }
@@ -113,6 +115,8 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->indent_context_sp = 0;
     ctx->scalar_base_indent = 0;
     ctx->scalar_type = '\0';
+    ctx->semantic_error_count = 0;
+    ctx->semantic_indent_tab_count = 0;
 }
 
 /**
@@ -436,15 +440,46 @@ PKEY_BODY [^:\n\r]*
     }
     
     if (has_tab) {
-        /* Check if next char is flow indicator */
+        /* Syntax stage: tokenize indentation without rejecting tabbed lines.
+         * Semantic stage decides whether the line is policy-valid.
+         */
         int c = input(yyscanner);
-        if (c != EOF && c != 0) unput(c);
-        if (c != '[' && c != '{') {
-            parsing_yy_error(yylloc, yyscanner, "syntax error, tabs used for indentation");
-            return 0;
+        int first_char = c;
+        int look_buf[1024];
+        int look_n = 0;
+        int line_has_mapping_shape = 0;
+
+        if (c != EOF && c != 0) {
+            look_buf[look_n++] = c;
+
+            while (look_n < 1023) {
+                if (c == '\n' || c == '\r' || c == EOF || c == 0) break;
+                c = input(yyscanner);
+                if (c == EOF || c == 0) break;
+                look_buf[look_n++] = c;
+            }
+
+            for (int i = 0; i < look_n; i++) {
+                if (look_buf[i] == '#') break;
+                if (look_buf[i] == ':' || look_buf[i] == '-') {
+                    line_has_mapping_shape = 1;
+                    break;
+                }
+            }
         }
-        /* Tab before flow indicator - treat as indent 0 */
-        indent = 0;
+
+        for (int i = look_n - 1; i >= 0; i--) {
+            unput(look_buf[i]);
+        }
+
+        /* Policy: tabbed leading whitespace is rejected when line shape
+         * indicates structural indentation (mapping/sequence), but allowed
+         * for scalar-alignment continuation content.
+         */
+        if (line_has_mapping_shape && first_char != '[' && first_char != '{') {
+            CTX->semantic_error_count++;
+            CTX->semantic_indent_tab_count++;
+        }
     }
     
     BEGIN(INITIAL);
