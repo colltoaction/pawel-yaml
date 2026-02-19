@@ -1,9 +1,9 @@
 meta:
-  generated_at: '2026-02-20T20:21:00Z'
+  generated_at: '2026-02-20T20:21:01Z'
   suite_dir: build/lib/yaml-test-suite/src
   total_tests: 351
-  total_passes: 285
-  total_failures: 66
+  total_passes: 286
+  total_failures: 65
   scoring: fail-true-aware
 failing:
 - 4MUZ
@@ -38,7 +38,6 @@ failing:
 - G9HC
 - GDY7
 - H7J7
-- HRE5
 - J3BT
 - JTV5
 - K3WX

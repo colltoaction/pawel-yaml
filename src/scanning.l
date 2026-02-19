@@ -1211,6 +1211,11 @@ PKEY_BODY [^:\n\r]*
     \\r { yylval->string = strdup("\\r"); return CH_ESC_R; }
     \\\\ { yylval->string = strdup("\\\\"); return CH_ESC_BS; }
     \\\" { yylval->string = strdup("\\\""); return CH_ESC_QU; }
+    \\\' {
+        yyerror(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
+        BEGIN(INITIAL);
+        return 0;
+    }
     \\\/ { yylval->string = strdup("\\/"); return CH_ESC_SL; }
     \\. {
         if (yytext[1] == '.') {
