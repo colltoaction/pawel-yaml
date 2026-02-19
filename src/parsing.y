@@ -37,6 +37,7 @@ typedef struct {
     int quoted_value_closed_on_line;
     int semantic_error_count;
     int semantic_indent_tab_count;
+    int semantic_indent_mismatch_count;
     int semantic_flow_glue_count;
     int semantic_flow_comma_count;
     int semantic_flow_leading_comma_count;
@@ -171,15 +172,16 @@ static void parser_report_error(void *scanner, const char *msg) {
 #define RECOVER_SYNC(msg) do { parser_report_error(scanner, (msg)); yyerrok; } while(0)
 
 static int validate_lexical_semantics(const LexerContext *ctx, void *scanner) {
-    char errbuf[256];
+    char errbuf[512];
 
     if (!ctx) return 0;
     if (ctx->semantic_error_count <= 0) return 0;
 
     snprintf(errbuf, sizeof(errbuf),
-             "semantic policy violations: %d (tab-leading lines: %d, flow-glue lines: %d, flow-comma lines: %d, flow-leading-comma lines: %d, flow-comma-comment lines: %d, flow-key-newline lines: %d, flow-indent lines: %d, multiline-qkey lines: %d, inline-keys: %d)",
+             "semantic policy violations: %d (tab-leading lines: %d, indent-mismatch lines: %d, flow-glue lines: %d, flow-comma lines: %d, flow-leading-comma lines: %d, flow-comma-comment lines: %d, flow-key-newline lines: %d, flow-indent lines: %d, multiline-qkey lines: %d, inline-keys: %d)",
              ctx->semantic_error_count,
              ctx->semantic_indent_tab_count,
+             ctx->semantic_indent_mismatch_count,
              ctx->semantic_flow_glue_count,
              ctx->semantic_flow_comma_count,
              ctx->semantic_flow_leading_comma_count,

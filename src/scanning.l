@@ -60,6 +60,7 @@ LexerContext *lexer_context_new(void) {
     ctx->quoted_value_closed_on_line = 0;
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
+    ctx->semantic_indent_mismatch_count = 0;
     ctx->semantic_flow_glue_count = 0;
     ctx->semantic_flow_comma_count = 0;
     ctx->semantic_flow_leading_comma_count = 0;
@@ -130,6 +131,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->quoted_value_closed_on_line = 0;
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
+    ctx->semantic_indent_mismatch_count = 0;
     ctx->semantic_flow_glue_count = 0;
     ctx->semantic_flow_comma_count = 0;
     ctx->semantic_flow_leading_comma_count = 0;
@@ -524,6 +526,11 @@ PKEY_BODY [^:\n\r]*
         while (indent < CTX->indent_stack[CTX->indent_sp]) {
             if (CTX->indent_sp > 0) CTX->indent_sp--;
             CTX->pending_dedents++;
+        }
+        if (indent != CTX->indent_stack[CTX->indent_sp]) {
+            yyerror(yylloc, yyscanner, "syntax error, invalid dedent level");
+            CTX->semantic_error_count++;
+            CTX->semantic_indent_mismatch_count++;
         }
         if (CTX->pending_dedents > 0) {
             CTX->pending_dedents--;
