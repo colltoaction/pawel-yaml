@@ -59,6 +59,7 @@ LexerContext *lexer_context_new(void) {
     ctx->scalar_type = '\0';
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
+    ctx->semantic_flow_glue_count = 0;
     
     return ctx;
 }
@@ -118,6 +119,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->scalar_type = '\0';
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
+    ctx->semantic_flow_glue_count = 0;
 }
 
 /**
@@ -341,6 +343,13 @@ static char *extract_key_after_prefix(const char *text) {
     }
     
     return key;
+}
+
+static int flow_close_follow_char_ok(int c) {
+    if (c == EOF || c == 0) return 1;
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 1;
+    if (c == ',' || c == ':' || c == ']' || c == '}' || c == '#') return 1;
+    return 0;
 }
 
 /* static void init_scalar(LexerContext *ctx) {
@@ -750,7 +759,18 @@ PKEY_BODY [^:\n\r]*
     CTX->expecting_value = 1;
     return LBRACK;
 }
-"]"              { CTX->at_line_start = 0; if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACK; }
+"]"              {
+    int c = input(yyscanner);
+    if (c != EOF && c != 0) unput(c);
+    if (!flow_close_follow_char_ok(c)) {
+        CTX->semantic_error_count++;
+        CTX->semantic_flow_glue_count++;
+    }
+    CTX->at_line_start = 0;
+    if (CTX->flow_level > 0) CTX->flow_level--;
+    CTX->expecting_value = 0;
+    return RBRACK;
+}
 "{"              {
     if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
         int depth = 1;
@@ -789,7 +809,18 @@ PKEY_BODY [^:\n\r]*
     CTX->expecting_value = 1;
     return LBRACE;
 }
-"}"              { CTX->at_line_start = 0; if (CTX->flow_level > 0) CTX->flow_level--; CTX->expecting_value = 0; return RBRACE; }
+"}"              {
+    int c = input(yyscanner);
+    if (c != EOF && c != 0) unput(c);
+    if (!flow_close_follow_char_ok(c)) {
+        CTX->semantic_error_count++;
+        CTX->semantic_flow_glue_count++;
+    }
+    CTX->at_line_start = 0;
+    if (CTX->flow_level > 0) CTX->flow_level--;
+    CTX->expecting_value = 0;
+    return RBRACE;
+}
 ":"              { 
     if (CTX->expecting_value && CTX->flow_level > 0) {
          yylval->string = strdup(":");
