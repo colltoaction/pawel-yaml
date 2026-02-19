@@ -1,9 +1,9 @@
 meta:
-  generated_at: '2026-02-20T20:20:32Z'
+  generated_at: '2026-02-20T20:20:33Z'
   suite_dir: build/lib/yaml-test-suite/src
   total_tests: 351
-  total_passes: 267
-  total_failures: 84
+  total_passes: 268
+  total_failures: 83
   scoring: fail-true-aware
 failing:
 - 5LLU
@@ -27,7 +27,6 @@ failing:
 - BU8L
 - CFD4
 - CT4Q
-- CTN5
 - CVW2
 - CXX2
 - D49Q
