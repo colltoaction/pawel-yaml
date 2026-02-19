@@ -673,7 +673,9 @@ PKEY_BODY [^:\n\r]*
                 unput(look_buf[i]);
             }
 
-            if (CTX->flow_implicit_key_candidate && first_content == ':') {
+            if (CTX->flow_implicit_key_candidate &&
+                first_content == ':' &&
+                CTX->flow_delim_stack[top] == '[') {
                 yyerror(yylloc, yyscanner, "syntax error, implicit flow key followed by newline");
                 CTX->semantic_error_count++;
                 CTX->semantic_flow_key_newline_count++;
