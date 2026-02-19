@@ -922,6 +922,10 @@ PKEY_BODY [^:\n\r]*
 '[^']*'[ ]*: {
     // Extract quoted content
     size_t len = yyleng;
+    if (CTX->flow_level == 0 && (strchr(yytext, '\n') || strchr(yytext, '\r'))) {
+        CTX->semantic_error_count++;
+        CTX->semantic_multiline_qkey_count++;
+    }
     // Remove trailing ':'
     while (len > 0 && yytext[len - 1] == ':') len--;
     // Remove trailing spaces
