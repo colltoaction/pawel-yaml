@@ -1211,6 +1211,31 @@ PKEY_BODY [^:\n\r]*
         return 0;
     }
 }
+\'(\'\'|[^\'])*\n("---"|"...")([ \t]|#|\r?\n)(\'\'|[^\'])*\'  {
+    yyerror(yylloc, yyscanner, "syntax error, document marker inside single-quoted string");
+    CTX->semantic_error_count++;
+
+    int len = strlen(yytext);
+    char *content = malloc(len);
+    int j = 0;
+
+    for (int i = 1; i < len - 1; i++) {
+        if (yytext[i] == '\'' && yytext[i+1] == '\'') {
+            content[j++] = '\'';
+            i++;
+        } else {
+            content[j++] = yytext[i];
+        }
+    }
+    content[j] = '\0';
+
+    yylval->string = content;
+    CTX->expecting_value = 0;
+    CTX->last_was_value = 1;
+    CTX->quoted_value_closed_on_line = 1;
+    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    return SSCALAR;
+}
 \'(\'\'|[^\'])*\'  { 
     /* Single-quoted string: '' is escaped quote, [^'] is any char except quote */
     int len = strlen(yytext);
