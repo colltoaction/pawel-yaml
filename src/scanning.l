@@ -57,9 +57,11 @@ LexerContext *lexer_context_new(void) {
     ctx->indent_context_sp = 0;
     ctx->scalar_base_indent = 0;
     ctx->scalar_type = '\0';
+    ctx->quoted_value_closed_on_line = 0;
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
     ctx->semantic_flow_glue_count = 0;
+    ctx->semantic_inline_key_count = 0;
     
     return ctx;
 }
@@ -117,9 +119,11 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->indent_context_sp = 0;
     ctx->scalar_base_indent = 0;
     ctx->scalar_type = '\0';
+    ctx->quoted_value_closed_on_line = 0;
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
     ctx->semantic_flow_glue_count = 0;
+    ctx->semantic_inline_key_count = 0;
 }
 
 /**
@@ -544,6 +548,7 @@ PKEY_BODY [^:\n\r]*
 }
 
 \n {
+    CTX->quoted_value_closed_on_line = 0;
     /* In flow context, newlines are just whitespace, don't check indentation */
     if (CTX->flow_level == 0) {
         BEGIN(INDENT_CHECK);
@@ -902,6 +907,7 @@ PKEY_BODY [^:\n\r]*
         BEGIN(INITIAL);
         CTX->expecting_value = 0;
         CTX->last_was_value = 1;
+        CTX->quoted_value_closed_on_line = 1;
         return QSCALAR; 
     }
     
@@ -956,6 +962,7 @@ PKEY_BODY [^:\n\r]*
     yylval->string = content;
     CTX->expecting_value = 0;
     CTX->last_was_value = 1;
+    CTX->quoted_value_closed_on_line = 1;
     return SSCALAR;
 }
 "|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
@@ -1030,6 +1037,10 @@ PKEY_BODY [^:\n\r]*
 
 [^ \t\n\r\[\]{}!,&*%@|>\`'":]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Plain map key: key: value (complex pattern allows colons inside key text) */
+    if (CTX->flow_level == 0 && !CTX->at_line_start && !CTX->expecting_value && CTX->quoted_value_closed_on_line) {
+        CTX->semantic_error_count++;
+        CTX->semantic_inline_key_count++;
+    }
     if (CTX->flow_level > 0) {
         /* In flow context, parse key text incrementally; avoid swallowing commas/brackets. */
         yyless(1);
@@ -1054,6 +1065,7 @@ PKEY_BODY [^:\n\r]*
     trim_trailing_spaces(yylval->string);  /* Remove trailing spaces from key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
+    CTX->quoted_value_closed_on_line = 0;
     return MAP_KEY;
 }
 

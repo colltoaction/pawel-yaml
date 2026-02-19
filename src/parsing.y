@@ -34,9 +34,11 @@ typedef struct {
     int indent_context_sp;
     int scalar_base_indent;
     char scalar_type;
+    int quoted_value_closed_on_line;
     int semantic_error_count;
     int semantic_indent_tab_count;
     int semantic_flow_glue_count;
+    int semantic_inline_key_count;
     int argc;
     char **argv;
 } LexerContext;
@@ -158,10 +160,11 @@ static int validate_lexical_semantics(const LexerContext *ctx) {
     if (ctx->semantic_error_count <= 0) return 0;
 
     fprintf(stderr,
-            "[SEMANTIC] policy violations: %d (tab-leading lines: %d, flow-glue lines: %d)\n",
+            "[SEMANTIC] policy violations: %d (tab-leading lines: %d, flow-glue lines: %d, inline-keys: %d)\n",
             ctx->semantic_error_count,
             ctx->semantic_indent_tab_count,
-            ctx->semantic_flow_glue_count);
+            ctx->semantic_flow_glue_count,
+            ctx->semantic_inline_key_count);
     return 1;
 }
 
