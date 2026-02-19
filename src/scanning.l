@@ -686,9 +686,26 @@ PKEY_BODY [^:\n\r]*
     return ANCHOR_MAP_KEY;
 }
 "&"{ANCHOR_CHAR}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return ANCHOR; }
-"*"{ALIAS_CHAR}+/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Alias as map key: *alias: value (returns alias name without '*' prefix) */
+"*"{ALIAS_CHAR}+[ ]+/":"([ \t\n]|{VSPACE}) {
+    /* Alias map key with explicit separating whitespace before ':' */
     CTX->at_line_start = 0;
+    yylval->string = strdup(yytext + 1);
+    trim_trailing_spaces(yylval->string);
+    CTX->expecting_value = 0;
+    return MAP_KEY;
+}
+"*"{ALIAS_CHAR}+":"/([ \t\n]|{VSPACE}) {
+    CTX->at_line_start = 0;
+
+    if (CTX->expecting_value) {
+        /* Value-position alias ending with ':' keeps the ':' in the alias name. */
+        yylval->string = strdup(yytext);
+        CTX->expecting_value = 0;
+        return ALIAS;
+    }
+
+    /* Key-position alias: split before ':' and let parser consume ':' token. */
+    yyless(yyleng - 1);
     yylval->string = strdup(yytext + 1);
     CTX->expecting_value = 0;
     return MAP_KEY;
@@ -970,7 +987,7 @@ PKEY_BODY [^:\n\r]*
 
 
 
-[^ \t\n\r\[\]{}!,&*%@|>\`'"]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
+[^ \t\n\r\[\]{}!,&*%@|>\`'":]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Plain map key: key: value (complex pattern allows colons inside key text) */
     if (CTX->flow_level > 0) {
         /* In flow context, parse key text incrementally; avoid swallowing commas/brackets. */
