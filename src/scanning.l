@@ -934,6 +934,29 @@ PKEY_BODY [^:\n\r]*
     yylval->string = text;
     return ANCHOR_MAP_KEY;
 }
+"&"{ANCHOR_CHAR}+[ \t]+"-"/[ \t\n] {
+    int anchor_len = 0;
+    yyerror(yylloc, yyscanner, "syntax error, anchor cannot prefix a sequence indicator on the same line");
+    CTX->semantic_error_count++;
+
+    while (anchor_len < yyleng &&
+           yytext[anchor_len] != ' ' &&
+           yytext[anchor_len] != '\t') {
+        anchor_len++;
+    }
+
+    yylval->string = (char*)malloc((size_t)anchor_len + 1);
+    if (!yylval->string) {
+        yyerror(yylloc, yyscanner, "memory allocation failed");
+        return 0;
+    }
+    memcpy(yylval->string, yytext, (size_t)anchor_len);
+    yylval->string[anchor_len] = '\0';
+
+    yyless(anchor_len);
+    CTX->at_line_start = 0;
+    return ANCHOR;
+}
 "&"{ANCHOR_CHAR}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return ANCHOR; }
 "*"{ALIAS_CHAR}+[ ]+/":"([ \t\n]|{VSPACE}) {
     /* Alias map key with explicit separating whitespace before ':' */
