@@ -566,14 +566,13 @@ PKEY_BODY [^:\n\r]*
         BEGIN(INDENT_CHECK);
     } else {
         int top = CTX->flow_delim_sp - 1;
-        if (top >= 0 &&
-            CTX->flow_delim_stack[top] == '[' &&
-            CTX->flow_indent_required_stack[top]) {
+        if (top >= 0 && CTX->flow_indent_required_stack[top]) {
             int look_buf[4096];
             int look_n = 0;
             int indent = 0;
             int first_content = -1;
             int c;
+            int close_ch = (CTX->flow_delim_stack[top] == '{') ? '}' : ']';
             int baseline = CTX->flow_indent_ref_stack[top];
 
             while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
@@ -611,7 +610,7 @@ PKEY_BODY [^:\n\r]*
                 unput(look_buf[i]);
             }
 
-            if (first_content >= 0 && first_content != ']' && indent <= baseline) {
+            if (first_content >= 0 && first_content != close_ch && indent <= baseline) {
                 yyerror(yylloc, yyscanner, "syntax error, wrong indentation in flow sequence");
                 CTX->semantic_error_count++;
                 CTX->semantic_flow_indent_count++;
@@ -872,6 +871,8 @@ PKEY_BODY [^:\n\r]*
     return RBRACK;
 }
 "{"              {
+    int require_flow_indent = (CTX->flow_delim_sp == 0 && !CTX->at_line_start);
+    int flow_ref_indent = CTX->indent_stack[CTX->indent_sp];
     if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
         int depth = 1;
         int look_buf[4096];
@@ -907,8 +908,8 @@ PKEY_BODY [^:\n\r]*
     CTX->at_line_start = 0;
     if (CTX->flow_delim_sp < 100) {
         CTX->flow_delim_stack[CTX->flow_delim_sp] = '{';
-        CTX->flow_indent_ref_stack[CTX->flow_delim_sp] = CTX->indent_stack[CTX->indent_sp];
-        CTX->flow_indent_required_stack[CTX->flow_delim_sp] = 0;
+        CTX->flow_indent_ref_stack[CTX->flow_delim_sp] = flow_ref_indent;
+        CTX->flow_indent_required_stack[CTX->flow_delim_sp] = require_flow_indent;
         CTX->flow_delim_sp++;
     }
     CTX->flow_level++;
