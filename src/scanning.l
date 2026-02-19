@@ -66,6 +66,8 @@ LexerContext *lexer_context_new(void) {
     ctx->semantic_flow_comment_comma_count = 0;
     ctx->semantic_multiline_qkey_count = 0;
     ctx->semantic_inline_key_count = 0;
+    ctx->flow_delim_sp = 0;
+    ctx->semantic_flow_indent_count = 0;
     
     return ctx;
 }
@@ -132,6 +134,8 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->semantic_flow_comment_comma_count = 0;
     ctx->semantic_multiline_qkey_count = 0;
     ctx->semantic_inline_key_count = 0;
+    ctx->flow_delim_sp = 0;
+    ctx->semantic_flow_indent_count = 0;
 }
 
 /**
@@ -558,8 +562,61 @@ PKEY_BODY [^:\n\r]*
 \n {
     CTX->quoted_value_closed_on_line = 0;
     /* In flow context, newlines are just whitespace, don't check indentation */
-    if (CTX->flow_level == 0) {
+    if (CTX->flow_delim_sp == 0) {
         BEGIN(INDENT_CHECK);
+    } else {
+        int top = CTX->flow_delim_sp - 1;
+        if (top >= 0 &&
+            CTX->flow_delim_stack[top] == '[' &&
+            CTX->flow_indent_required_stack[top]) {
+            int look_buf[4096];
+            int look_n = 0;
+            int indent = 0;
+            int first_content = -1;
+            int c;
+            int baseline = CTX->flow_indent_ref_stack[top];
+
+            while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
+                look_buf[look_n++] = c;
+
+                if (c == ' ') {
+                    indent++;
+                    continue;
+                }
+                if (c == '\t') {
+                    indent++;
+                    continue;
+                }
+                if (c == '\r') {
+                    continue;
+                }
+                if (c == '\n') {
+                    indent = 0;
+                    continue;
+                }
+                if (c == '#') {
+                    while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
+                        look_buf[look_n++] = c;
+                        if (c == '\n') break;
+                    }
+                    indent = 0;
+                    continue;
+                }
+
+                first_content = c;
+                break;
+            }
+
+            for (int i = look_n - 1; i >= 0; i--) {
+                unput(look_buf[i]);
+            }
+
+            if (first_content >= 0 && first_content != ']' && indent <= baseline) {
+                yyerror(yylloc, yyscanner, "syntax error, wrong indentation in flow sequence");
+                CTX->semantic_error_count++;
+                CTX->semantic_flow_indent_count++;
+            }
+        }
     }
     /* Otherwise skip the newline in flow context */
 }
@@ -735,6 +792,8 @@ PKEY_BODY [^:\n\r]*
 }
 "*"{ALIAS_CHAR}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; return ALIAS; }
 "["              {
+    int require_flow_indent = (CTX->flow_delim_sp == 0 && !CTX->at_line_start);
+    int flow_ref_indent = CTX->indent_stack[CTX->indent_sp];
     if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
         int depth = 1;
         int look_buf[4096];
@@ -768,6 +827,12 @@ PKEY_BODY [^:\n\r]*
         }
     }
     CTX->at_line_start = 0;
+    if (CTX->flow_delim_sp < 100) {
+        CTX->flow_delim_stack[CTX->flow_delim_sp] = '[';
+        CTX->flow_indent_ref_stack[CTX->flow_delim_sp] = flow_ref_indent;
+        CTX->flow_indent_required_stack[CTX->flow_delim_sp] = require_flow_indent;
+        CTX->flow_delim_sp++;
+    }
     CTX->flow_level++;
     {
         int look_buf[1024];
@@ -797,6 +862,9 @@ PKEY_BODY [^:\n\r]*
     if (!flow_close_follow_char_ok(c)) {
         CTX->semantic_error_count++;
         CTX->semantic_flow_glue_count++;
+    }
+    if (CTX->flow_delim_sp > 0) {
+        CTX->flow_delim_sp--;
     }
     CTX->at_line_start = 0;
     if (CTX->flow_level > 0) CTX->flow_level--;
@@ -837,6 +905,12 @@ PKEY_BODY [^:\n\r]*
         }
     }
     CTX->at_line_start = 0;
+    if (CTX->flow_delim_sp < 100) {
+        CTX->flow_delim_stack[CTX->flow_delim_sp] = '{';
+        CTX->flow_indent_ref_stack[CTX->flow_delim_sp] = CTX->indent_stack[CTX->indent_sp];
+        CTX->flow_indent_required_stack[CTX->flow_delim_sp] = 0;
+        CTX->flow_delim_sp++;
+    }
     CTX->flow_level++;
     CTX->expecting_value = 1;
     return LBRACE;
@@ -847,6 +921,9 @@ PKEY_BODY [^:\n\r]*
     if (!flow_close_follow_char_ok(c)) {
         CTX->semantic_error_count++;
         CTX->semantic_flow_glue_count++;
+    }
+    if (CTX->flow_delim_sp > 0) {
+        CTX->flow_delim_sp--;
     }
     CTX->at_line_start = 0;
     if (CTX->flow_level > 0) CTX->flow_level--;
