@@ -20,6 +20,8 @@ typedef struct {
     struct {
         char type;
         int indent;
+        int leading_empty_max_indent;
+        int first_content_seen;
     } block_scalar;
     struct {
         char *content;
