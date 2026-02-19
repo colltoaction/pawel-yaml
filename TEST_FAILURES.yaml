@@ -1,5 +1,5 @@
 meta:
-  generated_at: '2026-02-19T18:37:55Z'
+  generated_at: '2026-02-19T18:40:49Z'
   suite_dir: build/lib/yaml-test-suite/src
   total_tests: 351
   total_failures: 83
