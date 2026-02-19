@@ -1,9 +1,9 @@
 meta:
-  generated_at: '2026-02-20T20:20:55Z'
+  generated_at: '2026-02-20T20:20:56Z'
   suite_dir: build/lib/yaml-test-suite/src
   total_tests: 351
-  total_passes: 281
-  total_failures: 70
+  total_passes: 282
+  total_failures: 69
   scoring: fail-true-aware
 failing:
 - 4MUZ
@@ -57,7 +57,6 @@ failing:
 - S3PD
 - S7BG
 - S98Z
-- SF5V
 - SKE5
 - SM9W
 - SY6V

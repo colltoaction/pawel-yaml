@@ -73,6 +73,7 @@ LexerContext *lexer_context_new(void) {
     ctx->flow_delim_sp = 0;
     ctx->semantic_flow_indent_count = 0;
     ctx->open_document_started = 1;
+    ctx->yaml_directive_seen = 0;
     
     return ctx;
 }
@@ -146,6 +147,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->flow_delim_sp = 0;
     ctx->semantic_flow_indent_count = 0;
     ctx->open_document_started = 1;
+    ctx->yaml_directive_seen = 0;
 }
 
 /**
@@ -699,6 +701,12 @@ PKEY_BODY [^:\n\r]*
     return TAG_DIRECTIVE;
 }
 "%YAML"[ ]?"1"[.,][0-9][ \t]+[^#\n][^\n]* {
+    if (CTX->yaml_directive_seen) {
+        yyerror(yylloc, yyscanner, "syntax error, duplicate %YAML directive");
+        CTX->semantic_error_count++;
+    } else {
+        CTX->yaml_directive_seen = 1;
+    }
     yyerror(yylloc, yyscanner, "syntax error, extra content on %YAML directive");
     CTX->semantic_error_count++;
     if (!CTX->open_document_started) {
@@ -707,6 +715,12 @@ PKEY_BODY [^:\n\r]*
     return YAML_DIRECTIVE;
 }
 "%YAML"[ ]?"1"[.,][0-9]"#"[^\n]* {
+    if (CTX->yaml_directive_seen) {
+        yyerror(yylloc, yyscanner, "syntax error, duplicate %YAML directive");
+        CTX->semantic_error_count++;
+    } else {
+        CTX->yaml_directive_seen = 1;
+    }
     yyerror(yylloc, yyscanner, "syntax error, missing whitespace before %YAML comment");
     CTX->semantic_error_count++;
     if (!CTX->open_document_started) {
@@ -715,6 +729,12 @@ PKEY_BODY [^:\n\r]*
     return YAML_DIRECTIVE;
 }
 "%YAML"[ ]?"1"[.,][0-9][ \t]*(#[^\n]*)?  {
+    if (CTX->yaml_directive_seen) {
+        yyerror(yylloc, yyscanner, "syntax error, duplicate %YAML directive");
+        CTX->semantic_error_count++;
+    } else {
+        CTX->yaml_directive_seen = 1;
+    }
     if (!CTX->open_document_started) {
         yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
         CTX->semantic_error_count++;
@@ -730,8 +750,8 @@ PKEY_BODY [^:\n\r]*
     }
     /* Unknown directive - skip */
 }
-"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 0; return DOC_START; }
-"..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; return DOC_END; }
+"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 0; CTX->yaml_directive_seen = 0; return DOC_START; }
+"..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
 
 <DIRECTIVE_MODE>{
     [ \t]+          { /* skip space */ }
