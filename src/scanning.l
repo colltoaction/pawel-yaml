@@ -777,6 +777,32 @@ PKEY_BODY [^:\n\r]*
     return BULLET_EOL;
 }
 "-"/[ \t\n]      { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return BULLET; }
+"-"[ \t]*"," {
+    if (CTX->flow_delim_sp > 0) {
+        yyerror(yylloc, yyscanner, "syntax error, bare dash is not a valid flow scalar");
+        CTX->semantic_error_count++;
+    }
+    yyless(1);
+    yylval->string = strdup("-");
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    BEGIN(PLAIN_SCALAR_CONT);
+    return CH_RAW;
+}
+"-"[ \t]*"]" {
+    if (CTX->flow_delim_sp > 0) {
+        yyerror(yylloc, yyscanner, "syntax error, bare dash is not a valid flow scalar");
+        CTX->semantic_error_count++;
+    }
+    yyless(1);
+    yylval->string = strdup("-");
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    BEGIN(PLAIN_SCALAR_CONT);
+    return CH_RAW;
+}
 ":"/[ \t\n] {
     if (CTX->complex_key_pending) {
         CTX->complex_key_pending = 0;
