@@ -61,6 +61,7 @@ LexerContext *lexer_context_new(void) {
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
     ctx->semantic_indent_mismatch_count = 0;
+    ctx->semantic_directive_mid_doc_count = 0;
     ctx->semantic_flow_glue_count = 0;
     ctx->semantic_flow_comma_count = 0;
     ctx->semantic_flow_leading_comma_count = 0;
@@ -71,6 +72,7 @@ LexerContext *lexer_context_new(void) {
     ctx->flow_implicit_key_candidate = 0;
     ctx->flow_delim_sp = 0;
     ctx->semantic_flow_indent_count = 0;
+    ctx->open_document_started = 1;
     
     return ctx;
 }
@@ -132,6 +134,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->semantic_error_count = 0;
     ctx->semantic_indent_tab_count = 0;
     ctx->semantic_indent_mismatch_count = 0;
+    ctx->semantic_directive_mid_doc_count = 0;
     ctx->semantic_flow_glue_count = 0;
     ctx->semantic_flow_comma_count = 0;
     ctx->semantic_flow_leading_comma_count = 0;
@@ -142,6 +145,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->flow_implicit_key_candidate = 0;
     ctx->flow_delim_sp = 0;
     ctx->semantic_flow_indent_count = 0;
+    ctx->open_document_started = 1;
 }
 
 /**
@@ -513,6 +517,43 @@ PKEY_BODY [^:\n\r]*
             CTX->semantic_indent_tab_count++;
         }
     }
+
+    {
+        int look_buf[3];
+        int look_n = 0;
+        int c = input(yyscanner);
+        int is_doc_end_marker = 0;
+
+        if (c != EOF && c != 0) {
+            look_buf[look_n++] = c;
+            for (int i = 0; i < 2; i++) {
+                int d = input(yyscanner);
+                if (d == EOF || d == 0) break;
+                look_buf[look_n++] = d;
+            }
+        }
+
+        for (int i = look_n - 1; i >= 0; i--) {
+            unput(look_buf[i]);
+        }
+
+        if (look_n >= 3 &&
+            look_buf[0] == '.' &&
+            look_buf[1] == '.' &&
+            look_buf[2] == '.') {
+            is_doc_end_marker = 1;
+        }
+
+        if (look_n > 0) {
+            if (look_buf[0] == '%') {
+                /* keep current directive allowance */
+            } else if (is_doc_end_marker) {
+                CTX->open_document_started = 1;
+            } else if (look_buf[0] != '#') {
+                CTX->open_document_started = 0;
+            }
+        }
+    }
     
     BEGIN(INITIAL);
     CTX->at_line_start = 1;
@@ -541,6 +582,10 @@ PKEY_BODY [^:\n\r]*
 
 <INDENT_CHECK>. {
     /* Not an indent - likely at column 0 */
+    int first_char = yytext[0];
+    if (first_char != '%' && first_char != '#' && first_char != '.') {
+        CTX->open_document_started = 0;
+    }
     yyless(0);
     BEGIN(INITIAL);
     CTX->at_line_start = 1;
@@ -644,11 +689,26 @@ PKEY_BODY [^:\n\r]*
 
 
 
-"%TAG"           { BEGIN(DIRECTIVE_MODE); return TAG_DIRECTIVE; }
-"%YAML"[ ]?"1"[.,][0-9]  { return YAML_DIRECTIVE; }
+"%TAG"           {
+    if (!CTX->open_document_started) {
+        yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
+        CTX->semantic_error_count++;
+        CTX->semantic_directive_mid_doc_count++;
+    }
+    BEGIN(DIRECTIVE_MODE);
+    return TAG_DIRECTIVE;
+}
+"%YAML"[ ]?"1"[.,][0-9]  {
+    if (!CTX->open_document_started) {
+        yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
+        CTX->semantic_error_count++;
+        CTX->semantic_directive_mid_doc_count++;
+    }
+    return YAML_DIRECTIVE;
+}
 "%"[a-zA-Z][^\n]* { /* Unknown directive - skip */ }
-"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; return DOC_START; }
-"..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return DOC_END; }
+"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 0; return DOC_START; }
+"..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; return DOC_END; }
 
 <DIRECTIVE_MODE>{
     [ \t]+          { /* skip space */ }
