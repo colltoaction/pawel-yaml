@@ -754,6 +754,17 @@ PKEY_BODY [^:\n\r]*
     }
     /* Unknown directive - skip */
 }
+"---"[ \t]+"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
+    yyerror(yylloc, yyscanner, "syntax error, anchored mapping key is not allowed on document-start line");
+    CTX->semantic_error_count++;
+    yyless(3);
+    CTX->expecting_value = 1;
+    CTX->last_was_value = 0;
+    CTX->flow_implicit_key_candidate = 0;
+    CTX->open_document_started = 0;
+    CTX->yaml_directive_seen = 0;
+    return DOC_START;
+}
 "---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 0; CTX->yaml_directive_seen = 0; return DOC_START; }
 "..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
 
