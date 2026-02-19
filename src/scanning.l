@@ -706,6 +706,14 @@ PKEY_BODY [^:\n\r]*
     }
     return YAML_DIRECTIVE;
 }
+"%YAML"[ ]?"1"[.,][0-9]"#"[^\n]* {
+    yyerror(yylloc, yyscanner, "syntax error, missing whitespace before %YAML comment");
+    CTX->semantic_error_count++;
+    if (!CTX->open_document_started) {
+        CTX->semantic_directive_mid_doc_count++;
+    }
+    return YAML_DIRECTIVE;
+}
 "%YAML"[ ]?"1"[.,][0-9][ \t]*(#[^\n]*)?  {
     if (!CTX->open_document_started) {
         yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
