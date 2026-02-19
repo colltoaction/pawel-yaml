@@ -44,6 +44,8 @@ LexerContext *lexer_context_new(void) {
     /* Initialize block scalar state */
     ctx->block_scalar.type = '\0';
     ctx->block_scalar.indent = -1;
+    ctx->block_scalar.leading_empty_max_indent = 0;
+    ctx->block_scalar.first_content_seen = 0;
     
     /* Initialize scalar accumulation buffer */
     ctx->scalar.content = (char*)malloc(1024);
@@ -122,6 +124,8 @@ static void lexer_context_reset(LexerContext *ctx) {
     
     ctx->block_scalar.type = '\0';
     ctx->block_scalar.indent = -1;
+    ctx->block_scalar.leading_empty_max_indent = 0;
+    ctx->block_scalar.first_content_seen = 0;
     
     ctx->scalar.len = 0;
     if (ctx->scalar.content) {
@@ -1291,20 +1295,35 @@ PKEY_BODY [^:\n\r]*
     if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
     return SSCALAR;
 }
-"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
-">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      { yylval->string = strdup(yytext); CTX->expecting_value = 0; CTX->last_was_value = 0; CTX->block_scalar.indent = -1; BEGIN(BLOCK_SCALAR); return BPART; }
-
-<BLOCK_SCALAR>^([ \t]|{VSPACE})*\n {
-    yylval->string = strdup("\n");
+"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      {
+    yylval->string = strdup(yytext);
+    CTX->expecting_value = 0;
+    CTX->last_was_value = 0;
+    CTX->block_scalar.indent = -1;
+    CTX->block_scalar.leading_empty_max_indent = 0;
+    CTX->block_scalar.first_content_seen = 0;
+    BEGIN(BLOCK_SCALAR);
+    return BPART;
+}
+">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      {
+    yylval->string = strdup(yytext);
+    CTX->expecting_value = 0;
+    CTX->last_was_value = 0;
+    CTX->block_scalar.indent = -1;
+    CTX->block_scalar.leading_empty_max_indent = 0;
+    CTX->block_scalar.first_content_seen = 0;
+    BEGIN(BLOCK_SCALAR);
     return BPART;
 }
 
-<BLOCK_SCALAR>^([ \t]|{VSPACE})+ {
+<BLOCK_SCALAR>^([ \t]|{VSPACE})*\n {
     int indent = 0;
     int i = 0;
-    while (i < yyleng) {
+    int had_tab_in_prefix = 0;
+    while (i < yyleng && yytext[i] != '\n') {
         unsigned char ch = (unsigned char)yytext[i];
         if (ch == ' ' || ch == '\t') {
+            if (ch == '\t') had_tab_in_prefix = 1;
             indent++;
             i++;
         } else if (ch == 0xE2 && (i + 2) < yyleng &&
@@ -1316,32 +1335,98 @@ PKEY_BODY [^:\n\r]*
             i++;
         }
     }
+    if (!CTX->block_scalar.first_content_seen &&
+        !had_tab_in_prefix &&
+        indent > CTX->block_scalar.leading_empty_max_indent) {
+        CTX->block_scalar.leading_empty_max_indent = indent;
+    }
+    yylval->string = strdup("\n");
+    return BPART;
+}
+
+<BLOCK_SCALAR>^([ \t]|{VSPACE})+ {
+    int indent = 0;
+    int i = 0;
+    int had_tab_in_prefix = 0;
+    char line_buf[4096];
+    int line_len = 0;
+    int c;
+    int is_blank_line = 1;
+
+    while (i < yyleng) {
+        unsigned char ch = (unsigned char)yytext[i];
+        if (ch == ' ' || ch == '\t') {
+            if (ch == '\t') had_tab_in_prefix = 1;
+            indent++;
+            i++;
+        } else if (ch == 0xE2 && (i + 2) < yyleng &&
+                   (unsigned char)yytext[i + 1] == 0x90 &&
+                   (unsigned char)yytext[i + 2] == 0xA3) {
+            indent++;
+            i += 3;
+        } else {
+            i++;
+        }
+    }
+
+    while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0) {
+        if (line_len < 4095) line_buf[line_len++] = c;
+        if (c != ' ' && c != '\t') {
+            is_blank_line = 0;
+        }
+    }
+    if (c == '\n') line_buf[line_len++] = '\n';
+    line_buf[line_len] = '\0';
+
+    if (!CTX->block_scalar.first_content_seen) {
+        if (is_blank_line && !had_tab_in_prefix) {
+            if (indent > CTX->block_scalar.leading_empty_max_indent) {
+                CTX->block_scalar.leading_empty_max_indent = indent;
+            }
+        } else {
+            CTX->block_scalar.first_content_seen = 1;
+            if (indent < CTX->block_scalar.leading_empty_max_indent) {
+                yyerror(yylloc, yyscanner, "syntax error, wrong indentation after leading empty block-scalar lines");
+                CTX->semantic_error_count++;
+            }
+        }
+    }
+
     if (CTX->block_scalar.indent == -1) {
         CTX->block_scalar.indent = indent;
     }
     
     if (indent >= CTX->block_scalar.indent) {
         /* This is content line */
-        char line_buf[4096];
-        int line_len = 0;
-        int c;
         int skip = CTX->block_scalar.indent;
         
         /* copy extra spaces if indent > block_indent */
-        for (int i = 0; i < (indent - skip); i++) {
-            if (line_len < 4095) line_buf[line_len++] = ' ';
+        if (indent > skip) {
+            int extra = indent - skip;
+            char out_buf[4096];
+            int out_len = 0;
+            for (int k = 0; k < extra && out_len < 4095; k++) {
+                out_buf[out_len++] = ' ';
+            }
+            for (int k = 0; line_buf[k] != '\0' && out_len < 4095; k++) {
+                out_buf[out_len++] = line_buf[k];
+            }
+            out_buf[out_len] = '\0';
+            yylval->string = strdup(out_buf);
+        } else {
+            yylval->string = strdup(line_buf);
         }
-        
-        while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0) {
-            if (line_len < 4095) line_buf[line_len++] = c;
-        }
-        if (c == '\n') line_buf[line_len++] = '\n';
-        line_buf[line_len] = '\0';
-        
-        yylval->string = strdup(line_buf);
         return BPART;
     } else {
         /* End of block scalar - line is less indented */
+        int push_start = line_len - 1;
+        if (line_len > 0 && line_buf[line_len - 1] == '\n') {
+            push_start = line_len - 2;
+            unput('\n');
+        }
+        for (int k = push_start; k >= 0; k--) {
+            unput(line_buf[k]);
+        }
         yyless(0); 
         BEGIN(INITIAL);
         /* No token, grammar will reduce bscalar */
