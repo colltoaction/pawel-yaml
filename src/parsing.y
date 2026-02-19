@@ -41,6 +41,7 @@ typedef struct {
     int semantic_flow_comma_count;
     int semantic_flow_leading_comma_count;
     int semantic_flow_comment_comma_count;
+    int semantic_multiline_qkey_count;
     int semantic_inline_key_count;
     int argc;
     char **argv;
@@ -169,13 +170,14 @@ static int validate_lexical_semantics(const LexerContext *ctx, void *scanner) {
     if (ctx->semantic_error_count <= 0) return 0;
 
     snprintf(errbuf, sizeof(errbuf),
-             "semantic policy violations: %d (tab-leading lines: %d, flow-glue lines: %d, flow-comma lines: %d, flow-leading-comma lines: %d, flow-comma-comment lines: %d, inline-keys: %d)",
+             "semantic policy violations: %d (tab-leading lines: %d, flow-glue lines: %d, flow-comma lines: %d, flow-leading-comma lines: %d, flow-comma-comment lines: %d, multiline-qkey lines: %d, inline-keys: %d)",
              ctx->semantic_error_count,
              ctx->semantic_indent_tab_count,
              ctx->semantic_flow_glue_count,
              ctx->semantic_flow_comma_count,
              ctx->semantic_flow_leading_comma_count,
              ctx->semantic_flow_comment_comma_count,
+             ctx->semantic_multiline_qkey_count,
              ctx->semantic_inline_key_count);
     parser_report_error(scanner, errbuf);
     return 1;

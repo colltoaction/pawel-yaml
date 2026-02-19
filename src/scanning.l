@@ -64,6 +64,7 @@ LexerContext *lexer_context_new(void) {
     ctx->semantic_flow_comma_count = 0;
     ctx->semantic_flow_leading_comma_count = 0;
     ctx->semantic_flow_comment_comma_count = 0;
+    ctx->semantic_multiline_qkey_count = 0;
     ctx->semantic_inline_key_count = 0;
     
     return ctx;
@@ -129,6 +130,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->semantic_flow_comma_count = 0;
     ctx->semantic_flow_leading_comma_count = 0;
     ctx->semantic_flow_comment_comma_count = 0;
+    ctx->semantic_multiline_qkey_count = 0;
     ctx->semantic_inline_key_count = 0;
 }
 
@@ -891,6 +893,10 @@ PKEY_BODY [^:\n\r]*
 \"[^\"]*\"[ ]*: {
     // Extract quoted content
     size_t len = yyleng;
+    if (CTX->flow_level == 0 && (strchr(yytext, '\n') || strchr(yytext, '\r'))) {
+        CTX->semantic_error_count++;
+        CTX->semantic_multiline_qkey_count++;
+    }
     // Remove trailing ':'
     while (len > 0 && yytext[len - 1] == ':') len--;
     // Remove trailing spaces
