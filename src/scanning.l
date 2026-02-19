@@ -839,7 +839,22 @@ PKEY_BODY [^:\n\r]*
     CTX->flow_implicit_key_candidate = 0;
     return COLON;
 }
-":"/[ \t]*[,}]   { CTX->at_line_start = 0; CTX->flow_implicit_key_candidate = 0; if (CTX->flow_level > 0) { CTX->expecting_value = 1; return COLON_EMPTY; } CTX->expecting_value = 1; return COLON; }
+":"/[ \t]*[,}]   {
+    CTX->at_line_start = 0;
+    CTX->flow_implicit_key_candidate = 0;
+    if (CTX->flow_level > 0) {
+        CTX->expecting_value = 1;
+        return COLON_EMPTY;
+    }
+    if (CTX->expecting_value) {
+        yylval->string = strdup(":");
+        CTX->expecting_value = 0;
+        BEGIN(PLAIN_SCALAR_CONT);
+        return CH_RAW;
+    }
+    CTX->expecting_value = 1;
+    return COLON;
+}
 ":"/{VSPACE}     { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return COLON; }
 
 "?"[ ]+[^:\n\r]+[ ]*\n {
