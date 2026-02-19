@@ -152,19 +152,26 @@ static EventStream *current_event_stream = NULL;
 
 /* Error tracking for extensive recovery */
 static int parse_error_count = 0;
-#define RECOVER(msg) do { fprintf(stderr, "[PARSE] %s\n", (msg)); parse_error_count++; } while(0)
-#define RECOVER_SYNC(msg) do { fprintf(stderr, "[PARSE] %s\n", (msg)); parse_error_count++; yyerrok; } while(0)
+static void parser_report_error(void *scanner, const char *msg) {
+    parsing_yy_error(NULL, scanner, msg);
+}
 
-static int validate_lexical_semantics(const LexerContext *ctx) {
+#define RECOVER(msg) do { parser_report_error(scanner, (msg)); } while(0)
+#define RECOVER_SYNC(msg) do { parser_report_error(scanner, (msg)); yyerrok; } while(0)
+
+static int validate_lexical_semantics(const LexerContext *ctx, void *scanner) {
+    char errbuf[256];
+
     if (!ctx) return 0;
     if (ctx->semantic_error_count <= 0) return 0;
 
-    fprintf(stderr,
-            "[SEMANTIC] policy violations: %d (tab-leading lines: %d, flow-glue lines: %d, inline-keys: %d)\n",
-            ctx->semantic_error_count,
-            ctx->semantic_indent_tab_count,
-            ctx->semantic_flow_glue_count,
-            ctx->semantic_inline_key_count);
+    snprintf(errbuf, sizeof(errbuf),
+             "semantic policy violations: %d (tab-leading lines: %d, flow-glue lines: %d, inline-keys: %d)",
+             ctx->semantic_error_count,
+             ctx->semantic_indent_tab_count,
+             ctx->semantic_flow_glue_count,
+             ctx->semantic_inline_key_count);
+    parser_report_error(scanner, errbuf);
     return 1;
 }
 
@@ -907,7 +914,7 @@ int yaml_parse(void) {
     /* Scanner now manages stdin internally; just parse */
     int result = parsing_yy_parse(scanner);
 
-    if (result == 0 && validate_lexical_semantics(ctx) != 0) {
+    if (result == 0 && validate_lexical_semantics(ctx, scanner) != 0) {
         result = 1;
     }
     
