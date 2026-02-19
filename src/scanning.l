@@ -63,6 +63,7 @@ LexerContext *lexer_context_new(void) {
     ctx->semantic_flow_glue_count = 0;
     ctx->semantic_flow_comma_count = 0;
     ctx->semantic_flow_leading_comma_count = 0;
+    ctx->semantic_flow_comment_comma_count = 0;
     ctx->semantic_inline_key_count = 0;
     
     return ctx;
@@ -127,6 +128,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->semantic_flow_glue_count = 0;
     ctx->semantic_flow_comma_count = 0;
     ctx->semantic_flow_leading_comma_count = 0;
+    ctx->semantic_flow_comment_comma_count = 0;
     ctx->semantic_inline_key_count = 0;
 }
 
@@ -865,6 +867,15 @@ PKEY_BODY [^:\n\r]*
     } else {
          return ':'; 
     }
+}
+","/"#" {
+    if (CTX->flow_level > 0) {
+        CTX->semantic_error_count++;
+        CTX->semantic_flow_comment_comma_count++;
+    }
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 1;
+    return COMMA;
 }
 ","/[ \t]*"," {
     if (CTX->flow_level > 0) {
