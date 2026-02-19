@@ -1,9 +1,9 @@
 meta:
-  generated_at: '2026-02-19T19:58:04Z'
+  generated_at: '2026-02-19T20:01:12Z'
   suite_dir: build/lib/yaml-test-suite/src
   total_tests: 351
-  total_failures: 60
-  total_passes: 291
+  total_failures: 59
+  total_passes: 292
 failing_tests:
   - 5LLU
   - 5WE3
@@ -34,7 +34,6 @@ failing_tests:
   - G9HC
   - GDY7
   - H7J7
-  - HRE5
   - JTV5
   - KK5P
   - M5C3
