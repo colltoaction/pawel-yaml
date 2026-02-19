@@ -874,12 +874,13 @@ flow_map_entry:
 
 void stream_yy_error(void *yylloc, void *scanner, const char *s) {
     if (s) {
-        fprintf(stderr, "Stream Parse Error: %s\n", s);
+        parsing_yy_error(yylloc, scanner, s);
     }
 }
 
 /* Bison parser entry point */
 extern int composition_yy_parse(void);
+extern void composition_yy_error(const char *msg);
 
 /* Flex lexer functions - "Just the Scanner" pattern */
 /* The reentrant scanner manages its own input/output state */
@@ -897,13 +898,13 @@ int yaml_parse(void) {
     yyscan_t scanner;
     LexerContext *ctx = lexer_context_new();
     if (!ctx) {
-        fprintf(stderr, "Failed to create lexer context\n");
+        parsing_yy_error(NULL, NULL, "Failed to create lexer context");
         return 1;
     }
     
     /* Initialize reentrant scanner with lexer context as user-defined data */
     if (scanning_lex_init_extra(ctx, &scanner) != 0) {
-        fprintf(stderr, "Failed to initialize lexer\n");
+        parsing_yy_error(NULL, NULL, "Failed to initialize lexer");
         lexer_context_free(ctx);
         return 1;
     }
@@ -945,17 +946,17 @@ extern void composition__delete_buffer(void *);
  */
 int yaml_compose(void) {
     if (!rml_ir_buf) {
-        fprintf(stderr, "No IR buffer to compose\n");
+        composition_yy_error("No IR buffer to compose");
         return 1;
     }
     if (getenv("DEBUG_IR")) {
-        fprintf(stderr, "[DEBUG_IR]\n%s", rml_ir_buf);
+        printf("[DEBUG_IR]\n%s", rml_ir_buf);
     }
     
     /* Create scanner for IR buffer (memory-based, not stdin) */
     void *buf = composition__scan_string(rml_ir_buf);
     if (!buf) {
-        fprintf(stderr, "Failed to create composition scanner for IR buffer\n");
+        composition_yy_error("Failed to create composition scanner for IR buffer");
         return 1;
     }
     

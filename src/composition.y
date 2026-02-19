@@ -252,7 +252,7 @@ map_pairs : %empty
 %%
 
 void event_error(const char *msg) {
-    fprintf(stderr, "Event Parse Error: %s\n", msg);
+    composition_yy_error(msg ? msg : "Event Parse Error");
 }
 
 /* Global state for string parsing */
