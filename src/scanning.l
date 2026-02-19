@@ -698,7 +698,15 @@ PKEY_BODY [^:\n\r]*
     BEGIN(DIRECTIVE_MODE);
     return TAG_DIRECTIVE;
 }
-"%YAML"[ ]?"1"[.,][0-9]  {
+"%YAML"[ ]?"1"[.,][0-9][ \t]+[^#\n][^\n]* {
+    yyerror(yylloc, yyscanner, "syntax error, extra content on %YAML directive");
+    CTX->semantic_error_count++;
+    if (!CTX->open_document_started) {
+        CTX->semantic_directive_mid_doc_count++;
+    }
+    return YAML_DIRECTIVE;
+}
+"%YAML"[ ]?"1"[.,][0-9][ \t]*(#[^\n]*)?  {
     if (!CTX->open_document_started) {
         yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
         CTX->semantic_error_count++;
