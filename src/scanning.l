@@ -706,7 +706,14 @@ PKEY_BODY [^:\n\r]*
     }
     return YAML_DIRECTIVE;
 }
-"%"[a-zA-Z][^\n]* { /* Unknown directive - skip */ }
+"%"[a-zA-Z][^\n]* {
+    if (!CTX->open_document_started) {
+        yyerror(yylloc, yyscanner, "syntax error, missing document-end marker before directive");
+        CTX->semantic_error_count++;
+        CTX->semantic_directive_mid_doc_count++;
+    }
+    /* Unknown directive - skip */
+}
 "---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 0; return DOC_START; }
 "..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; return DOC_END; }
 
