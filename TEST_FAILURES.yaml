@@ -1,9 +1,9 @@
 meta:
-  generated_at: '2026-02-20T20:21:15Z'
+  generated_at: '2026-02-20T22:30:47Z'
   suite_dir: build/lib/yaml-test-suite/src
   total_tests: 351
-  total_passes: 296
-  total_failures: 55
+  total_passes: 299
+  total_failures: 52
   scoring: fail-true-aware
 failing:
 - 5WE3
@@ -24,24 +24,20 @@ failing:
 - D83L
 - DC7X
 - DFF7
-- DK3J
 - F6MC
 - FBC9
 - FH7J
-- FP8R
 - FRK4
 - G9HC
 - GDY7
 - H7J7
 - J3BT
-- JTV5
 - KK5P
 - M5C3
 - M5DY
 - M7A3
 - NKF9
 - PW8X
-- Q9WF
 - QB6E
 - QLJ7
 - RZP5
@@ -59,5 +55,6 @@ failing:
 - X38W
 - XLQ9
 - XW4D
+- Y79Y
 - ZF4X
 - ZK9H

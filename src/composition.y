@@ -213,6 +213,7 @@ scalar : "=VAL" style_val content { push_event(event_scalar_new($2, $3)); free($
        ;
 
 style_val : E_STYLE ':' { $$ = $1; }
+          | E_STYLE     { $$ = $1; }
           | ':'           { $$ = ':'; }
           ;
 

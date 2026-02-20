@@ -860,68 +860,7 @@ PKEY_BODY [^:\n\r]*
 }
 ":"/{VSPACE}     { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return COLON; }
 
-"?"[ ]+[^:\n\r]+[ ]*\n {
-    /* If next logical line starts with ':', this is a complex key, not shorthand. */
-    int look_buf[1024];
-    int look_n = 0;
-    int c = input(yyscanner);
-    
-    /* Skip whitespace, blank lines, and comments to find next real content */
-    while (look_n < 1023) {
-        if (c == ' ' || c == '\t') {
-            look_buf[look_n++] = c;
-            c = input(yyscanner);
-        } else if (c == '\n') {
-            /* Blank line - skip it */
-            look_buf[look_n++] = c;
-            c = input(yyscanner);
-        } else if (c == '#') {
-            /* Comment - skip to end of line */
-            look_buf[look_n++] = c;
-            while ((c = input(yyscanner)) != '\n' && c != EOF && c != 0 && look_n < 1023) {
-                look_buf[look_n++] = c;
-            }
-            if (c == '\n' && look_n < 1023) {
-                look_buf[look_n++] = c;
-                c = input(yyscanner);
-            }
-        } else {
-            break;
-        }
-    }
-    
-    /* Save the final character we looked at */
-    if (c != EOF && c != 0 && look_n < 1023) {
-        look_buf[look_n++] = c;
-    }
-    
-    /* Put everything back */
-    for (int i = look_n - 1; i >= 0; i--) {
-        unput(look_buf[i]);
-    }
-    
-    if (c == ':') {
-        yyless(1);
-        CTX->at_line_start = 0;
-        CTX->complex_key_pending = 1;
-        CTX->expecting_value = 1;
-        return QUESTION;
-    }
 
-    char *raw = strdup(yytext + 1);
-    char *p = raw;
-    while (*p == ' ' || *p == '\t') p++;
-    yylval->string = strdup(p);
-    free(raw);
-    char *end = yylval->string + strlen(yylval->string);
-    while (end > yylval->string && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ' || end[-1] == '\t')) end--;
-    *end = '\0';
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    CTX->pending_colon = 1;
-    if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
-    return MAP_KEY;
-}
 
 "?"/[ \t\n]      { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
 "?"/{VSPACE}     { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
@@ -1348,24 +1287,22 @@ PKEY_BODY [^:\n\r]*
     return SSCALAR;
 }
 "|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      {
-    yylval->string = strdup(yytext);
     CTX->expecting_value = 0;
     CTX->last_was_value = 0;
+    CTX->block_scalar.type = '|';
     CTX->block_scalar.indent = -1;
     CTX->block_scalar.leading_empty_max_indent = 0;
     CTX->block_scalar.first_content_seen = 0;
     BEGIN(BLOCK_SCALAR);
-    return BPART;
 }
 ">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      {
-    yylval->string = strdup(yytext);
     CTX->expecting_value = 0;
     CTX->last_was_value = 0;
+    CTX->block_scalar.type = '>';
     CTX->block_scalar.indent = -1;
     CTX->block_scalar.leading_empty_max_indent = 0;
     CTX->block_scalar.first_content_seen = 0;
     BEGIN(BLOCK_SCALAR);
-    return BPART;
 }
 
 <BLOCK_SCALAR>^([ \t]|{VSPACE})*\n {

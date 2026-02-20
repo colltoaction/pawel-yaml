@@ -70,11 +70,13 @@
 
 "|" {
     yylval.cval = '|';
+    BEGIN(SCALAR_VAL);
     return E_STYLE;
 }
 
 ">" {
     yylval.cval = '>';
+    BEGIN(SCALAR_VAL);
     return E_STYLE;
 }
 
