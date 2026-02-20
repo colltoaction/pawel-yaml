@@ -1,135 +1,63 @@
-  - 36F6
-  - 4CQQ
-  - 4EJS
-  - 4HVU
-  - 4ZYM
-  - 55WF
-  - 565N
-  - 5MUD
-  - 5T43
-  - 5TRB
-  - 5TYM
-  - 5U3A
-  - 5WE3
-  - 62EZ
-  - 6BFJ
-  - 6M2F
-  - 6PBE
-  - 6WLZ
-  - 6XDY
-  - 6ZKB
-  - 7FWL
-  - 7LBH
-  - 7ZZ5
-  - 8G76
-  - 8KB6
-  - 8UDB
-  - 93JH
-  - 98YD
-  - 9BXH
-  - 9C9N
-  - 9DXL
-  - 9JBA
-  - 9KAX
-  - 9KBC
-  - 9MQT
-  - 9WXW
-  - A2M4
-  - A6F9
-  - A984
-  - AVM7
-  - BD7L
-  - BS4K
-  - C2SP
-  - C4HZ
-  - CC74
-  - CN3R
-  - CQ3W
-  - CT4Q
-  - CTN5
-  - CVW2
-  - CXX2
-  - D49Q
-  - DC7X
-  - DFF7
-  - DK4H
-  - DK95
-  - DMG6
-  - EB22
-  - EW3V
-  - EXG3
-  - F6MC
-  - F8F9
-  - FBC9
-  - FH7J
-  - FRK4
-  - G4RS
-  - G9HC
-  - GH63
-  - GT5M
-  - H2RW
-  - H3Z8
-  - H7J7
-  - HMK4
-  - HRE5
-  - HU3P
-  - HWV9
-  - J3BT
-  - JKF3
-  - JTV5
-  - K3WX
-  - K858
-  - KK5P
-  - KS4U
-  - L94M
-  - LE5A
-  - M29M
-  - M5DY
-  - N4JP
-  - NAT4
-  - NB6Z
-  - NHX8
-  - NJ66
-  - NKF9
-  - P2EQ
-  - P76L
-  - PUW8
-  - PW8X
-  - Q5MG
-  - QB6E
-  - QT73
-  - RR7F
-  - RXY3
-  - RZP5
-  - RZT7
-  - S98Z
-  - S9E8
-  - SM9W
-  - SR86
-  - SU5Z
-  - SY6V
-  - TD5N
-  - U3C3
-  - U3XV
-  - U44R
-  - U9NS
-  - UGM3
-  - UKK6
-  - UT92
-  - UV7Q
-  - V9D5
-  - VJP3
-  - W4TN
-  - W5VH
-  - WZ62
-  - X38W
-  - X4QW
-  - XLQ9
-  - XW4D
-  - Y79Y
-  - YJV2
-  - Z9M4
-  - ZCZ6
-  - ZF4X
-  - ZL4Z
-  - ZYU8
+meta:
+  generated_at: '2026-02-20T20:21:15Z'
+  suite_dir: build/lib/yaml-test-suite/src
+  total_tests: 351
+  total_passes: 296
+  total_failures: 55
+  scoring: fail-true-aware
+failing:
+- 5WE3
+- 6BFJ
+- 6KGN
+- 6S55
+- 735Y
+- 7BMT
+- 7ZZ5
+- 9KAX
+- A2M4
+- AB8U
+- BF9H
+- BS4K
+- BU8L
+- CFD4
+- CT4Q
+- D83L
+- DC7X
+- DFF7
+- DK3J
+- F6MC
+- FBC9
+- FH7J
+- FP8R
+- FRK4
+- G9HC
+- GDY7
+- H7J7
+- J3BT
+- JTV5
+- KK5P
+- M5C3
+- M5DY
+- M7A3
+- NKF9
+- PW8X
+- Q9WF
+- QB6E
+- QLJ7
+- RZP5
+- S3PD
+- SKE5
+- SM9W
+- TD5N
+- U3XV
+- UGM3
+- UKK6
+- UT92
+- V9D5
+- W42U
+- W4TN
+- X38W
+- XLQ9
+- XW4D
+- ZF4X
+- ZK9H
