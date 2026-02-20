@@ -768,6 +768,7 @@ PKEY_BODY [^:\n\r]*
     return DOC_START;
 }
 "---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 0; CTX->yaml_directive_seen = 0; return DOC_START; }
+"..."[ \t]*[^ \t\n\r#] { yyerror(yylloc, yyscanner, "content after document-end marker"); CTX->semantic_error_count++; CTX->semantic_doc_end_inline_count++; yyless(3); CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
 "..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
 
 <DIRECTIVE_MODE>{

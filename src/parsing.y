@@ -48,6 +48,7 @@ typedef struct {
     int semantic_flow_key_newline_count;
     int semantic_multiline_qkey_count;
     int semantic_inline_key_count;
+    int semantic_doc_end_inline_count;
     int flow_implicit_key_candidate;
     int flow_delim_stack[100];
     int flow_indent_ref_stack[100];
@@ -122,8 +123,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 65
-%expect-rr 94
+%expect 73
+%expect-rr 96
 
 %{
 #include <stdlib.h>
@@ -183,7 +184,7 @@ static int validate_lexical_semantics(const LexerContext *ctx, void *scanner) {
     if (ctx->semantic_error_count <= 0) return 0;
 
     snprintf(errbuf, sizeof(errbuf),
-             "semantic policy violations: %d (tab-leading lines: %d, indent-mismatch lines: %d, directive-mid-doc lines: %d, flow-glue lines: %d, flow-comma lines: %d, flow-leading-comma lines: %d, flow-comma-comment lines: %d, flow-key-newline lines: %d, flow-indent lines: %d, multiline-qkey lines: %d, inline-keys: %d)",
+             "semantic policy violations: %d (tab-leading lines: %d, indent-mismatch lines: %d, directive-mid-doc lines: %d, flow-glue lines: %d, flow-comma lines: %d, flow-leading-comma lines: %d, flow-comma-comment lines: %d, flow-key-newline lines: %d, flow-indent lines: %d, multiline-qkey lines: %d, inline-keys: %d, doc-end-inline lines: %d)",
              ctx->semantic_error_count,
              ctx->semantic_indent_tab_count,
              ctx->semantic_indent_mismatch_count,
@@ -195,7 +196,8 @@ static int validate_lexical_semantics(const LexerContext *ctx, void *scanner) {
              ctx->semantic_flow_key_newline_count,
              ctx->semantic_flow_indent_count,
              ctx->semantic_multiline_qkey_count,
-             ctx->semantic_inline_key_count);
+             ctx->semantic_inline_key_count,
+             ctx->semantic_doc_end_inline_count);
     parser_report_error(scanner, errbuf);
     return 1;
 }
@@ -684,9 +686,19 @@ documents:
     | implicit_document DOC_END
     | implicit_document DOC_END explicit_documents
     | explicit_documents
+    | explicit_documents bare_doc_after_explicit
     | implicit_document explicit_documents
     | DOC_END
     | DOC_END explicit_documents
+    ;
+
+bare_doc_after_explicit:
+    DOC_END { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    node
+    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | DOC_END { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    INDENT node DEDENT
+    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     ;
 
 directives:
