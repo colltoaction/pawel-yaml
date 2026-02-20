@@ -1,5 +1,7 @@
 %code requires {
-/* === TYPE DEFINITIONS (from common.h & event_parser.h) === */
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 
 /**
  * Node properties structure for anchor/tag pairs
@@ -11,7 +13,6 @@ typedef struct {
 
 /**
  * Stable Event Types (Alphabet for all stages)
- * Matches values expected in event stream (300+)
  */
 typedef enum {
     EVENT_STREAM_START = 300,
@@ -57,18 +58,20 @@ typedef struct {
     int error_line;
     char *intermediate_representation;
 } ValidationResult;
+
+/* Stage 3 API */
+EventStream* event_parse_string(const char *input);
+void event_stream_free(EventStream *stream);
+ValidationResult* rml_parse_event_stream(const EventStream *stream);
 }
 
-%define api.prefix {composition_yy_}
+%define api.prefix {event_yy_}
 
 %{
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include "composition.tab.h"  /* Include for type definitions */
-
-/* Forward declaration for cleanup function */
-void event_stream_free(EventStream *stream);
+#include "event.tab.h"
 
 /* Intermediate EventStream being built */
 static EventStream *current_stream = NULL;
@@ -137,16 +140,14 @@ static YAMLEvent* event_alias_new(const char *name) {
     return e;
 }
 
+void event_yy_error(const char *msg);
 %}
 
-
-
 %union {
-    char *sval;   /* String values */
-    char cval;    /* Character values */
+    char *sval;
+    char cval;
 }
 
-/* Tokens match values in common.h for consistency */
 %token E_STR_START   300 "+STR"
 %token E_STR_END     301 "-STR"
 %token E_DOC_START   302 "+DOC"
@@ -158,10 +159,11 @@ static YAMLEvent* event_alias_new(const char *name) {
 %token E_SCALAR      308 "=VAL"
 %token E_ALIAS       309 "=ALI"
 
-%token <sval> E_ANCHOR                     /* &anchor */
-%token <sval> E_TAG                        /* <tag> */
-%token <sval> E_QUOTED_STRING E_IDENTIFIER /* "value", plain_value */
-%token <cval> E_STYLE                      /* : " ' | > */
+%token <sval> E_ANCHOR
+%token <sval> E_TAG
+%token E_DOC_EXPLICIT "---"
+%token <sval> E_QUOTED_STRING E_IDENTIFIER
+%token <cval> E_STYLE
 
 %type <sval> content
 %type <cval> style_val
@@ -170,15 +172,13 @@ static YAMLEvent* event_alias_new(const char *name) {
 %locations
 
 %{
-int composition_lex(void);
-void composition_yy_error(const char *msg);
-#define yylex composition_lex
-#define yyerror composition_yy_error
+int event_lex(void);
+#define yylex event_lex
+#define yyerror event_yy_error
 %}
 
 %%
 
-/* TOP-LEVEL: Unified RML structure validation */
 stream : "+STR" { push_event(event_create(EVENT_STREAM_START)); }
          docs 
          "-STR" { push_event(event_create(EVENT_STREAM_END)); }
@@ -252,22 +252,9 @@ map_pairs : %empty
 
 %%
 
-void event_error(const char *msg) {
-    composition_yy_error(msg ? msg : "Event Parse Error");
-}
+extern void *event__scan_string(const char *);
+extern void event__delete_buffer(void *);
 
-/* Global state for string parsing */
-extern void *composition__scan_string(const char *);
-extern void composition__delete_buffer(void *);
-
-int yaml_event_parser_init(void) {
-    return 0;
-}
-
-void yaml_event_parser_cleanup(void) {
-}
-
-/* Stage 3 API: Uses Bison to parse and build EventStream */
 EventStream* event_parse_string(const char *input) {
     if (!input) return NULL;
     
@@ -277,9 +264,9 @@ EventStream* event_parse_string(const char *input) {
     current_stream->capacity = 10;
     current_stream->events = (YAMLEvent **)malloc(current_stream->capacity * sizeof(YAMLEvent *));
 
-    void *buf = composition__scan_string(input);
-    int res = composition_yy_parse();
-    composition__delete_buffer(buf);
+    void *buf = event__scan_string(input);
+    int res = event_yy_parse();
+    event__delete_buffer(buf);
 
     if (res != 0) {
         event_stream_free(current_stream);
@@ -345,14 +332,6 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream) {
     return result;
 }
 
-void validation_result_free(ValidationResult *result) {
-    if (!result) return;
-    free(result->error_message);
-    free(result->intermediate_representation);
-    free(result);
-}
-
-/* Error handler for composition stage */
-void composition_yy_error(const char *msg) {
-    fprintf(stderr, "[COMPOSITION] Error: %s\n", msg ? msg : "syntax error");
+void event_yy_error(const char *msg) {
+    fprintf(stderr, "[EVENT] Error: %s\n", msg ? msg : "syntax error");
 }

@@ -1,11 +1,11 @@
 %{
 #include <string.h>
-#include "composition.tab.h"
-#define yylval composition_yy_lval
+#include "event.tab.h"
+#define yylval event_yy_lval
 %}
 
 %option noyywrap yylineno
-%option prefix="composition_"
+%option prefix="event_"
 
 %x SCALAR_VAL
 
@@ -19,6 +19,7 @@
 "-SEQ"          return E_SEQ_END;
 "+MAP"          return E_MAP_START;
 "-MAP"          return E_MAP_END;
+"---"           return E_DOC_EXPLICIT;
 
 "=VAL"          return E_SCALAR;
 "=ALI"          return E_ALIAS;
