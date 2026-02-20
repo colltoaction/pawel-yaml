@@ -25,6 +25,8 @@ LexerContext *lexer_context_new(void) {
     LexerContext *ctx = (LexerContext*)malloc(sizeof(LexerContext));
     if (!ctx) return NULL;
     
+    ctx->arena_current = NULL;
+    
     /* Initialize indentation tracking */
     ctx->indent_stack[0] = 0;
     ctx->indent_sp = 0;
@@ -92,6 +94,37 @@ static LexerContext *lexer_context_new_with_args(int argc, char **argv) {
     return ctx;
 }
 
+#define ARENA_CHUNK_SIZE 16384
+
+void* arena_alloc(LexerContext *ctx, size_t size) {
+    if (!ctx) return NULL;
+    /* Align size to 8 bytes */
+    size = (size + 7) & ~7;
+    
+    if (!ctx->arena_current || ctx->arena_current->size + size > ctx->arena_current->capacity) {
+        size_t cap = ARENA_CHUNK_SIZE > size ? ARENA_CHUNK_SIZE : size;
+        struct ArenaChunk *chunk = malloc(sizeof(struct ArenaChunk));
+        chunk->data = malloc(cap);
+        chunk->size = 0;
+        chunk->capacity = cap;
+        chunk->next = ctx->arena_current;
+        ctx->arena_current = chunk;
+    }
+    
+    void *ptr = ctx->arena_current->data + ctx->arena_current->size;
+    ctx->arena_current->size += size;
+    return ptr;
+}
+
+char* arena_strdup(LexerContext *ctx, const char *s) {
+    if (!s) return NULL;
+    size_t len = strlen(s) + 1;
+    char *dup = arena_alloc(ctx, len);
+    if (!dup) return NULL;
+    memcpy(dup, s, len);
+    return dup;
+}
+
 /**
  * Free lexer context and all associated resources
  */
@@ -99,6 +132,13 @@ void lexer_context_free(LexerContext *ctx) {
     if (ctx) {
         if (ctx->scalar.content) {
             free(ctx->scalar.content);
+        }
+        struct ArenaChunk *curr = ctx->arena_current;
+        while (curr) {
+            struct ArenaChunk *next = curr->next;
+            free(curr->data);
+            free(curr);
+            curr = next;
         }
         free(ctx);
     }
@@ -355,17 +395,17 @@ static char *trim_trailing_spaces(char *str) {
  * Output: "key_text" with trailing spaces trimmed
  * Caller must free the returned string
  */
-static char *extract_key_after_prefix(const char *text) {
-    if (!text) return strdup("");
+static char *extract_key_after_prefix(LexerContext *ctx, const char *text) {
+    if (!text) return arena_strdup(ctx, "");
     
     /* Find first space after prefix */
     const char *space = strchr(text, ' ');
-    if (!space) return strdup(text);
+    if (!space) return arena_strdup(ctx, text);
     
     /* Skip spaces to get to key text */
     while (*space == ' ') space++;
     
-    char *key = strdup(space);
+    char *key = arena_strdup(ctx, space);
     trim_trailing_spaces(key);
     
     /* Also trim trailing colon if present (from lookahead) */
@@ -409,6 +449,10 @@ static int flow_close_follow_char_ok(int c) {
 %option bison-locations
 %option prefix="scanning_"
 %option extra-type="LexerContext *"
+
+%{
+
+%}
 
 %x BLOCK_SCALAR
 %x BLOCK_CONTENT
@@ -775,10 +819,10 @@ PKEY_BODY [^:\n\r]*
     [ \t]+          { /* skip space */ }
     \n              { BEGIN(INITIAL); }
     "!!!"{NSCAL}*   { yyerror(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
-    "!"{NSCAL}+"!"  { yylval->string = strdup(yytext); return TAG; }
-    "!!"{NSCAL}+    { yylval->string = strdup(yytext); return TAG; }
-    "!"{NSCAL}+     { yylval->string = strdup(yytext); return TAG; }
-    [^ \t\n]+       { yylval->string = strdup(yytext); return SCALAR; }
+    "!"{NSCAL}+"!"  { yylval->string = arena_strdup(CTX, yytext); return TAG; }
+    "!!"{NSCAL}+    { yylval->string = arena_strdup(CTX, yytext); return TAG; }
+    "!"{NSCAL}+     { yylval->string = arena_strdup(CTX, yytext); return TAG; }
+    [^ \t\n]+       { yylval->string = arena_strdup(CTX, yytext); return SCALAR; }
 }
 "-"[ \t]*"#"[^\n]*\n {
     CTX->at_line_start = 0;
@@ -801,7 +845,7 @@ PKEY_BODY [^:\n\r]*
         CTX->semantic_error_count++;
     }
     yyless(1);
-    yylval->string = strdup("-");
+    yylval->string = arena_strdup(CTX, "-");
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
@@ -814,7 +858,7 @@ PKEY_BODY [^:\n\r]*
         CTX->semantic_error_count++;
     }
     yyless(1);
-    yylval->string = strdup("-");
+    yylval->string = arena_strdup(CTX, "-");
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
@@ -831,7 +875,7 @@ PKEY_BODY [^:\n\r]*
     }
     if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value) {
         /* Missing block mapping key, e.g. ": value" */
-        yylval->string = strdup("");
+        yylval->string = arena_strdup(CTX, "");
         CTX->at_line_start = 0;
         CTX->expecting_value = 0;
         yyless(0); /* Rescan ':' as the actual separator token */
@@ -850,7 +894,7 @@ PKEY_BODY [^:\n\r]*
         return COLON_EMPTY;
     }
     if (CTX->expecting_value) {
-        yylval->string = strdup(":");
+        yylval->string = arena_strdup(CTX, ":");
         CTX->expecting_value = 0;
         BEGIN(PLAIN_SCALAR_CONT);
         return CH_RAW;
@@ -867,15 +911,15 @@ PKEY_BODY [^:\n\r]*
 "!!!"{NSCAL}*    { yyerror(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
 {TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Tagged map key: !!str key: value (tag prefix is discarded, only key text returned) */
-    yylval->string = extract_key_after_prefix(yytext);
+    yylval->string = extract_key_after_prefix(CTX, yytext);
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
-"!"              { CTX->at_line_start = 0; yylval->string = strdup("!"); return TAG; }
-"!!"{NSCAL}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
-"!"{NSCAL}+"!"{NSCAL}* { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
-"!"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
+"!"              { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, "!"); return TAG; }
+"!!"{NSCAL}+     { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); return TAG; }
+"!"{NSCAL}+"!"{NSCAL}* { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); return TAG; }
+"!"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); return TAG; }
 "&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Anchored map key: &anchor key: value (returns tab-delimited "&anchor\tkey") */
     CTX->at_line_start = 0;
@@ -914,11 +958,11 @@ PKEY_BODY [^:\n\r]*
     CTX->at_line_start = 0;
     return ANCHOR;
 }
-"&"{ANCHOR_CHAR}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return ANCHOR; }
+"&"{ANCHOR_CHAR}+     { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); return ANCHOR; }
 "*"{ALIAS_CHAR}+[ ]+/":"([ \t\n]|{VSPACE}) {
     /* Alias map key with explicit separating whitespace before ':' */
     CTX->at_line_start = 0;
-    yylval->string = strdup(yytext + 1);
+    yylval->string = arena_strdup(CTX, yytext + 1);
     trim_trailing_spaces(yylval->string);
     CTX->expecting_value = 0;
     return MAP_KEY;
@@ -928,7 +972,7 @@ PKEY_BODY [^:\n\r]*
 
     if (CTX->expecting_value) {
         /* Value-position alias ending with ':' keeps the ':' in the alias name. */
-        yylval->string = strdup(yytext);
+        yylval->string = arena_strdup(CTX, yytext);
         CTX->expecting_value = 0;
         if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
         return ALIAS;
@@ -936,11 +980,11 @@ PKEY_BODY [^:\n\r]*
 
     /* Key-position alias: split before ':' and let parser consume ':' token. */
     yyless(yyleng - 1);
-    yylval->string = strdup(yytext + 1);
+    yylval->string = arena_strdup(CTX, yytext + 1);
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
-"*"{ALIAS_CHAR}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1; return ALIAS; }
+"*"{ALIAS_CHAR}+      { CTX->at_line_start = 0; yylval->string = arena_strdup(CTX, yytext); CTX->expecting_value = 0; if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1; return ALIAS; }
 "["              {
     int require_flow_indent = (CTX->flow_delim_sp == 0 && !CTX->at_line_start);
     int flow_ref_indent = CTX->indent_stack[CTX->indent_sp];
@@ -1088,13 +1132,13 @@ PKEY_BODY [^:\n\r]*
 }
 ":"              { 
     if (CTX->expecting_value && CTX->flow_level > 0) {
-         yylval->string = strdup(":");
+         yylval->string = arena_strdup(CTX, ":");
          CTX->expecting_value = 0;
          CTX->flow_implicit_key_candidate = 0;
          BEGIN(PLAIN_SCALAR_CONT);
          return CH_RAW;
     } else if (CTX->expecting_value && CTX->flow_level == 0) {
-         yylval->string = strdup(":");
+         yylval->string = arena_strdup(CTX, ":");
          CTX->flow_implicit_key_candidate = 0;
          BEGIN(PLAIN_SCALAR_CONT);
          return CH_RAW;
@@ -1141,7 +1185,7 @@ PKEY_BODY [^:\n\r]*
     while (len > 0 && yytext[len - 1] == ' ') len--;
     // Remove closing quote for content extraction
     if (len > 1 && yytext[len - 1] == '"') yytext[len - 1] = '\0';
-    yylval->string = strdup(yytext + 1);  // Skip opening quote
+    yylval->string = arena_strdup(CTX, yytext + 1);  // Skip opening quote
     
     if (CTX->flow_level > 0) {
         // Flow context: return as QSCALAR, put back colon and spaces
@@ -1171,7 +1215,7 @@ PKEY_BODY [^:\n\r]*
     while (len > 0 && yytext[len - 1] == ' ') len--;
     // Remove closing quote for content extraction
     if (len > 1 && yytext[len - 1] == '\'') yytext[len - 1] = '\0';
-    yylval->string = strdup(yytext + 1);  // Skip opening quote
+    yylval->string = arena_strdup(CTX, yytext + 1);  // Skip opening quote
     
     if (CTX->flow_level > 0) {
         // Flow context: return as SSCALAR, put back colon and spaces
@@ -1201,35 +1245,35 @@ PKEY_BODY [^:\n\r]*
         return QSCALAR; 
     }
     
-    \\n { yylval->string = strdup("\\n"); return CH_ESC_N; }
-    \\t { yylval->string = strdup("\\t"); return CH_ESC_T; }
-    \\r { yylval->string = strdup("\\r"); return CH_ESC_R; }
-    \\\\ { yylval->string = strdup("\\\\"); return CH_ESC_BS; }
-    \\\" { yylval->string = strdup("\\\""); return CH_ESC_QU; }
+    \\n { yylval->string = arena_strdup(CTX, "\\n"); return CH_ESC_N; }
+    \\t { yylval->string = arena_strdup(CTX, "\\t"); return CH_ESC_T; }
+    \\r { yylval->string = arena_strdup(CTX, "\\r"); return CH_ESC_R; }
+    \\\\ { yylval->string = arena_strdup(CTX, "\\\\"); return CH_ESC_BS; }
+    \\\" { yylval->string = arena_strdup(CTX, "\\\""); return CH_ESC_QU; }
     \\\' {
         yyerror(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
         BEGIN(INITIAL);
         return 0;
     }
-    \\\/ { yylval->string = strdup("\\/"); return CH_ESC_SL; }
+    \\\/ { yylval->string = arena_strdup(CTX, "\\/"); return CH_ESC_SL; }
     \\. {
         if (yytext[1] == '.') {
             yyerror(yylloc, yyscanner, "syntax error, invalid escape in quoted string");
             BEGIN(INITIAL);
             return 0;
         }
-        yylval->string = strdup(yytext);
+        yylval->string = arena_strdup(CTX, yytext);
         return CH_RAW;
     }
-    \\0 { yylval->string = strdup("\\0"); return CH_ESC_0; }
+    \\0 { yylval->string = arena_strdup(CTX, "\\0"); return CH_ESC_0; }
     
-    [^\\\"\n]+ { yylval->string = strdup(yytext); return CH_RAW; }
+    [^\\\"\n]+ { yylval->string = arena_strdup(CTX, yytext); return CH_RAW; }
     \n("---"|"...")([ \t]|#|\r?\n) {
         yyerror(yylloc, yyscanner, "syntax error, document marker inside quoted string");
         BEGIN(INITIAL);
         return 0;
     }
-    \n { yylval->string = strdup("\n"); return CH_RAW; }
+    \n { yylval->string = arena_strdup(CTX, "\n"); return CH_RAW; }
     
     <<EOF>> {
         yyerror(yylloc, yyscanner, "syntax error, unterminated quoted string");
@@ -1329,7 +1373,7 @@ PKEY_BODY [^:\n\r]*
         indent > CTX->block_scalar.leading_empty_max_indent) {
         CTX->block_scalar.leading_empty_max_indent = indent;
     }
-    yylval->string = strdup("\n");
+    yylval->string = arena_strdup(CTX, "\n");
     return BPART;
 }
 
@@ -1401,9 +1445,9 @@ PKEY_BODY [^:\n\r]*
                 out_buf[out_len++] = line_buf[k];
             }
             out_buf[out_len] = '\0';
-            yylval->string = strdup(out_buf);
+            yylval->string = arena_strdup(CTX, out_buf);
         } else {
-            yylval->string = strdup(line_buf);
+            yylval->string = arena_strdup(CTX, line_buf);
         }
         return BPART;
     } else {
@@ -1449,7 +1493,7 @@ PKEY_BODY [^:\n\r]*
             CTX->flow_implicit_key_candidate = 0;
             return COLON;
         }
-        yylval->string = strdup(yytext);
+        yylval->string = arena_strdup(CTX, yytext);
         CTX->expecting_value = 0;
         CTX->flow_implicit_key_candidate = 1;
         BEGIN(PLAIN_SCALAR_CONT);
@@ -1463,7 +1507,7 @@ PKEY_BODY [^:\n\r]*
         CTX->expecting_value = 1;
         return BULLET;
     }
-    yylval->string = strdup(yytext);
+    yylval->string = arena_strdup(CTX, yytext);
     trim_trailing_spaces(yylval->string);  /* Remove trailing spaces from key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
@@ -1472,7 +1516,7 @@ PKEY_BODY [^:\n\r]*
 }
 
 [^ \t\n\r\[\]{}!,&*%@|>\`'"] {
-    yylval->string = strdup(yytext);
+    yylval->string = arena_strdup(CTX, yytext);
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
@@ -1487,7 +1531,7 @@ PKEY_BODY [^:\n\r]*
         CTX->flow_implicit_key_candidate = 0;
         return COLON;
     }
-    yylval->string = strdup(yytext);
+    yylval->string = arena_strdup(CTX, yytext);
     CTX->expecting_value = 0;
     if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
     BEGIN(PLAIN_SCALAR_CONT);
@@ -1544,9 +1588,9 @@ PKEY_BODY [^:\n\r]*
     BEGIN(INITIAL);
 }
 
-<PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = strdup(yytext); return CH_RAW; }
-<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { yylval->string = strdup(yytext); return CH_RAW; }
-<PLAIN_SCALAR_CONT>":" { yylval->string = strdup(":"); return CH_RAW; }
+<PLAIN_SCALAR_CONT>[ \t]+ { yylval->string = arena_strdup(CTX, yytext); return CH_RAW; }
+<PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ { yylval->string = arena_strdup(CTX, yytext); return CH_RAW; }
+<PLAIN_SCALAR_CONT>":" { yylval->string = arena_strdup(CTX, ":"); return CH_RAW; }
 
 <PLAIN_SCALAR_CONT>"\n" {
     /* Terminator for plain scalar */
@@ -1560,7 +1604,7 @@ PKEY_BODY [^:\n\r]*
         yyless(0);
         BEGIN(INITIAL);
     } else {
-        yylval->string = strdup(yytext);
+        yylval->string = arena_strdup(CTX, yytext);
         return CH_RAW;
     }
 }

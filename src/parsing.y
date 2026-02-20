@@ -5,7 +5,19 @@ typedef void* yyscan_t;
 
 %code requires {
 /* === LEXER CONTEXT TYPE (defined in scanning.l) === */
+struct StringNode {
+    char *str;
+    struct StringNode *next;
+};
+
 /* Forward declaration - full type defined in scanning.l/scanning.lex.c */
+struct ArenaChunk {
+    char *data;
+    size_t size;
+    size_t capacity;
+    struct ArenaChunk *next;
+};
+
 typedef struct {
     int indent_stack[100];
     int indent_sp;
@@ -59,6 +71,10 @@ typedef struct {
     int yaml_directive_seen;
     int argc;
     char **argv;
+    struct StringNode *arena_head;
+
+    /* Arena for allocation */
+    struct ArenaChunk *arena_current;
 } LexerContext;
 
 typedef struct {
@@ -123,16 +139,19 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 85
-%expect-rr 123
+%expect 90
+%expect-rr 139
 
 %{
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include "parsing.tab.h"  /* Include generated header for type definitions */
 
+#define CTX ((LexerContext*)scanning_get_extra(scanner))
+extern char* arena_strdup(LexerContext *ctx, const char *s);
 /* Types are declared in %code requires and included via parsing.tab.h */
 
 /* === TYPE DEFINITIONS (from ir_builder.h) === */
@@ -233,15 +252,15 @@ static int ensure_event_capacity(EventStream *stream) {
 
 static void append_event(YAMLEvent *evt) {
     if (!current_event_stream || !evt) {
-        free(evt);
+       
         return;
     }
     if (!ensure_event_capacity(current_event_stream)) {
-        free(evt->value);
-        free(evt->anchor);
-        free(evt->tag);
-        free(evt->alias_name);
-        free(evt);
+       
+       
+       
+       
+       
         return;
     }
     current_event_stream->events[current_event_stream->count++] = evt;
@@ -351,9 +370,9 @@ static IRBuilder *ir_builder_new_memory(void) {
 static void ir_builder_free(IRBuilder *b) {
     if (b) {
         if (b->buffer) {
-            free(b->buffer);
+           
         }
-        free(b);
+       
     }
 }
 
@@ -374,12 +393,14 @@ static char *ir_builder_finalize(IRBuilder *b) {
     return result;
 }
 
+extern void* arena_alloc(LexerContext *ctx, size_t size);
+
 /* Escape line breaks so each IR event stays on one physical line. */
-static char *ir_escape_scalar_value(const char *value) {
-    if (!value) return strdup("");
+static char *ir_escape_scalar_value(LexerContext *ctx, const char *value) {
+    if (!value) return arena_strdup(ctx, "");
     size_t len = strlen(value);
-    char *out = (char*)malloc(len * 2 + 1);
-    if (!out) return strdup("");
+    char *out = (char*)arena_alloc(ctx, len * 2 + 1);
+    if (!out) return arena_strdup(ctx, "");
     size_t j = 0;
     for (size_t i = 0; i < len; i++) {
         if (value[i] == '\n') {
@@ -393,213 +414,97 @@ static char *ir_escape_scalar_value(const char *value) {
         }
     }
     out[j] = '\0';
+    
     return out;
 }
 
-/**
- * Stream start marker
- * Format: +STR
- */
-static void ir_stream_start(IRBuilder *b) {
-    ir_write(b, "+STR\n");
-}
-
-/**
- * Stream end marker
- * Format: -STR
- */
-static void ir_stream_end(IRBuilder *b) {
-    ir_write(b, "-STR\n");
-}
-
-/*
- * Render tag once in IR.
- * Scanner already returns tags with YAML sigils (e.g. !foo, !!str), so
- * we only add a leading '!' when the value is a bare handle/name.
- */
+static void ir_stream_start(IRBuilder *b) { ir_write(b, "+STR\n"); }
+static void ir_stream_end(IRBuilder *b) { ir_write(b, "-STR\n"); }
 static void ir_write_tag(IRBuilder *b, const char *tag) {
     if (!tag || !*tag) return;
-    if (tag[0] == '!' || tag[0] == '<') {
-        ir_write(b, " %s", tag);
-    } else {
-        ir_write(b, " !%s", tag);
-    }
+    if (tag[0] == '!' || tag[0] == '<') ir_write(b, " %s", tag);
+    else ir_write(b, " !%s", tag);
 }
-
-/**
- * Document start marker
- * Format: +DOC
- */
-static void ir_doc_start(IRBuilder *b) {
-    ir_write(b, "+DOC\n");
-}
-
-/**
- * Document end marker
- * Format: -DOC
- */
-static void ir_doc_end(IRBuilder *b) {
-    ir_write(b, "-DOC\n");
-}
-
-/**
- * Sequence start with optional properties
- * Format: +SEQ [&anchor] [!tag]
- */
+static void ir_doc_start(IRBuilder *b, int is_explicit) { ir_write(b, "+DOC%s\n", is_explicit ? " ---" : ""); }
+static void ir_doc_end(IRBuilder *b) { ir_write(b, "-DOC\n"); }
 static void ir_seq_start(IRBuilder *b, const char *anchor, const char *tag) {
     ir_write(b, "+SEQ");
     if (anchor) ir_write(b, " &%s", anchor[0] == '&' ? anchor + 1 : anchor);
-    ir_write_tag(b, tag);
-    ir_write(b, "\n");
+    ir_write_tag(b, tag); ir_write(b, "\n");
 }
-
-/**
- * Sequence end marker
- * Format: -SEQ
- */
-static void ir_seq_end(IRBuilder *b) {
-    ir_write(b, "-SEQ\n");
-}
-
-/**
- * Mapping start with optional properties
- * Format: +MAP [&anchor] [!tag]
- */
+static void ir_seq_end(IRBuilder *b) { ir_write(b, "-SEQ\n"); }
 static void ir_map_start(IRBuilder *b, const char *anchor, const char *tag) {
     ir_write(b, "+MAP");
     if (anchor) ir_write(b, " &%s", anchor[0] == '&' ? anchor + 1 : anchor);
-    ir_write_tag(b, tag);
-    ir_write(b, "\n");
+    ir_write_tag(b, tag); ir_write(b, "\n");
 }
+static void ir_map_end(IRBuilder *b) { ir_write(b, "-MAP\n"); }
 
-/**
- * Mapping end marker
- * Format: -MAP
- */
-static void ir_map_end(IRBuilder *b) {
-    ir_write(b, "-MAP\n");
-}
-
-static void ir_scalar(IRBuilder *b, const char *value, char style, const char *anchor, const char *tag) {
+static void ir_scalar(LexerContext *ctx, IRBuilder *b, const char *value, char style, const char *anchor, const char *tag) {
     if (!value) value = "";
-    char *escaped = ir_escape_scalar_value(value);
+    char *escaped = ir_escape_scalar_value(ctx, value);
     ir_write(b, "=VAL");
     if (anchor) ir_write(b, " &%s", anchor[0] == '&' ? anchor + 1 : anchor);
     ir_write_tag(b, tag);
-    if (style == ':') {
-        ir_write(b, " :%s\n", escaped);
-    } else if (style == '|' || style == '>') {
-        /* Tree format: block style followed immediately by value */
-        ir_write(b, " %c%s\n", style, escaped);
-    } else {
-        ir_write(b, " %c :%s\n", style, escaped);
-    }
-    free(escaped);
+    if (style == ':') ir_write(b, " :%s\n", escaped);
+    else if (style == '|' || style == '>') ir_write(b, " %c%s\n", style, escaped);
+    else ir_write(b, " %c :%s\n", style, escaped);
 }
 
-/**
- * Empty scalar value
- * Format: =VAL :
- */
-static void ir_scalar_empty(IRBuilder *b) {
-    ir_write(b, "=VAL :\n");
-}
-
-/**
- * Alias reference
- * Format: =ALI *name
- */
+static void ir_scalar_empty(IRBuilder *b) { ir_write(b, "=VAL :\n"); }
 static void ir_alias(IRBuilder *b, const char *name) {
     if (!name) name = "";
     if (name[0] == '*') name++;
     ir_write(b, "=ALI *%s\n", name);
 }
 
-static void emit_map_key(const ScalarValue *k) {
+static void emit_map_key(LexerContext *ctx, const ScalarValue *k) {
     if (!k || !k->value) return;
-    
     if (k->type == '*') {
-        /* Alias as map key */
         ir_alias(ir, k->value);
         add_alias_event(k->value);
     } else {
-        /* Regular key (plain, quoted, or anchored) */
-        ir_scalar(ir, k->value, k->type, k->anchor, NULL);
+        ir_scalar(ctx, ir, k->value, k->type, k->anchor, NULL);
         add_scalar_event(k->value, k->type);
     }
 }
 
-/**
- * Parse anchored map key from lexer-provided tab-delimited format
- * Input: "&anchor\tkey" (from ANCHOR_MAP_KEY token)
- * Output: Populates scalar.anchor and scalar.value fields
- * 
- * Format contract with lexer:
- * - Anchor name with '&' prefix
- * - Tab delimiter (\t)
- * - Key text (already trimmed by lexer)
- */
-static ScalarValue parse_anchored_map_key(char *delimited_string) {
+static ScalarValue parse_anchored_map_key(LexerContext *ctx, char *delimited_string) {
     ScalarValue result;
-    result.type = ':';
-    result.anchor = NULL;
-    result.value = NULL;
-    
+    result.type = ':'; result.anchor = NULL; result.value = NULL;
     if (!delimited_string) {
-        result.value = strdup("");
+        result.value = arena_strdup(ctx, "");
         return result;
     }
-    
-    /* Find tab delimiter */
     char *tab = strchr(delimited_string, '\t');
     if (tab) {
-        /* Split at tab: "&anchor" and "key" */
         *tab = '\0';
-        
-        /* Extract anchor name (skip '&' prefix if present) */
         const char *anchor_start = delimited_string;
         if (anchor_start[0] == '&') anchor_start++;
-        result.anchor = strdup(anchor_start);
-        
-        /* Extract key text */
-        result.value = strdup(tab + 1);
-        
-        free(delimited_string);
+        result.anchor = arena_strdup(ctx, anchor_start);
+        result.value = arena_strdup(ctx, tab + 1);
     } else {
-        /* No delimiter: treat as plain key (fallback) */
-        result.anchor = NULL;
-        result.value = delimited_string;
+        result.anchor = NULL; result.value = delimited_string;
     }
-    
     return result;
 }
 
-static char *concat_and_free(char *left, char *right) {
-    size_t left_len;
-    size_t right_len;
-    char *out;
+extern char* arena_strdup(LexerContext *ctx, const char *s);
 
-    if (!left) left = strdup("");
-    if (!right) right = strdup("");
-    if (!left || !right) {
-        free(left);
-        free(right);
-        return strdup("");
-    }
-
-    left_len = strlen(left);
-    right_len = strlen(right);
-    out = (char*)malloc(left_len + right_len + 1);
-    if (!out) {
-        free(left);
-        free(right);
-        return strdup("");
-    }
-
+static char *arena_concat(LexerContext *ctx, const char *left, const char *right) {
+    if (!left && !right) return arena_strdup(ctx, "");
+    if (!left) return arena_strdup(ctx, right);
+    if (!right) return arena_strdup(ctx, left);
+    
+    size_t left_len = strlen(left);
+    size_t right_len = strlen(right);
+    
+    char *out = (char*)arena_alloc(ctx, left_len + right_len + 1);
+    if (!out) return arena_strdup(ctx, "");
+    
     memcpy(out, left, left_len);
     memcpy(out + left_len, right, right_len + 1);
-    free(left);
-    free(right);
+    
     return out;
 }
 
@@ -638,6 +543,7 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %parse-param {void *scanner}
 %lex-param {void *scanner}
 
+%define parse.trace
 %union {
     char *string;
     NodeProps props;
@@ -657,9 +563,9 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 
 /* TODO Fix destructor double free in GLR mode + manual free in actions */
 /* Destructors removed to avoid double free in GLR mode + manual free in actions */
-/* %destructor { if ($$) { free($$); $$ = NULL; } } <string> */
-/* %destructor { if ($$.anchor) { free($$.anchor); $$.anchor = NULL; } if ($$.tag) { free($$.tag); $$.tag = NULL; } } <props> */
-/* %destructor { if ($$.value) { free($$.value); $$.value = NULL; } } <scalar> */
+/* %destructor { if ($$) { $$ = NULL; } } <string> */
+/* %destructor { if ($$.anchor) { $$.anchor = NULL; } if ($$.tag) { $$.tag = NULL; } } <props> */
+/* %destructor { if ($$.value) { $$.value = NULL; } } <scalar> */
 
 %locations
 
@@ -702,12 +608,16 @@ documents:
     ;
 
 bare_doc_after_explicit:
-    DOC_END doc_start node doc_end
-    | DOC_END doc_start INDENT node DEDENT doc_end
+    DOC_END doc_start_implicit node doc_end
+    | DOC_END doc_start_implicit INDENT node DEDENT doc_end
     ;
 
-doc_start:
-    %empty { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+doc_start_explicit:
+    %empty { ir_doc_start(ir, 1); add_event(EVENT_DOCUMENT_START); }
+    ;
+
+doc_start_implicit:
+    %empty { ir_doc_start(ir, 0); add_event(EVENT_DOCUMENT_START); }
     ;
 
 doc_end:
@@ -725,8 +635,8 @@ directives:
 
 directive:
     YAML_DIRECTIVE
-    | TAG_DIRECTIVE SCALAR SCALAR { free($2); free($3); }
-    | TAG_DIRECTIVE TAG SCALAR { free($2); free($3); }
+    | TAG_DIRECTIVE SCALAR SCALAR { }
+    | TAG_DIRECTIVE TAG SCALAR { }
     ;
 
 explicit_documents:
@@ -736,14 +646,14 @@ explicit_documents:
     ;
 
 explicit_document:
-    DOC_START doc_start node doc_end optional_doc_end
-    | DOC_START doc_start INDENT node DEDENT doc_end optional_doc_end
-    | DOC_START doc_start doc_empty DOC_END doc_end
-    | DOC_START doc_start doc_empty doc_end
-    | directives DOC_START doc_start node doc_end optional_doc_end
-    | directives DOC_START doc_start INDENT node DEDENT doc_end optional_doc_end
-    | directives DOC_START doc_start doc_empty DOC_END doc_end
-    | directives DOC_START doc_start doc_empty doc_end
+    DOC_START doc_start_explicit node doc_end optional_doc_end
+    | DOC_START doc_start_explicit INDENT node DEDENT doc_end optional_doc_end
+    | DOC_START doc_start_explicit doc_empty DOC_END doc_end
+    | DOC_START doc_start_explicit doc_empty doc_end
+    | directives DOC_START doc_start_explicit node doc_end optional_doc_end
+    | directives DOC_START doc_start_explicit INDENT node DEDENT doc_end optional_doc_end
+    | directives DOC_START doc_start_explicit doc_empty DOC_END doc_end
+    | directives DOC_START doc_start_explicit doc_empty doc_end
     ;
 
 optional_doc_end:
@@ -752,28 +662,28 @@ optional_doc_end:
     ;
 
 implicit_document:
-    doc_start node doc_end
-    | doc_start INDENT node DEDENT doc_end
+    doc_start_implicit node doc_end
+    | doc_start_implicit INDENT node DEDENT doc_end
     ;
 
 node:
     scalar_node
     | alias_node
     | sequence_no_props
-    | node_props[p] sequence_with_props { free($p.anchor); free($p.tag); }
+    | node_props[p] sequence_with_props { }
     | mapping_no_props
-    | node_props[p] mapping_with_props { free($p.anchor); free($p.tag); }
+    | node_props[p] mapping_with_props { }
     | error { RECOVER("Recovering at node boundary"); }
     ;
 
 scalar_node:
-    scalar_item[s] { ir_scalar(ir, $s.value, $s.type, NULL, NULL); add_scalar_event($s.value, $s.type); free($s.value); }
-    | node_props[p] scalar_item[s] { ir_scalar(ir, $s.value, $s.type, $p.anchor, $p.tag); add_scalar_event($s.value, $s.type); free($s.value); free($p.anchor); free($p.tag); }
-    | node_props[p] { ir_scalar(ir, "", ':', $p.anchor, $p.tag); add_scalar_event("", ':'); free($p.anchor); free($p.tag); }
+    scalar_item[s] { ir_scalar(CTX, ir, $s.value, $s.type, NULL, NULL); add_scalar_event($s.value, $s.type); }
+    | node_props[p] scalar_item[s] { ir_scalar(CTX, ir, $s.value, $s.type, $p.anchor, $p.tag); add_scalar_event($s.value, $s.type); }
+    | node_props[p] { ir_scalar(CTX, ir, "", ':', $p.anchor, $p.tag); add_scalar_event("", ':'); }
     ;
 
 alias_node:
-    ALIAS[a] { ir_alias(ir, $a); add_alias_event($a); free($a); }
+    ALIAS[a] { ir_alias(ir, $a); add_alias_event($a); }
     ;
 
 scalar_item:
@@ -789,28 +699,28 @@ qscalar:
 
 scalar_parts:
     CH_RAW { $$ = $1; }
-    | scalar_parts CH_RAW { $$ = concat_and_free($1, $2); }
+    | scalar_parts CH_RAW { $$ = arena_concat(CTX, $1, $2); }
     ;
 
 qparts:
-    %empty { $$ = strdup(""); }
-    | qparts qpart { $$ = concat_and_free($1, $2); }
+    %empty { $$ = arena_strdup(CTX, ""); }
+    | qparts qpart { $$ = arena_concat(CTX, $1, $2); }
     ;
 
 qpart:
     CH_RAW { $$ = $1; }
-    | CH_ESC_N { $$ = strdup("\n"); free($1); }
-    | CH_ESC_T { $$ = strdup("\t"); free($1); }
-    | CH_ESC_R { $$ = strdup("\r"); free($1); }
-    | CH_ESC_BS { $$ = strdup("\\"); free($1); }
-    | CH_ESC_QU { $$ = strdup("\""); free($1); }
-    | CH_ESC_SL { $$ = strdup("/"); free($1); }
-    | CH_ESC_0 { $$ = strdup("\0"); free($1); }
+    | CH_ESC_N { $$ = arena_strdup(CTX, "\n"); }
+    | CH_ESC_T { $$ = arena_strdup(CTX, "\t"); }
+    | CH_ESC_R { $$ = arena_strdup(CTX, "\r"); }
+    | CH_ESC_BS { $$ = arena_strdup(CTX, "\\"); }
+    | CH_ESC_QU { $$ = arena_strdup(CTX, "\""); }
+    | CH_ESC_SL { $$ = arena_strdup(CTX, "/"); }
+    | CH_ESC_0 { $$ = arena_strdup(CTX, "\0"); }
     ;
 
 bscalar:
     BPART { $$ = $1; }
-    | bscalar BPART { $$ = concat_and_free($1, $2); }
+    | bscalar BPART { $$ = arena_concat(CTX, $1, $2); }
     ;
 
 node_props:
@@ -824,6 +734,8 @@ node_props:
 
 sequence_no_props:
     seq_start seq_entries seq_end %dprec 3
+    | seq_start seq_entry INDENT seq_entries DEDENT seq_end %dprec 4
+    | INDENT seq_start seq_entries DEDENT seq_end %dprec 3
     | LBRACK flow_seq_init flow_seq_entries RBRACK seq_end flow_lvl_dec
     ;
 
@@ -845,6 +757,7 @@ flow_seq_init:
 
 sequence_with_props:
     seq_start_with_props seq_entries seq_end %dprec 3
+    | seq_start_with_props seq_entry INDENT seq_entries DEDENT seq_end %dprec 4
     | INDENT seq_start_with_props seq_entries DEDENT seq_end %dprec 3
     | LBRACK flow_seq_init_with_props flow_seq_entries RBRACK seq_end flow_lvl_dec
     ;
@@ -865,7 +778,7 @@ seq_entries:
 seq_entry:
     BULLET node %dprec 5
     | BULLET BULLET { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } node INDENT seq_entries DEDENT { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 6
-    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node INDENT map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
+    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(CTX, &$k); } COLON node INDENT map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
     | BULLET_EOL INDENT { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 4
     | BULLET_EOL INDENT seq_entries DEDENT %dprec 3
     | BULLET error { RECOVER("Malformed sequence item"); } %dprec 2
@@ -925,18 +838,21 @@ map_key:
     MAP_KEY[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; }
     | QMAP_KEY[val] { $$.type = '"'; $$.value = $val; $$.anchor = NULL; }
     | SMAP_KEY[val] { $$.type = '\''; $$.value = $val; $$.anchor = NULL; }
-    | ANCHOR_MAP_KEY[val] { $$ = parse_anchored_map_key($val); }
+    | ANCHOR_MAP_KEY[val] { $$ = parse_anchored_map_key(CTX, $val); }
     ;
 
 map_entry:
-    map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node %dprec 1
-    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON INDENT node DEDENT %dprec 2
-    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
-    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    map_key[k] { emit_map_key(CTX, &$k); } COLON node %dprec 1
+    | map_key[k] { emit_map_key(CTX, &$k); } COLON INDENT node DEDENT %dprec 2
+    | map_key[k] { emit_map_key(CTX, &$k); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    | map_key[k] { emit_map_key(CTX, &$k); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | QUESTION node COLON node %dprec 2
     | QUESTION INDENT node DEDENT COLON node %dprec 3
     | QUESTION node COLON INDENT node DEDENT %dprec 3
     | QUESTION INDENT node DEDENT COLON INDENT node DEDENT %dprec 4
+    /* explicit key followed by colon but empty value (possibly on next line) */
+    | QUESTION node COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
+    | QUESTION INDENT node DEDENT COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
     | QUESTION node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
     | QUESTION INDENT node DEDENT { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
     | MAP_KEY error { RECOVER("Malformed mapping entry"); }

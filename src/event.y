@@ -44,7 +44,7 @@ typedef struct {
  * Event stream container
  */
 typedef struct {
-    YAMLEvent **events;
+    YAMLEvent *events;
     int count;
     int capacity;
 } EventStream;
@@ -76,69 +76,71 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream);
 /* Intermediate EventStream being built */
 static EventStream *current_stream = NULL;
 
+static void event_destroy(YAMLEvent *e) {
+    if (e) {
+        free(e->value);
+        free(e->anchor);
+        free(e->tag);
+        free(e->alias_name);
+    }
+}
+
 /* Helper to add events to the stream during parsing */
-static void push_event(YAMLEvent *e) {
-    if (!current_stream) return;
+static void push_event(YAMLEvent e) {
+    if (!current_stream) {
+        event_destroy(&e);
+        return;
+    }
     if (current_stream->count >= current_stream->capacity) {
         current_stream->capacity = current_stream->capacity * 2 + 10;
-        current_stream->events = (YAMLEvent **)realloc(current_stream->events, 
-                                                       current_stream->capacity * sizeof(YAMLEvent *));
+        current_stream->events = (YAMLEvent *)realloc(current_stream->events, 
+                                                       current_stream->capacity * sizeof(YAMLEvent));
     }
     current_stream->events[current_stream->count++] = e;
 }
 
-static YAMLEvent* event_create(YAMLEventType type) {
-    YAMLEvent *e = (YAMLEvent *)malloc(sizeof(YAMLEvent));
-    if (!e) return NULL;
-    e->type = type;
-    e->quote_style = '\0';
-    e->value = NULL;
-    e->anchor = NULL;
-    e->tag = NULL;
-    e->explicit_start = 0;
-    e->alias_name = NULL;
+static YAMLEvent event_create(YAMLEventType type) {
+    YAMLEvent e;
+    memset(&e, 0, sizeof(YAMLEvent));
+    e.type = type;
     return e;
 }
 
-static YAMLEvent* event_scalar_new(char style, const char *val) {
-    YAMLEvent *e = event_create(EVENT_SCALAR);
-    if (!e) return NULL;
-    e->quote_style = style;
-    e->value = val ? strdup(val) : NULL;
+static YAMLEvent event_scalar_new(char style, char *val) {
+    YAMLEvent e = event_create(EVENT_SCALAR);
+    e.quote_style = style;
+    e.value = val;
     return e;
 }
 
-static YAMLEvent* event_collection_new(YAMLEventType type, const char *anchor, const char *tag) {
-    YAMLEvent *e = event_create(type);
-    if (!e) return NULL;
-    e->anchor = anchor ? strdup(anchor) : NULL;
-    e->tag = tag ? strdup(tag) : NULL;
+static YAMLEvent event_collection_new(YAMLEventType type, char *anchor, char *tag) {
+    YAMLEvent e = event_create(type);
+    e.anchor = anchor;
+    e.tag = tag;
     return e;
 }
 
-static YAMLEvent* event_scalar_complex(char style, const char *val, const char *anchor, const char *tag) {
-    YAMLEvent *e = event_create(EVENT_SCALAR);
-    if (!e) return NULL;
-    e->quote_style = style;
-    e->value = val ? strdup(val) : NULL;
-    e->anchor = anchor ? strdup(anchor) : NULL;
-    e->tag = tag ? strdup(tag) : NULL;
+static YAMLEvent event_scalar_complex(char style, char *val, char *anchor, char *tag) {
+    YAMLEvent e = event_create(EVENT_SCALAR);
+    e.quote_style = style;
+    e.value = val;
+    e.anchor = anchor;
+    e.tag = tag;
     return e;
 }
 
-static YAMLEvent* event_doc_new(int explicit) {
-    YAMLEvent *e = event_create(EVENT_DOCUMENT_START);
-    if (!e) return NULL;
-    e->explicit_start = explicit;
+static YAMLEvent event_doc_new(int explicit) {
+    YAMLEvent e = event_create(EVENT_DOCUMENT_START);
+    e.explicit_start = explicit;
     return e;
 }
 
-static YAMLEvent* event_alias_new(const char *name) {
-    YAMLEvent *e = event_create(EVENT_ALIAS);
-    if (!e) return NULL;
-    e->alias_name = name ? strdup(name) : NULL;
+static YAMLEvent event_alias_new(char *name) {
+    YAMLEvent e = event_create(EVENT_ALIAS);
+    e.alias_name = name;
     return e;
 }
+
 
 void event_yy_error(const char *msg);
 %}
@@ -146,6 +148,8 @@ void event_yy_error(const char *msg);
 %union {
     char *sval;
     char cval;
+    NodeProps props;
+    YAMLEvent evt;
 }
 
 %token E_STR_START   300 "+STR"
@@ -165,36 +169,52 @@ void event_yy_error(const char *msg);
 %token <sval> E_QUOTED_STRING E_IDENTIFIER
 %token <cval> E_STYLE
 
-%type <sval> content
+%type <sval> content opt_content
 %type <cval> style_val
+%type <props> opt_props
+%type <evt> evt_stream_start evt_stream_end evt_doc_start evt_doc_end
+%type <evt> evt_seq_start evt_seq_end evt_map_start evt_map_end
+%type <evt> evt_scalar evt_alias
+
+%destructor { free($$); } <sval>
+%destructor { free($$.anchor); free($$.tag); } <props>
+%destructor { event_destroy(&$$); } <evt>
 
 %define parse.error detailed
 %locations
 
 %{
 int event_lex(void);
+#undef yylex
 #define yylex event_lex
 #define yyerror event_yy_error
 %}
 
 %%
 
-stream : "+STR" { push_event(event_create(EVENT_STREAM_START)); }
-         docs 
-         "-STR" { push_event(event_create(EVENT_STREAM_END)); }
-       ;
+stream : stream_start docs stream_end ;
+
+stream_start : evt_stream_start { push_event($1); } ;
+evt_stream_start : "+STR" { $$ = event_create(EVENT_STREAM_START); } ;
+
+stream_end : evt_stream_end { push_event($1); } ;
+evt_stream_end : "-STR" { $$ = event_create(EVENT_STREAM_END); } ;
 
 docs : %empty
      | docs doc
      ;
 
-doc : doc_start node "-DOC" { push_event(event_create(EVENT_DOCUMENT_END)); }
+doc : doc_start node doc_end
     | node
     ;
 
-doc_start: "+DOC"      { push_event(event_doc_new(0)); }
-         | "+DOC" "---" { push_event(event_doc_new(1)); }
-         ;
+doc_end : evt_doc_end { push_event($1); } ;
+evt_doc_end : "-DOC" { $$ = event_create(EVENT_DOCUMENT_END); } ;
+
+doc_start: evt_doc_start { push_event($1); } ;
+evt_doc_start: "+DOC" { $$ = event_doc_new(0); }
+             | "+DOC" "---" { $$ = event_doc_new(1); }
+             ;
 
 node : scalar
      | alias
@@ -202,45 +222,50 @@ node : scalar
      | mapping
      ;
 
-scalar : "=VAL" style_val content { push_event(event_scalar_new($2, $3)); free($3); }
-       | "=VAL" style_val { push_event(event_scalar_new($2, NULL)); }
-       | "=VAL" E_ANCHOR[a] style_val content { push_event(event_scalar_complex($3, $4, $a, NULL)); free($4); free($a); }
-       | "=VAL" E_ANCHOR[a] style_val { push_event(event_scalar_complex($3, NULL, $a, NULL)); free($a); }
-       | "=VAL" E_TAG[t] style_val content { push_event(event_scalar_complex($3, $4, NULL, $t)); free($4); free($t); }
-       | "=VAL" E_TAG[t] style_val { push_event(event_scalar_complex($3, NULL, NULL, $t)); free($t); }
-       | "=VAL" E_ANCHOR[a] E_TAG[t] style_val content { push_event(event_scalar_complex($4, $5, $a, $t)); free($5); free($a); free($t); }
-       | "=VAL" E_ANCHOR[a] E_TAG[t] style_val { push_event(event_scalar_complex($4, NULL, $a, $t)); free($a); free($t); }
-       ;
+opt_props:
+    %empty { $$.anchor = NULL; $$.tag = NULL; }
+    | E_ANCHOR { $$.anchor = $1; $$.tag = NULL; }
+    | E_TAG { $$.anchor = NULL; $$.tag = $1; }
+    | E_ANCHOR E_TAG { $$.anchor = $1; $$.tag = $2; }
+    ;
+
+opt_content:
+    %empty { $$ = NULL; }
+    | content { $$ = $1; }
+    ;
+
+scalar : evt_scalar { push_event($1); } ;
+
+evt_scalar : "=VAL" opt_props style_val opt_content { $$ = event_scalar_complex($3, $4, $2.anchor, $2.tag); } ;
 
 style_val : E_STYLE ':' { $$ = $1; }
           | E_STYLE     { $$ = $1; }
           | ':'           { $$ = ':'; }
           ;
 
-content : E_QUOTED_STRING
-        | E_IDENTIFIER
+content : E_QUOTED_STRING { $$ = $1; }
+        | E_IDENTIFIER    { $$ = $1; }
         ;
 
-alias : "=ALI" E_IDENTIFIER[target] { push_event(event_alias_new($target)); free($target); }
-      ;
+alias : evt_alias { push_event($1); } ;
 
-sequence : seq_start seq_items "-SEQ" { push_event(event_create(EVENT_SEQUENCE_END)); }
-         ;
+evt_alias : "=ALI" E_IDENTIFIER { $$ = event_alias_new($2); } ;
 
-seq_start : "+SEQ"                        { push_event(event_collection_new(EVENT_SEQUENCE_START, NULL, NULL)); }
-          | "+SEQ" E_ANCHOR[a]            { push_event(event_collection_new(EVENT_SEQUENCE_START, $a, NULL)); free($a); }
-          | "+SEQ" E_TAG[t]               { push_event(event_collection_new(EVENT_SEQUENCE_START, NULL, $t)); free($t); }
-          | "+SEQ" E_ANCHOR[a] E_TAG[t]   { push_event(event_collection_new(EVENT_SEQUENCE_START, $a, $t)); free($a); free($t); }
-          ;
+sequence : seq_start seq_items seq_end ;
 
-mapping : map_start map_pairs "-MAP"   { push_event(event_create(EVENT_MAPPING_END)); }
-        ;
+seq_start : evt_seq_start { push_event($1); } ;
+evt_seq_start : "+SEQ" opt_props { $$ = event_collection_new(EVENT_SEQUENCE_START, $2.anchor, $2.tag); } ;
 
-map_start : "+MAP"                        { push_event(event_collection_new(EVENT_MAPPING_START, NULL, NULL)); }
-          | "+MAP" E_ANCHOR[a]            { push_event(event_collection_new(EVENT_MAPPING_START, $a, NULL)); free($a); }
-          | "+MAP" E_TAG[t]               { push_event(event_collection_new(EVENT_MAPPING_START, NULL, $t)); free($t); }
-          | "+MAP" E_ANCHOR[a] E_TAG[t]   { push_event(event_collection_new(EVENT_MAPPING_START, $a, $t)); free($a); free($t); }
-          ;
+seq_end : evt_seq_end { push_event($1); } ;
+evt_seq_end : "-SEQ" { $$ = event_create(EVENT_SEQUENCE_END); } ;
+
+mapping : map_start map_pairs map_end ;
+
+map_start : evt_map_start { push_event($1); } ;
+evt_map_start : "+MAP" opt_props { $$ = event_collection_new(EVENT_MAPPING_START, $2.anchor, $2.tag); } ;
+
+map_end : evt_map_end { push_event($1); } ;
+evt_map_end : "-MAP" { $$ = event_create(EVENT_MAPPING_END); } ;
 
 seq_items : %empty
           | seq_items node
@@ -262,7 +287,7 @@ EventStream* event_parse_string(const char *input) {
     current_stream->events = NULL;
     current_stream->count = 0;
     current_stream->capacity = 10;
-    current_stream->events = (YAMLEvent **)malloc(current_stream->capacity * sizeof(YAMLEvent *));
+    current_stream->events = (YAMLEvent *)malloc(current_stream->capacity * sizeof(YAMLEvent));
 
     void *buf = event__scan_string(input);
     int res = event_yy_parse();
@@ -282,13 +307,7 @@ EventStream* event_parse_string(const char *input) {
 void event_stream_free(EventStream *stream) {
     if (!stream) return;
     for (int i = 0; i < stream->count; i++) {
-        if (stream->events[i]) {
-            free(stream->events[i]->value);
-            free(stream->events[i]->anchor);
-            free(stream->events[i]->tag);
-            free(stream->events[i]->alias_name);
-            free(stream->events[i]);
-        }
+        event_destroy(&stream->events[i]);
     }
     free(stream->events);
     free(stream);
@@ -305,7 +324,7 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream) {
         ir[0] = '\0';
         int pos = 0;
         for (int i = 0; i < stream->count; i++) {
-            YAMLEvent *e = stream->events[i];
+            YAMLEvent *e = &stream->events[i];
             switch (e->type) {
                 case EVENT_STREAM_START: pos += sprintf(ir + pos, "+STR\n"); break;
                 case EVENT_STREAM_END: pos += sprintf(ir + pos, "-STR\n"); break;
