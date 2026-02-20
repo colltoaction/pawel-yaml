@@ -1,127 +1,97 @@
-failing_tests:
-  - 26DV
-  - 2EBW
-  - 2LFX
-  - 2SXE
-  - 2XXW
-  - 35KP
-  - 36F6
-  - 3ALJ
-  - 3MYT
-  - 4ABK
-  - 4CQQ
-  - 4FJ6
-  - 4GC6
-  - 4RWC
-  - 4WA9
-  - 4ZYM
-  - 565N
-  - 57H4
-  - 5GBF
-  - 5MUD
-  - 5NYZ
-  - 5WE3
-  - 652Z
-  - 6BCT
-  - 6BFJ
-  - 6HB6
-  - 6KGN
-  - 6LVF
-  - 6M2F
-  - 6PBE
-  - 735Y
-  - 74H7
-  - 7BMT
-  - 7FWL
-  - 7W2P
-  - 7Z25
-  - 7ZZ5
-  - 82AN
-  - 87E4
-  - 8G76
-  - 8KB6
-  - 8UDB
-  - 8XYN
-  - 93JH
-  - 9BXH
-  - 9KAX
-  - 9MMW
-  - 9U5K
-  - 9WXW
-  - 9YRD
-  - A2M4
-  - A984
-  - AB8U
-  - AZ63
-  - AZW3
-  - BEC7
-  - BU8L
-  - C4HZ
-  - CFD4
-  - CN3R
-  - CT4Q
-  - D83L
-  - DBG4
-  - DC7X
-  - DFF7
-  - DK3J
-  - DK95
-  - EHF6
-  - EX5H
-  - EXG3
-  - F6MC
-  - F8F9
-  - FBC9
-  - FH7J
-  - FP8R
-  - FRK4
-  - G4RS
-  - HMQ5
-  - HS5T
-  - J3BT
-  - J7PZ
-  - JQ4R
-  - JR7V
-  - JTV5
-  - K3WX
-  - KK5P
-  - L9U5
-  - LP6E
-  - LQZ7
-  - M2N8
-  - M5C3
-  - M5DY
-  - M7A3
-  - M7NX
-  - NB6Z
-  - NJ66
-  - NKF9
-  - P94K
-  - PW8X
-  - Q9WF
-  - QF4Y
-  - RLU9
-  - RZP5
-  - RZT7
-  - S3PD
-  - S4T7
-  - S7BG
-  - S9E8
-  - SKE5
-  - SSW6
-  - U3XV
-  - UGM3
-  - UKK6
-  - UT92
-  - UV7Q
-  - V9D5
-  - W42U
-  - W4TN
-  - W5VH
-  - WZ62
-  - XLQ9
-  - XV9V
-  - XW4D
-  - ZF4X
-  - ZK9H
-  - ZWK4
+meta:
+  generated_at: '2026-02-20T20:01:10Z'
+  suite_dir: build/lib/yaml-test-suite/src
+  total_tests: 351
+  total_passes: 262
+  total_failures: 89
+  scoring: fail-true-aware
+failing:
+- 2SXE
+- 5LLU
+- 5TRB
+- 5WE3
+- 6BFJ
+- 6KGN
+- 6S55
+- 735Y
+- 7BMT
+- 7LBH
+- 7Z25
+- 7ZZ5
+- 9C9N
+- 9HCY
+- 9KAX
+- 9MAG
+- A2M4
+- AB8U
+- BF9H
+- BS4K
+- BU8L
+- C4HZ
+- CFD4
+- CT4Q
+- CTN5
+- CVW2
+- CXX2
+- D49Q
+- D83L
+- DC7X
+- DFF7
+- DK3J
+- DK4H
+- DMG6
+- EB22
+- F6MC
+- FBC9
+- FH7J
+- FP8R
+- FRK4
+- G5U8
+- G9HC
+- GDY7
+- H7J7
+- H7TQ
+- HRE5
+- J3BT
+- JKF3
+- JTV5
+- KK5P
+- M5C3
+- M5DY
+- M7A3
+- MUS6
+- N4JP
+- NKF9
+- P2EQ
+- PW8X
+- Q9WF
+- QB6E
+- QLJ7
+- RHX7
+- RXY3
+- RZP5
+- S3PD
+- S7BG
+- S98Z
+- SF5V
+- SKE5
+- SM9W
+- SY6V
+- TD5N
+- U3XV
+- UDR7
+- UGM3
+- UKK6
+- UT92
+- VJP3
+- W42U
+- W4TN
+- W5VH
+- W9L4
+- X38W
+- XLQ9
+- XW4D
+- YJV2
+- ZF4X
+- ZK9H
+- ZXT5
