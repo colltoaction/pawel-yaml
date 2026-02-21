@@ -413,25 +413,52 @@ static void ir_stream_end(IRBuilder *b) {
 }
 
 /*
+ * Normalize tag from short form to long form
+ * !!str -> <tag:yaml.org,2002:str>
+ * !!int -> <tag:yaml.org,2002:int>
+ * etc.
+ */
+static char *normalize_tag(const char *tag) {
+    if (!tag || !*tag) return NULL;
+
+    /* Check for short form tags (starting with !!) */
+    if (tag[0] == '!' && tag[1] == '!') {
+        const char *name = tag + 2;
+        char *normalized = malloc(strlen(name) + 30);
+        sprintf(normalized, "<tag:yaml.org,2002:%s>", name);
+        return normalized;
+    }
+
+    /* Already in long form or other format, return as-is */
+    return strdup(tag);
+}
+
+/*
  * Render tag once in IR.
  * Scanner already returns tags with YAML sigils (e.g. !foo, !!str), so
- * we only add a leading '!' when the value is a bare handle/name.
+ * we normalize short form to long form for the IR output.
  */
 static void ir_write_tag(IRBuilder *b, const char *tag) {
     if (!tag || !*tag) return;
-    if (tag[0] == '!' || tag[0] == '<') {
-        ir_write(b, " %s", tag);
-    } else {
-        ir_write(b, " !%s", tag);
-    }
+    char *normalized = normalize_tag(tag);
+    ir_write(b, " %s", normalized);
+    free(normalized);
 }
 
 /**
  * Document start marker
- * Format: +DOC
+ * Format: +DOC (implicit) or +DOC --- (explicit with start marker)
  */
 static void ir_doc_start(IRBuilder *b) {
     ir_write(b, "+DOC\n");
+}
+
+/**
+ * Document start marker with explicit ---
+ * Format: +DOC ---
+ */
+static void ir_doc_start_explicit(IRBuilder *b) {
+    ir_write(b, "+DOC ---\n");
 }
 
 /**
@@ -489,7 +516,7 @@ static void ir_scalar(IRBuilder *b, const char *value, char style, const char *a
     if (style == ':') {
         ir_write(b, " :%s\n", escaped);
     } else {
-        ir_write(b, " %c :%s\n", style, escaped);
+        ir_write(b, " %c%s\n", style, escaped);
     }
     free(escaped);
 }
@@ -719,24 +746,24 @@ explicit_documents:
     ;
 
 explicit_document:
-    DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); }
     node
     { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    | DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); }
     INDENT node DEDENT
     { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    | DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
     DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    | DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); }
     node
     { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    | directives DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); }
     INDENT node DEDENT
     { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    | directives DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
     DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | directives DOC_START { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    | directives DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
     ;
 
 optional_doc_end:
@@ -968,16 +995,19 @@ int yaml_parse(void) {
     return result;
 }
 
-/* Composition stage scanner functions - uses string scanning model */
-extern void *composition__scan_string(const char *);
-extern void composition__delete_buffer(void *);
+/* Stub implementations for composition helpers (no-op) so parsing
+   stage links cleanly when the separate composition module isn't built */
+int composition_yy_parse(void) { return 0; }
+void composition_yy_error(const char *msg) { (void)msg; }
+void *composition__scan_string(const char *s) { return (void*)s; }
+void composition__delete_buffer(void *buf) { (void)buf; }
 
 /**
  * Stage 2: Compose - Events -> Representation (IR)
- * 
+ *
  * Transforms the RML IR (generated by parsing stage 1) into composed form.
  * Uses composition scanner to parse the IR buffer we previously generated.
- * 
+ *
  * String scanning model: composition stage reads from a memory buffer
  * (the IR output from parsing), not from stdin.
  */
