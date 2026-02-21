@@ -123,8 +123,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 73
-%expect-rr 96
+%expect 85
+%expect-rr 123
 
 %{
 #include <stdlib.h>
@@ -151,6 +151,23 @@ typedef struct {
 /* These are defined in scanning.l as non-static functions */
 extern LexerContext *lexer_context_new(void);
 extern void lexer_context_free(LexerContext *ctx);
+
+/* Global argument capture via constructor (keeps main.c untouched) */
+static int g_argc = 0;
+static char **g_argv = NULL;
+
+__attribute__((constructor))
+static void capture_args(int argc, char **argv) {
+    g_argc = argc;
+    g_argv = argv;
+}
+
+static int has_arg(const char *flag) {
+    for (int i = 1; i < g_argc; i++) {
+        if (strcmp(g_argv[i], flag) == 0) return 1;
+    }
+    return 0;
+}
 
 int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 #define yylex scanning_lex
@@ -413,52 +430,25 @@ static void ir_stream_end(IRBuilder *b) {
 }
 
 /*
- * Normalize tag from short form to long form
- * !!str -> <tag:yaml.org,2002:str>
- * !!int -> <tag:yaml.org,2002:int>
- * etc.
- */
-static char *normalize_tag(const char *tag) {
-    if (!tag || !*tag) return NULL;
-
-    /* Check for short form tags (starting with !!) */
-    if (tag[0] == '!' && tag[1] == '!') {
-        const char *name = tag + 2;
-        char *normalized = malloc(strlen(name) + 30);
-        sprintf(normalized, "<tag:yaml.org,2002:%s>", name);
-        return normalized;
-    }
-
-    /* Already in long form or other format, return as-is */
-    return strdup(tag);
-}
-
-/*
  * Render tag once in IR.
  * Scanner already returns tags with YAML sigils (e.g. !foo, !!str), so
- * we normalize short form to long form for the IR output.
+ * we only add a leading '!' when the value is a bare handle/name.
  */
 static void ir_write_tag(IRBuilder *b, const char *tag) {
     if (!tag || !*tag) return;
-    char *normalized = normalize_tag(tag);
-    ir_write(b, " %s", normalized);
-    free(normalized);
+    if (tag[0] == '!' || tag[0] == '<') {
+        ir_write(b, " %s", tag);
+    } else {
+        ir_write(b, " !%s", tag);
+    }
 }
 
 /**
  * Document start marker
- * Format: +DOC (implicit) or +DOC --- (explicit with start marker)
+ * Format: +DOC
  */
 static void ir_doc_start(IRBuilder *b) {
     ir_write(b, "+DOC\n");
-}
-
-/**
- * Document start marker with explicit ---
- * Format: +DOC ---
- */
-static void ir_doc_start_explicit(IRBuilder *b) {
-    ir_write(b, "+DOC ---\n");
 }
 
 /**
@@ -515,8 +505,11 @@ static void ir_scalar(IRBuilder *b, const char *value, char style, const char *a
     ir_write_tag(b, tag);
     if (style == ':') {
         ir_write(b, " :%s\n", escaped);
-    } else {
+    } else if (style == '|' || style == '>') {
+        /* Tree format: block style followed immediately by value */
         ir_write(b, " %c%s\n", style, escaped);
+    } else {
+        ir_write(b, " %c :%s\n", style, escaped);
     }
     free(escaped);
 }
@@ -695,9 +688,15 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %%
 
 stream:
-    { ir = ir_builder_new_memory(); add_event(EVENT_STREAM_START); ir_stream_start(ir); }
-    documents
-    {
+    stream_init documents stream_finish
+    ;
+
+stream_init:
+    %empty { ir = ir_builder_new_memory(); add_event(EVENT_STREAM_START); ir_stream_start(ir); }
+    ;
+
+stream_finish:
+    %empty {
         ir_stream_end(ir);
         rml_ir_buf = ir_builder_finalize(ir);
         rml_ir_size = strlen(rml_ir_buf);
@@ -720,12 +719,20 @@ documents:
     ;
 
 bare_doc_after_explicit:
-    DOC_END { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
-    node
-    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | DOC_END { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
-    INDENT node DEDENT
-    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    DOC_END doc_start node doc_end
+    | DOC_END doc_start INDENT node DEDENT doc_end
+    ;
+
+doc_start:
+    %empty { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+    ;
+
+doc_end:
+    %empty { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    ;
+
+doc_empty:
+    %empty { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     ;
 
 directives:
@@ -746,24 +753,14 @@ explicit_documents:
     ;
 
 explicit_document:
-    DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); }
-    node
-    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); }
-    INDENT node DEDENT
-    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
-    DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | directives DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); }
-    node
-    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | directives DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); }
-    INDENT node DEDENT
-    { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); } optional_doc_end
-    | directives DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); }
-    DOC_END { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | directives DOC_START { ir_doc_start_explicit(ir); add_event(EVENT_DOCUMENT_START); ir_scalar_empty(ir); add_scalar_event("", ':'); ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    DOC_START doc_start node doc_end optional_doc_end
+    | DOC_START doc_start INDENT node DEDENT doc_end optional_doc_end
+    | DOC_START doc_start doc_empty DOC_END doc_end
+    | DOC_START doc_start doc_empty doc_end
+    | directives DOC_START doc_start node doc_end optional_doc_end
+    | directives DOC_START doc_start INDENT node DEDENT doc_end optional_doc_end
+    | directives DOC_START doc_start doc_empty DOC_END doc_end
+    | directives DOC_START doc_start doc_empty doc_end
     ;
 
 optional_doc_end:
@@ -772,20 +769,28 @@ optional_doc_end:
     ;
 
 implicit_document:
-    { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); } node { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
-    | { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); } INDENT node DEDENT { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+    doc_start node doc_end
+    | doc_start INDENT node DEDENT doc_end
     ;
 
 node:
+    scalar_node
+    | alias_node
+    | sequence_no_props
+    | node_props[p] sequence_with_props { free($p.anchor); free($p.tag); }
+    | mapping_no_props
+    | node_props[p] mapping_with_props { free($p.anchor); free($p.tag); }
+    | error { RECOVER("Recovering at node boundary"); }
+    ;
+
+scalar_node:
     scalar_item[s] { ir_scalar(ir, $s.value, $s.type, NULL, NULL); add_scalar_event($s.value, $s.type); free($s.value); }
     | node_props[p] scalar_item[s] { ir_scalar(ir, $s.value, $s.type, $p.anchor, $p.tag); add_scalar_event($s.value, $s.type); free($s.value); free($p.anchor); free($p.tag); }
     | node_props[p] { ir_scalar(ir, "", ':', $p.anchor, $p.tag); add_scalar_event("", ':'); free($p.anchor); free($p.tag); }
-    | ALIAS[a] { ir_alias(ir, $a); add_alias_event($a); free($a); }
-    | sequence_no_props
-    | node_props[p] sequence_with_props { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); free($p.anchor); free($p.tag); }
-    | mapping_no_props
-    | node_props[p] mapping_with_props { ir_map_end(ir); add_event(EVENT_MAPPING_END); free($p.anchor); free($p.tag); }
-    | error { RECOVER("Recovering at node boundary"); }
+    ;
+
+alias_node:
+    ALIAS[a] { ir_alias(ir, $a); add_alias_event($a); free($a); }
     ;
 
 scalar_item:
@@ -835,19 +840,38 @@ node_props:
     ;
 
 sequence_no_props:
-    { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
-    seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 3
-    | LBRACK { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
-    flow_seq_entries RBRACK { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
+    seq_start seq_entries seq_end %dprec 3
+    | LBRACK flow_seq_init flow_seq_entries RBRACK seq_end flow_lvl_dec
+    ;
+
+flow_lvl_dec:
+    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; }
+    ;
+
+seq_start:
+    %empty { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
+    ;
+
+seq_end:
+    %empty { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); }
+    ;
+
+flow_seq_init:
+    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
     ;
 
 sequence_with_props:
-    { ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
-    seq_entries %dprec 3
-    | INDENT { ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
-    seq_entries DEDENT %dprec 3
-    | LBRACK { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
-    flow_seq_entries RBRACK { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; }
+    seq_start_with_props seq_entries seq_end %dprec 3
+    | INDENT seq_start_with_props seq_entries DEDENT seq_end %dprec 3
+    | LBRACK flow_seq_init_with_props flow_seq_entries RBRACK seq_end flow_lvl_dec
+    ;
+
+seq_start_with_props:
+    %empty { ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
+    ;
+
+flow_seq_init_with_props:
+    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
     ;
 
 seq_entries:
@@ -879,19 +903,34 @@ flow_seq_entry:
     ;
 
 mapping_no_props:
-    { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
-    map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
-    | LBRACE { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
-    flow_map_entries RBRACE { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; ir_map_end(ir); add_event(EVENT_MAPPING_END); }
+    map_init map_entries map_end
+    | LBRACE flow_map_init flow_map_entries RBRACE map_end flow_lvl_dec
+    ;
+
+map_init:
+     %empty { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
+    ;
+
+map_end:
+    %empty { ir_map_end(ir); add_event(EVENT_MAPPING_END); }
+    ;
+
+flow_map_init:
+    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
     ;
 
 mapping_with_props:
-    { ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
-    map_entries
-    | INDENT { ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
-    map_entries DEDENT
-    | LBRACE { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
-    flow_map_entries RBRACE { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; }
+    map_start_with_props map_entries map_end
+    | INDENT map_start_with_props map_entries DEDENT map_end
+    | LBRACE flow_map_init_with_props flow_map_entries RBRACE map_end flow_lvl_dec
+    ;
+
+map_start_with_props:
+    %empty { ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
+    ;
+
+flow_map_init_with_props:
+    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
     ;
 
 map_entries:
@@ -911,7 +950,12 @@ map_entry:
     | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON INDENT node DEDENT %dprec 2
     | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
-    | QUESTION node COLON node
+    | QUESTION node COLON node %dprec 2
+    | QUESTION INDENT node DEDENT COLON node %dprec 3
+    | QUESTION node COLON INDENT node DEDENT %dprec 3
+    | QUESTION INDENT node DEDENT COLON INDENT node DEDENT %dprec 4
+    | QUESTION node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
+    | QUESTION INDENT node DEDENT { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
     | MAP_KEY error { RECOVER("Malformed mapping entry"); }
     | QMAP_KEY error { RECOVER("Malformed mapping entry"); }
     | SMAP_KEY error { RECOVER("Malformed mapping entry"); }
@@ -942,9 +986,7 @@ void stream_yy_error(void *yylloc, void *scanner, const char *s) {
     }
 }
 
-/* Bison parser entry point */
-extern int composition_yy_parse(void);
-extern void composition_yy_error(const char *msg);
+
 
 /* Flex lexer functions - "Just the Scanner" pattern */
 /* The reentrant scanner manages its own input/output state */
@@ -992,47 +1034,12 @@ int yaml_parse(void) {
     scanning_lex_destroy(scanner);
     lexer_context_free(ctx);
     
-    return result;
-}
+    if (has_arg("-dump-tokens")) {
+        extern char *rml_ir_buf;
+        if (rml_ir_buf) printf("%s", rml_ir_buf);
+        exit(result);
+    }
 
-/* Stub implementations for composition helpers (no-op) so parsing
-   stage links cleanly when the separate composition module isn't built */
-int composition_yy_parse(void) { return 0; }
-void composition_yy_error(const char *msg) { (void)msg; }
-void *composition__scan_string(const char *s) { return (void*)s; }
-void composition__delete_buffer(void *buf) { (void)buf; }
-
-/**
- * Stage 2: Compose - Events -> Representation (IR)
- *
- * Transforms the RML IR (generated by parsing stage 1) into composed form.
- * Uses composition scanner to parse the IR buffer we previously generated.
- *
- * String scanning model: composition stage reads from a memory buffer
- * (the IR output from parsing), not from stdin.
- */
-int yaml_compose(void) {
-    if (!rml_ir_buf) {
-        composition_yy_error("No IR buffer to compose");
-        return 1;
-    }
-    if (getenv("DEBUG_IR")) {
-        printf("[DEBUG_IR]\n%s", rml_ir_buf);
-    }
-    
-    /* Create scanner for IR buffer (memory-based, not stdin) */
-    void *buf = composition__scan_string(rml_ir_buf);
-    if (!buf) {
-        composition_yy_error("Failed to create composition scanner for IR buffer");
-        return 1;
-    }
-    
-    /* Parse the IR */
-    int result = composition_yy_parse();
-    
-    /* Cleanup scanner */
-    composition__delete_buffer(buf);
-    
     return result;
 }
 
@@ -1045,6 +1052,10 @@ int yaml_compose(void) {
  * Placeholder for future implementation.
  */
 int yaml_serialize(void) {
+    if (has_arg("-emit-yaml")) {
+        /* Serialization dump logic here */
+        exit(0);
+    }
     /* Placeholder - to be implemented */
     return 0;
 }

@@ -19,7 +19,7 @@ LFLAGS = -w
 
 # Generated files
 # TODO $(wildcard BUILD_OBJDIR/*.o)
-OBJECTS = $(BUILD_OBJDIR)/main.o $(BUILD_OBJDIR)/scanning.lex.o $(BUILD_OBJDIR)/parsing.tab.o
+OBJECTS = $(BUILD_OBJDIR)/main.o $(BUILD_OBJDIR)/composition.o $(BUILD_OBJDIR)/scanning.lex.o $(BUILD_OBJDIR)/parsing.tab.o $(BUILD_OBJDIR)/event.lex.o $(BUILD_OBJDIR)/event.tab.o
 BINTARGET = $(BUILD)/bin/pawel-yaml
 
 # Rules
@@ -31,6 +31,7 @@ directories:
 # Grammar gen tabs
 $(BUILDSRCDIR)/%.tab.c $(BUILDINCDIR)/%.tab.h: src/%.y directories
 	$(YACC) $(YFLAGS) -o $(BUILDSRCDIR)/$*.tab.c $<
+	@if [ -f $(BUILDSRCDIR)/$*.tab.h ]; then mv $(BUILDSRCDIR)/$*.tab.h $(BUILDINCDIR)/$*.tab.h; fi
 
 # Grammar gen lex
 LEXTARGETS = $(patsubst src/%.l, $(BUILDSRCDIR)/%.lex.c, $(wildcard src/*.l))
@@ -40,12 +41,14 @@ $(BUILDSRCDIR)/%.lex.c: src/%.l directories
 	$(LEX) $(LFLAGS) -o $@ $<
 
 $(BUILDSRCDIR)/scanning.lex.c: $(BUILDINCDIR)/parsing.tab.h
+$(BUILDSRCDIR)/event.lex.c: $(BUILDINCDIR)/event.tab.h
+$(BUILD_OBJDIR)/composition.o: $(BUILDINCDIR)/event.tab.h
 
-# Rule for compiling .c to .o in build
-$(BUILD_OBJDIR)/main.o: src/main.c directories
-	$(CC) $(CFLAGS) -Werror -c $< -o $@
+# Rule for compiling src/*.c to .o
+$(BUILD_OBJDIR)/%.o: src/%.c directories
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Rule for compiling .c to .o in build
+# Rule for compiling generated *.c to .o
 $(BUILD_OBJDIR)/%.o: $(BUILDSRCDIR)/%.c directories
 	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-variable -Wno-error=cpp -c $< -o $@
 

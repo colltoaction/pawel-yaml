@@ -1,6 +1,24 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "event.tab.h"
+
+/* Global argument capture via constructor (keeps main.c untouched) */
+static int g_argc = 0;
+static char **g_argv = NULL;
+
+__attribute__((constructor))
+static void capture_args(int argc, char **argv) {
+    g_argc = argc;
+    g_argv = argv;
+}
+
+static int has_arg(const char *flag) {
+    for (int i = 1; i < g_argc; i++) {
+        if (strcmp(g_argv[i], flag) == 0) return 1;
+    }
+    return 0;
+}
 
 /**
  * Stage 2: Compose - Events -> Representation (IR)
@@ -31,13 +49,11 @@ int yaml_compose(void) {
      * Composition logic for events goes here.
      * For now, we successfully validated the structure by parsing it.
      */
+    if (has_arg("-ast-dump")) {
+        /* Representation dump logic here */
+        exit(0);
+    }
     
     event_stream_free(stream);
-    return 0;
-}
-
-/* Stubbed composition parser entrypoint required by parsing stage. */
-int composition_yy_parse(void) {
-    /* no-op parser; composition logic handled elsewhere or not required */
     return 0;
 }
