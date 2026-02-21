@@ -61,17 +61,18 @@ class TestRunner:
     def _run_parser(self, yaml_input, mode="-tree"):
         """Run parser with specific mode and capture output"""
         try:
+            # Always pass bytes to subprocess and decode manually to handle encoding issues
+            input_bytes = yaml_input.encode('utf-8') if isinstance(yaml_input, str) else yaml_input
             result = subprocess.run(
                 [self.parser, mode],
-                input=yaml_input,
+                input=input_bytes,
                 capture_output=True,
-                text=True,
                 timeout=5
             )
             return {
                 'exit_code': result.returncode,
-                'stdout': result.stdout,
-                'stderr': result.stderr,
+                'stdout': result.stdout.decode('utf-8', errors='replace'),
+                'stderr': result.stderr.decode('utf-8', errors='replace'),
             }
         except subprocess.TimeoutExpired:
             return {'exit_code': 124, 'stdout': '', 'stderr': 'TIMEOUT'}
