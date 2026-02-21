@@ -35,31 +35,43 @@ get_test_input() {
 run_test() {
     local test_id="$1"
     local test_file="$WORK_DIR/${test_id}.yaml"
-    
+
     if ! get_test_input "$test_id" > "$test_file" 2>/dev/null; then
         echo "SKIP: Test $test_id - input not found"
         return 2
     fi
-    
-    local should_fail=$(python3 extract_test_info.py "$test_id" "$SUITE_DIR" fail 2>/dev/null || echo "false")
-    
-    local output=$("$PARSER" < "$test_file" 2>&1) || true
-    
-    if echo "$output" | grep -qi "parse failed\|syntax error\|error"; then
-        if [ "$should_fail" = "true" ]; then
-            echo -e "${GREEN}PASS${NC}: $test_id"
+
+    # Extract the "fail" field, defaulting to "false" if not present
+    local should_fail=$(python3 extract_test_info.py "$test_id" "$SUITE_DIR" fail 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        should_fail="false"
+    fi
+
+    # Run parser and capture both exit code and output
+    local output stderr exit_code
+    stderr=$("$PARSER" < "$test_file" 2>&1)
+    exit_code=$?
+
+    # For tests marked as "fail: true", expect non-zero exit code
+    if [ "$should_fail" = "true" ]; then
+        if [ $exit_code -ne 0 ]; then
+            echo -e "${GREEN}PASS${NC}: $test_id (correctly rejected invalid YAML)"
             return 0
         else
-            echo -e "${RED}FAIL${NC}: $test_id"
+            echo -e "${RED}FAIL${NC}: $test_id (should have failed but succeeded)"
             return 1
         fi
     else
-        if [ "$should_fail" = "true" ]; then
-            echo -e "${RED}FAIL${NC}: $test_id"
-            return 1
-        else
+        # For normal tests, expect zero exit code
+        if [ $exit_code -eq 0 ]; then
             echo -e "${GREEN}PASS${NC}: $test_id"
             return 0
+        else
+            echo -e "${RED}FAIL${NC}: $test_id"
+            if echo "$stderr" | grep -qi "error\|parse failed\|syntax error"; then
+                echo "      $(echo "$stderr" | head -1)"
+            fi
+            return 1
         fi
     fi
 }
