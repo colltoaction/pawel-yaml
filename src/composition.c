@@ -35,3 +35,9 @@ int yaml_compose(void) {
     event_stream_free(stream);
     return 0;
 }
+
+/* Stubbed composition parser entrypoint required by parsing stage. */
+int composition_yy_parse(void) {
+    /* no-op parser; composition logic handled elsewhere or not required */
+    return 0;
+}

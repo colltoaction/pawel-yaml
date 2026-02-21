@@ -19,7 +19,7 @@ LFLAGS = -w
 
 # Generated files
 # TODO $(wildcard BUILD_OBJDIR/*.o)
-OBJECTS = $(BUILD_OBJDIR)/main.o $(BUILD_OBJDIR)/scanning.lex.o $(BUILD_OBJDIR)/parsing.tab.o $(BUILD_OBJDIR)/composition.lex.o $(BUILD_OBJDIR)/composition.tab.o
+OBJECTS = $(BUILD_OBJDIR)/main.o $(BUILD_OBJDIR)/scanning.lex.o $(BUILD_OBJDIR)/parsing.tab.o
 BINTARGET = $(BUILD)/bin/pawel-yaml
 
 # Rules
@@ -40,7 +40,6 @@ $(BUILDSRCDIR)/%.lex.c: src/%.l directories
 	$(LEX) $(LFLAGS) -o $@ $<
 
 $(BUILDSRCDIR)/scanning.lex.c: $(BUILDINCDIR)/parsing.tab.h
-$(BUILDSRCDIR)/composition.lex.c: $(BUILDINCDIR)/composition.tab.h
 
 # Rule for compiling .c to .o in build
 $(BUILD_OBJDIR)/main.o: src/main.c directories

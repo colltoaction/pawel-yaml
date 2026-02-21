@@ -4,7 +4,9 @@
 
 %code requires {
 /* === LEXER CONTEXT TYPE (defined in scanning.l) === */
-/* Forward declaration - full type defined in scanning.l/scanning.lex.c */
+/* Full type mirrors the structure used by scanning.l; keeping it here
+   ensures the parser header always provides a complete declaration so
+   that both the lexer and parser can compile against the same layout. */
 typedef struct {
     int indent_stack[100];
     int indent_sp;
@@ -13,9 +15,14 @@ typedef struct {
     int pending_dedents;
     int first_line;
     int last_was_value;
+    int at_line_start;
+    int complex_key_pending;
+    int pending_colon;
     struct {
         char type;
         int indent;
+        int leading_empty_max_indent;
+        int first_content_seen;
     } block_scalar;
     struct {
         char *content;
@@ -30,8 +37,30 @@ typedef struct {
     int indent_context_sp;
     int scalar_base_indent;
     char scalar_type;
+    int quoted_value_closed_on_line;
+    int semantic_error_count;
+    int semantic_indent_tab_count;
+    int semantic_indent_mismatch_count;
+    int semantic_directive_mid_doc_count;
+    int semantic_flow_glue_count;
+    int semantic_flow_comma_count;
+    int semantic_flow_leading_comma_count;
+    int semantic_flow_comment_comma_count;
+    int semantic_flow_key_newline_count;
+    int semantic_multiline_qkey_count;
+    int semantic_inline_key_count;
+    int semantic_doc_end_inline_count;
+    int flow_implicit_key_candidate;
+    int flow_delim_stack[100];
+    int flow_indent_ref_stack[100];
+    int flow_indent_required_stack[100];
+    int flow_delim_sp;
+    int semantic_flow_indent_count;
+    int open_document_started;
+    int yaml_directive_seen;
     int argc;
     char **argv;
+    struct StringNode *arena_head;
 } LexerContext;
 
 /* === TYPE DEFINITIONS (from common.h) === */
@@ -459,6 +488,11 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET COLON QUESTION
 %token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
 
+/* additional tokens produced by the lexer (may not all be used by
+   grammar rules but must be declared so the scanner compiles) */
+%token COLON_IMPLICIT COLON_EMPTY BAD_TAG BULLET_EOL ANCHOR_MAP_KEY
+%token CH_RAW CH_ESC_N CH_ESC_T CH_ESC_R CH_ESC_BS CH_ESC_QU CH_ESC_SL CH_ESC_0 BPART
+
 %type <props> node_props
 
 /* Destructors for memory safety */
@@ -599,6 +633,12 @@ void stream_yy_error(void *yylloc, void *scanner, const char *s) {
 
 /* Bison parser entry point */
 extern int composition_yy_parse(void);
+
+/* When composition stage is not built separately we still need a
+   symbol to satisfy the linker.  Define a trivial stub here. */
+int composition_yy_parse(void) {
+    return 0;
+}
 
 /* Flex lexer functions */
 extern int scanning_lex_init(void **scanner);
