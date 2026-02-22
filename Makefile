@@ -4,6 +4,7 @@ SHELL = /bin/sh
 # Installation
 BUILD = ./build
 BINTARGET = $(BUILD)/bin/pawel-yaml
+DETECT_ISSUES_PY = python3 .agent/detect_issues.py
 
 SRC_MAKE = $(MAKE) -C src \
 	BUILD_ROOT="$(abspath $(BUILD))"
@@ -23,6 +24,9 @@ lex:
 check: $(BINTARGET)
 	./$< < test.yaml > /dev/null
 	@echo "✓ Basic sanity check passed"
+
+detect-issues: $(BINTARGET) yaml-test-suite
+	$(DETECT_ISSUES_PY) $(foreach tid,$(TEST),--test $(tid))
 
 setup: ensure-test-failures yaml-test-suite
 	@echo "✓ Setup complete (harness prerequisites ready)"
@@ -71,5 +75,5 @@ clean:
 	@mkdir -p $(BUILD)
 	rm -rf $(BUILD)/log $(BUILD)/tmp
 
-.PHONY: all directories check clean lex fuzz-lexer fuzz-lexer-strict fuzz-lexer-replay fuzz-lexer-replay-strict
+.PHONY: all directories check detect-issues clean lex fuzz-lexer fuzz-lexer-strict fuzz-lexer-replay fuzz-lexer-replay-strict
 .PHONY: setup ensure-test-failures yaml-test-suite

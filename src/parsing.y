@@ -447,16 +447,24 @@ static void ir_write_tag(IRBuilder *b, const char *tag) {
  * Document start marker
  * Format: +DOC
  */
-static void ir_doc_start(IRBuilder *b) {
-    ir_write(b, "+DOC\n");
+static void ir_doc_start(IRBuilder *b, int explicit_start) {
+    if (explicit_start) {
+        ir_write(b, "+DOC ---\n");
+    } else {
+        ir_write(b, "+DOC\n");
+    }
 }
 
 /**
  * Document end marker
  * Format: -DOC
  */
-static void ir_doc_end(IRBuilder *b) {
-    ir_write(b, "-DOC\n");
+static void ir_doc_end(IRBuilder *b, int explicit_end) {
+    if (explicit_end) {
+        ir_write(b, "-DOC ...\n");
+    } else {
+        ir_write(b, "-DOC\n");
+    }
 }
 
 /**
@@ -719,20 +727,59 @@ documents:
     ;
 
 bare_doc_after_explicit:
-    DOC_END doc_start node doc_end
-    | DOC_END doc_start INDENT node DEDENT doc_end
+    DOC_END[separator] doc_start_implicit node_with_indent doc_end_implicit
     ;
 
-doc_start:
-    %empty { ir_doc_start(ir); add_event(EVENT_DOCUMENT_START); }
+doc_start_implicit:
+    doc_start_implicit_ir doc_start_event
     ;
 
-doc_end:
-    %empty { ir_doc_end(ir); add_event(EVENT_DOCUMENT_END); }
+doc_start_explicit:
+    doc_start_explicit_ir doc_start_event
+    ;
+
+doc_start_implicit_ir:
+    %empty { ir_doc_start(ir, 0); }
+    ;
+
+doc_start_explicit_ir:
+    %empty { ir_doc_start(ir, 1); }
+    ;
+
+doc_start_event:
+    %empty { add_event(EVENT_DOCUMENT_START); }
+    ;
+
+doc_end_implicit:
+    doc_end_ir_implicit doc_end_event
+    ;
+
+doc_end_explicit:
+    doc_end_ir_explicit doc_end_event
+    ;
+
+doc_end_ir_implicit:
+    %empty { ir_doc_end(ir, 0); }
+    ;
+
+doc_end_ir_explicit:
+    %empty { ir_doc_end(ir, 1); }
+    ;
+
+doc_end_event:
+    %empty { add_event(EVENT_DOCUMENT_END); }
     ;
 
 doc_empty:
-    %empty { ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    doc_empty_ir doc_empty_event
+    ;
+
+doc_empty_ir:
+    %empty { ir_scalar_empty(ir); }
+    ;
+
+doc_empty_event:
+    %empty { add_scalar_event("", ':'); }
     ;
 
 directives:
@@ -779,10 +826,8 @@ indented_node:
 node:
     scalar_node
     | alias_node
-    | sequence_no_props
-    | node_props[p] sequence_with_props { free($p.anchor); free($p.tag); }
-    | mapping_no_props
-    | node_props[p] mapping_with_props { free($p.anchor); free($p.tag); }
+    | collection_no_props
+    | node_props[p] collection_with_props { free($p.anchor); free($p.tag); }
     | error { RECOVER("Recovering at node boundary"); }
     ;
 
@@ -842,9 +887,36 @@ node_props:
     | error { RECOVER("Invalid node properties"); $$.anchor = NULL; $$.tag = NULL; }
     ;
 
+/* Explicit collection abstraction: values (SEQ) vs key-values (MAP). */
+collection_no_props:
+    collection_values_no_props
+    | collection_pairs_no_props
+    ;
+
+collection_with_props:
+    collection_values_with_props
+    | collection_pairs_with_props
+    ;
+
+collection_values_no_props:
+    sequence_no_props
+    ;
+
+collection_values_with_props:
+    sequence_with_props
+    ;
+
+collection_pairs_no_props:
+    mapping_no_props
+    ;
+
+collection_pairs_with_props:
+    mapping_with_props
+    ;
+
 sequence_no_props:
-    seq_start seq_entries seq_end %dprec 3
-    | LBRACK flow_seq_init flow_seq_entries RBRACK seq_end flow_lvl_dec
+    seq_start collection_value_entries seq_end %dprec 3
+    | LBRACK flow_seq_init collection_flow_value_entries RBRACK seq_end flow_lvl_dec
     ;
 
 flow_lvl_dec:
@@ -864,13 +936,13 @@ flow_seq_init:
     ;
 
 sequence_with_props:
-    seq_start_with_props seq_entries seq_end %dprec 3
+    seq_start_with_props collection_value_entries seq_end %dprec 3
     | indented_seq_with_props seq_end %dprec 3
-    | LBRACK flow_seq_init_with_props flow_seq_entries RBRACK seq_end flow_lvl_dec
+    | LBRACK flow_seq_init_with_props collection_flow_value_entries RBRACK seq_end flow_lvl_dec
     ;
 
 indented_seq_with_props:
-    INDENT seq_start_with_props seq_entries DEDENT
+    INDENT seq_start_with_props collection_value_entries DEDENT
     ;
 
 seq_start_with_props:
@@ -881,13 +953,13 @@ flow_seq_init_with_props:
     %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
     ;
 
-seq_entries:
+collection_value_entries:
     seq_entry
-    | seq_entries seq_entry
+    | collection_value_entries seq_entry
     ;
 
 indented_seq_entries:
-    INDENT seq_entries DEDENT
+    INDENT collection_value_entries DEDENT
     ;
 
 seq_entry:
@@ -900,11 +972,11 @@ seq_entry:
     | BULLET_EOL error { RECOVER("Malformed sequence item"); } %dprec 2
     ;
 
-flow_seq_entries:
+collection_flow_value_entries:
     %empty
     | flow_seq_entry
-    | flow_seq_entries COMMA flow_seq_entry
-    | flow_seq_entries COMMA
+    | collection_flow_value_entries COMMA flow_seq_entry
+    | collection_flow_value_entries COMMA
     ;
 
 flow_seq_entry:
@@ -914,8 +986,8 @@ flow_seq_entry:
     ;
 
 mapping_no_props:
-    map_init map_entries map_end
-    | LBRACE flow_map_init flow_map_entries RBRACE map_end flow_lvl_dec
+    map_init collection_pair_entries map_end
+    | LBRACE flow_map_init collection_flow_pair_entries RBRACE map_end flow_lvl_dec
     ;
 
 map_init:
@@ -931,13 +1003,13 @@ flow_map_init:
     ;
 
 mapping_with_props:
-    map_start_with_props map_entries map_end
+    map_start_with_props collection_pair_entries map_end
     | indented_map_with_props map_end
-    | LBRACE flow_map_init_with_props flow_map_entries RBRACE map_end flow_lvl_dec
+    | LBRACE flow_map_init_with_props collection_flow_pair_entries RBRACE map_end flow_lvl_dec
     ;
 
 indented_map_with_props:
-    INDENT map_start_with_props map_entries DEDENT
+    INDENT map_start_with_props collection_pair_entries DEDENT
     ;
 
 map_start_with_props:
@@ -948,13 +1020,13 @@ flow_map_init_with_props:
     %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
     ;
 
-map_entries:
+collection_pair_entries:
     map_entry
-    | map_entries map_entry
+    | collection_pair_entries map_entry
     ;
 
 indented_map_entries:
-    INDENT map_entries DEDENT
+    INDENT collection_pair_entries DEDENT
     ;
 
 map_key:
@@ -982,11 +1054,11 @@ map_entry:
     | error { RECOVER("Invalid mapping structure"); }
     ;
 
-flow_map_entries:
+collection_flow_pair_entries:
     %empty
     | flow_map_entry
-    | flow_map_entries COMMA flow_map_entry
-    | flow_map_entries COMMA
+    | collection_flow_pair_entries COMMA flow_map_entry
+    | collection_flow_pair_entries COMMA
     ;
 
 flow_map_entry:
