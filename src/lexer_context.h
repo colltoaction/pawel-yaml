@@ -7,7 +7,6 @@
 typedef struct {
     int indent_stack[100];
     int indent_sp;
-    int flow_level;
     int expecting_value;
     int pending_dedents;
     int first_line;

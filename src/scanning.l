@@ -384,6 +384,20 @@ static int flow_close_follow_char_ok(int c) {
     return 0;
 }
 
+/*
+ * Parse explicit indentation indicator from a block scalar header.
+ * Returns 1..9 when present, otherwise 0.
+ */
+static int parse_block_indent_indicator(const char *text) {
+    const char *p;
+    if (!text || (text[0] != '|' && text[0] != '>')) return 0;
+    for (p = text + 1; *p; p++) {
+        if (*p >= '1' && *p <= '9') return *p - '0';
+        if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == '#') break;
+    }
+    return 0;
+}
+
 /* static void init_scalar(LexerContext *ctx) {
     ctx_scalar_init(ctx);
 } */
@@ -865,6 +879,77 @@ PKEY_BODY [^:\n\r]*
 "?"/[ \t\n]      { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
 "?"/{VSPACE}     { CTX->at_line_start = 0; CTX->complex_key_pending = 1; CTX->expecting_value = 1; return QUESTION; }
 "!!!"{NSCAL}*    { yyerror(yylloc, yyscanner, "syntax error, malformed tag (triple '!')"); return BAD_TAG; }
+"&"{ANCHOR_CHAR}+[ \t]+{TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Anchored+tagged key: &anchor !!tag key: value -> "&anchor\tkey" */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+
+    char *text = strdup(yytext);
+    char *space = strchr(text, ' ');
+    char *rest = NULL;
+    char *packed = NULL;
+    size_t packed_len = 0;
+
+    if (!space) {
+        yylval->string = text;
+        return MAP_KEY;
+    }
+
+    *space = '\0'; /* anchor part */
+    rest = space + 1;
+    while (*rest == ' ' || *rest == '\t') rest++;
+    if (*rest == '!') {
+        while (*rest && *rest != ' ' && *rest != '\t') rest++;
+        while (*rest == ' ' || *rest == '\t') rest++;
+    }
+    trim_trailing_spaces(rest);
+
+    packed_len = strlen(text) + 1 + strlen(rest) + 1;
+    packed = (char*)malloc(packed_len);
+    if (!packed) {
+        free(text);
+        yyerror(yylloc, yyscanner, "memory allocation failed");
+        return 0;
+    }
+    snprintf(packed, packed_len, "%s\t%s", text, rest);
+    free(text);
+    yylval->string = packed;
+    return ANCHOR_MAP_KEY;
+}
+{TAG_TOKEN}[ ]+"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Tagged+anchored key: !!tag &anchor key: value -> "&anchor\tkey" */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+
+    char *text = strdup(yytext);
+    char *anchor = strchr(text, '&');
+    char *space = anchor ? strchr(anchor, ' ') : NULL;
+    char *rest = NULL;
+    char *packed = NULL;
+    size_t packed_len = 0;
+
+    if (!anchor || !space) {
+        yylval->string = text;
+        return MAP_KEY;
+    }
+
+    *space = '\0'; /* anchor part */
+    rest = space + 1;
+    while (*rest == ' ' || *rest == '\t') rest++;
+    trim_trailing_spaces(rest);
+
+    packed_len = strlen(anchor) + 1 + strlen(rest) + 1;
+    packed = (char*)malloc(packed_len);
+    if (!packed) {
+        free(text);
+        yyerror(yylloc, yyscanner, "memory allocation failed");
+        return 0;
+    }
+    snprintf(packed, packed_len, "%s\t%s", anchor, rest);
+    free(text);
+    yylval->string = packed;
+    return ANCHOR_MAP_KEY;
+}
 {TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Tagged map key: !!str key: value (tag prefix is discarded, only key text returned) */
     yylval->string = extract_key_after_prefix(yytext);
@@ -876,6 +961,48 @@ PKEY_BODY [^:\n\r]*
 "!!"{NSCAL}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+"!"{NSCAL}* { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
+"&"{ANCHOR_CHAR}+[ \t]+\"[^\\"\n\r]*\"[ ]*/":"([ \t\n]|{VSPACE}) {
+    /* Anchored double-quoted map key: &anchor "key": value */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+
+    char *text = strdup(yytext);
+    char *sep = strpbrk(text, " \t");
+    if (sep) {
+        char *key = sep + 1;
+        *sep = '\t';
+        while (*key == ' ' || *key == '\t') key++;
+        trim_trailing_spaces(key);
+        size_t klen = strlen(key);
+        if (klen >= 2 && key[0] == '"' && key[klen - 1] == '"') {
+            memmove(key, key + 1, klen - 2);
+            key[klen - 2] = '\0';
+        }
+    }
+    yylval->string = text;
+    return ANCHOR_MAP_KEY;
+}
+"&"{ANCHOR_CHAR}+[ \t]+'[^'\n\r]*'[ ]*/":"([ \t\n]|{VSPACE}) {
+    /* Anchored single-quoted map key: &anchor 'key': value */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+
+    char *text = strdup(yytext);
+    char *sep = strpbrk(text, " \t");
+    if (sep) {
+        char *key = sep + 1;
+        *sep = '\t';
+        while (*key == ' ' || *key == '\t') key++;
+        trim_trailing_spaces(key);
+        size_t klen = strlen(key);
+        if (klen >= 2 && key[0] == '\'' && key[klen - 1] == '\'') {
+            memmove(key, key + 1, klen - 2);
+            key[klen - 2] = '\0';
+        }
+    }
+    yylval->string = text;
+    return ANCHOR_MAP_KEY;
+}
 "&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Anchored map key: &anchor key: value (returns tab-delimited "&anchor\tkey") */
     CTX->at_line_start = 0;
@@ -887,6 +1014,34 @@ PKEY_BODY [^:\n\r]*
     if (space) {
         *space = '\t';  /* Tab delimiter separates anchor from key */
         trim_trailing_spaces(space + 1);  /* Trim key part only */
+    }
+    yylval->string = text;
+    return ANCHOR_MAP_KEY;
+}
+"&"{ANCHOR_CHAR}+[ \t]+\[[^\]\n\r]*\][ ]*/":"([ \t\n]|{VSPACE}) {
+    /* Anchored flow-sequence key: &anchor [ ... ]: value */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+
+    char *text = strdup(yytext);
+    char *space = strchr(text, ' ');
+    if (space) {
+        *space = '\t';
+        trim_trailing_spaces(space + 1);
+    }
+    yylval->string = text;
+    return ANCHOR_MAP_KEY;
+}
+"&"{ANCHOR_CHAR}+[ \t]+\{[^\}\n\r]*\}[ ]*/":"([ \t\n]|{VSPACE}) {
+    /* Anchored flow-mapping key: &anchor { ... }: value */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+
+    char *text = strdup(yytext);
+    char *space = strchr(text, ' ');
+    if (space) {
+        *space = '\t';
+        trim_trailing_spaces(space + 1);
     }
     yylval->string = text;
     return ANCHOR_MAP_KEY;
@@ -1286,20 +1441,26 @@ PKEY_BODY [^:\n\r]*
     if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
     return SSCALAR;
 }
-"|"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      {
+"|"([1-9][-+]?|[-+][1-9]?|[-+]|[1-9])?[ \t]*(\n|[ \t]+#.*)      {
+    int explicit_indent = parse_block_indent_indicator(yytext);
     CTX->expecting_value = 0;
     CTX->last_was_value = 0;
     CTX->block_scalar.type = '|';
-    CTX->block_scalar.indent = -1;
+    CTX->block_scalar.indent = explicit_indent > 0
+        ? CTX->indent_stack[CTX->indent_sp] + explicit_indent
+        : -1;
     CTX->block_scalar.leading_empty_max_indent = 0;
     CTX->block_scalar.first_content_seen = 0;
     BEGIN(BLOCK_SCALAR);
 }
-">"[1-9]*[-+]*[ \t]*(\n|[ \t]+#.*)      {
+">"([1-9][-+]?|[-+][1-9]?|[-+]|[1-9])?[ \t]*(\n|[ \t]+#.*)      {
+    int explicit_indent = parse_block_indent_indicator(yytext);
     CTX->expecting_value = 0;
     CTX->last_was_value = 0;
     CTX->block_scalar.type = '>';
-    CTX->block_scalar.indent = -1;
+    CTX->block_scalar.indent = explicit_indent > 0
+        ? CTX->indent_stack[CTX->indent_sp] + explicit_indent
+        : -1;
     CTX->block_scalar.leading_empty_max_indent = 0;
     CTX->block_scalar.first_content_seen = 0;
     BEGIN(BLOCK_SCALAR);
@@ -1498,6 +1659,17 @@ PKEY_BODY [^:\n\r]*
     /* Colon followed by space/tab/newline ends the scalar */
     yyless(0);
     BEGIN(INITIAL);
+}
+
+<PLAIN_SCALAR_CONT>":"/[ \t]*[,}] {
+    /* In explicit-key contexts, ':' before ','/'}' is a key/value separator. */
+    if (CTX->complex_key_pending) {
+        yyless(0);
+        BEGIN(INITIAL);
+    } else {
+        yylval->string = strdup(":");
+        return CH_RAW;
+    }
 }
 
 <PLAIN_SCALAR_CONT>\n[ ]*-[ \t][^\n\r]*/\n {

@@ -1,0 +1,49 @@
+meta:
+  generated_at: '2026-02-22T17:14:39Z'
+  suite_dir: build/lib/yaml-test-suite/src
+  total_tests: 351
+  total_passes: 310
+  total_failures: 41
+  scoring: fail-true-aware
+failing:
+- 3ALJ
+- 57H4
+- 5U3A
+- 6BCT
+- 6S55
+- 7ZZ5
+- BF9H
+- BS4K
+- CFD4
+- CT4Q
+- DC7X
+- DFF7
+- FBC9
+- FH7J
+- FRK4
+- GDY7
+- H7J7
+- J3BT
+- KK5P
+- M5C3
+- M7A3
+- NKF9
+- PW8X
+- QB6E
+- QLJ7
+- S3PD
+- SKE5
+- TD5N
+- U3XV
+- UGM3
+- UKK6
+- UT92
+- V9D5
+- W42U
+- W4TN
+- XLQ9
+- XW4D
+- Y79Y
+- ZF4X
+- ZK9H
+- ZVH3

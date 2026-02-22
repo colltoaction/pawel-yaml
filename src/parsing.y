@@ -123,8 +123,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 71
-%expect-rr 124
+%expect 65
+%expect-rr 134
 
 %{
 #include <stdlib.h>
@@ -172,7 +172,6 @@ static int has_arg(const char *flag) {
 int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 #define yylex scanning_lex
 void parsing_yy_error(void *yylloc, void *scanner, const char *s);
-extern void* scanning_get_extra(void *scanner);
 
 /* Output buffer for RML IR */
 char *rml_ir_buf = NULL;
@@ -676,15 +675,16 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
 
 %type <props> node_props
+%type <props> empty_props
 %type <scalar> scalar_item
 %type <scalar> map_key
 %type <string> scalar_parts qscalar qparts qpart bscalar
 
 /* TODO Fix destructor double free in GLR mode + manual free in actions */
-/* Destructors removed to avoid double free in GLR mode + manual free in actions */
-/* %destructor { if ($$) { free($$); $$ = NULL; } } <string> */
-/* %destructor { if ($$.anchor) { free($$.anchor); $$.anchor = NULL; } if ($$.tag) { free($$.tag); $$.tag = NULL; } } <props> */
-/* %destructor { if ($$.value) { free($$.value); $$.value = NULL; } } <scalar> */
+/* Destructors handle cleanup when symbols are discarded by the parser. */
+%destructor { if ($$) { free($$); $$ = NULL; } } <string>
+%destructor { if ($$.anchor) { free($$.anchor); $$.anchor = NULL; } if ($$.tag) { free($$.tag); $$.tag = NULL; } } <props>
+%destructor { if ($$.value) { free($$.value); $$.value = NULL; } } <scalar>
 
 %locations
 
@@ -789,8 +789,8 @@ directives:
 
 directive:
     YAML_DIRECTIVE
-    | TAG_DIRECTIVE SCALAR SCALAR { free($2); free($3); }
-    | TAG_DIRECTIVE TAG SCALAR { free($2); free($3); }
+    | TAG_DIRECTIVE SCALAR SCALAR
+    | TAG_DIRECTIVE TAG SCALAR
     ;
 
 explicit_documents:
@@ -827,18 +827,31 @@ node:
     scalar_node
     | alias_node
     | collection_no_props
-    | node_props[p] collection_with_props { free($p.anchor); free($p.tag); }
+    | collection_no_props
     | error { RECOVER("Recovering at node boundary"); }
     ;
 
+/* Value-position node (after COLON): avoid non-indented block collections
+ * after bare node properties to reduce spurious ambiguities.
+ */
+value_node:
+    scalar_node
+    | alias_node
+    | collection_no_props
+    | value_collection_with_props
+    | ANCHOR[a] indent[l1] TAG[t] indent[l2]
+    | TAG[t] indent[l1] ANCHOR[a] indent[l2]
+    | error { RECOVER("Recovering at value node boundary"); }
+    ;
+
 scalar_node:
-    scalar_item[s] { ir_scalar(ir, $s.value, $s.type, NULL, NULL); add_scalar_event($s.value, $s.type); free($s.value); }
-    | node_props[p] scalar_item[s] { ir_scalar(ir, $s.value, $s.type, $p.anchor, $p.tag); add_scalar_event($s.value, $s.type); free($s.value); free($p.anchor); free($p.tag); }
-    | node_props[p] { ir_scalar(ir, "", ':', $p.anchor, $p.tag); add_scalar_event("", ':'); free($p.anchor); free($p.tag); }
+    empty_props[props] scalar_payload[s] { ir_scalar(ir, $s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type); }
+    | node_props[props] scalar_payload[s] { ir_scalar(ir, $s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type); }
+    | node_props[props] { ir_scalar(ir, "", ':', $props.anchor, $props.tag); add_scalar_event("", ':'); }
     ;
 
 alias_node:
-    ALIAS[a] { ir_alias(ir, $a); add_alias_event($a); free($a); }
+    ALIAS[a] { ir_alias(ir, $a); add_alias_event($a); }
     ;
 
 scalar_item:
@@ -846,6 +859,13 @@ scalar_item:
     | qscalar { $$.type = '"'; $$.value = $1; }
     | SSCALAR[val] { $$.type = '\''; $$.value = $val; }
     | bscalar { $$.type = '|'; /* Placeholder type, fix later */ $$.value = $1; }
+    ;
+
+indented_scalar_item:
+
+scalar_payload:
+    scalar_item[s] { $$ = $s; }
+    | indented_scalar_item[s] { $$ = $s; }
     ;
 
 qscalar:
@@ -864,18 +884,22 @@ qparts:
 
 qpart:
     CH_RAW { $$ = $1; }
-    | CH_ESC_N { $$ = strdup("\n"); free($1); }
-    | CH_ESC_T { $$ = strdup("\t"); free($1); }
-    | CH_ESC_R { $$ = strdup("\r"); free($1); }
-    | CH_ESC_BS { $$ = strdup("\\"); free($1); }
-    | CH_ESC_QU { $$ = strdup("\""); free($1); }
-    | CH_ESC_SL { $$ = strdup("/"); free($1); }
-    | CH_ESC_0 { $$ = strdup("\0"); free($1); }
+    | CH_ESC_N { $$ = strdup("\n"); }
+    | CH_ESC_T { $$ = strdup("\t"); }
+    | CH_ESC_R { $$ = strdup("\r"); }
+    | CH_ESC_BS { $$ = strdup("\\"); }
+    | CH_ESC_QU { $$ = strdup("\""); }
+    | CH_ESC_SL { $$ = strdup("/"); }
+    | CH_ESC_0 { $$ = strdup("\0"); }
     ;
 
 bscalar:
     BPART { $$ = $1; }
     | bscalar BPART { $$ = concat_and_free($1, $2); }
+    ;
+
+empty_props:
+    %empty { $$.anchor = NULL; $$.tag = NULL; }
     ;
 
 node_props:
@@ -889,34 +913,27 @@ node_props:
 
 /* Explicit collection abstraction: values (SEQ) vs key-values (MAP). */
 collection_no_props:
-    collection_values_no_props
-    | collection_pairs_no_props
+    sequence_no_props
+    | mapping_no_props
     ;
 
 collection_with_props:
-    collection_values_with_props
-    | collection_pairs_with_props
-    ;
-
-collection_values_no_props:
-    sequence_no_props
-    ;
-
-collection_values_with_props:
     sequence_with_props
+    | mapping_with_props
     ;
 
-collection_pairs_no_props:
-    mapping_no_props
-    ;
-
-collection_pairs_with_props:
-    mapping_with_props
+value_collection_with_props:
+    value_sequence_with_props
+    | value_mapping_with_props
     ;
 
 sequence_no_props:
     seq_start collection_value_entries seq_end %dprec 3
-    | LBRACK flow_seq_init collection_flow_value_entries RBRACK seq_end flow_lvl_dec
+    | flow_sequence_no_props
+    ;
+
+flow_sequence_no_props:
+    flow_lbrack flow_seq_init collection_flow_value_entries flow_rbrack seq_end flow_lvl_dec
     ;
 
 flow_lvl_dec:
@@ -941,16 +958,11 @@ sequence_with_props:
     | LBRACK flow_seq_init_with_props collection_flow_value_entries RBRACK seq_end flow_lvl_dec
     ;
 
-indented_seq_with_props:
-    INDENT seq_start_with_props collection_value_entries DEDENT
-    ;
-
-seq_start_with_props:
-    %empty { ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
-    ;
-
-flow_seq_init_with_props:
-    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_SEQUENCE_START); }
+value_sequence_with_props:
+    node_props[props]
+    | node_props[props]
+    | node_props[props]
+    | node_props[props]
     ;
 
 collection_value_entries:
@@ -964,11 +976,10 @@ indented_seq_entries:
 
 seq_entry:
     BULLET node %dprec 5
-    | BULLET BULLET { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } node indented_seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 6
-    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node indented_map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
+    | BULLET node indented_seq_entries %dprec 6
+    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); } COLON node indented_map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
     | BULLET_EOL seq_entry_empty_scalar %dprec 2
-    | BULLET_EOL { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } indented_map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 4
-    | BULLET_EOL indented_seq_entries %dprec 3
+    | BULLET_EOL indented_node %dprec 4
     | BULLET error { RECOVER("Malformed sequence item"); } %dprec 2
     | BULLET_EOL error { RECOVER("Malformed sequence item"); } %dprec 2
     ;
@@ -994,7 +1005,7 @@ collection_flow_value_entries:
 
 flow_seq_entry:
     node
-    | node COLON node %dprec 1
+    | flow_map_entry_pair %dprec 1
     | error { RECOVER("Malformed flow sequence entry"); }
     ;
 
@@ -1016,21 +1027,13 @@ flow_map_init:
     ;
 
 mapping_with_props:
-    map_start_with_props collection_pair_entries map_end
-    | indented_map_with_props map_end
-    | LBRACE flow_map_init_with_props collection_flow_pair_entries RBRACE map_end flow_lvl_dec
-    ;
-
-indented_map_with_props:
-    INDENT map_start_with_props collection_pair_entries DEDENT
-    ;
-
-map_start_with_props:
-    %empty { ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
-    ;
-
-flow_map_init_with_props:
-    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, $<props>0.anchor, $<props>0.tag); add_event(EVENT_MAPPING_START); }
+    value_mapping_with_props
+    | node_props[props]
+value_mapping_with_props:
+    node_props[props]
+      indent[lvl]
+    | node_props[props]
+      LBRACE
     ;
 
 collection_pair_entries:
@@ -1042,6 +1045,10 @@ indented_map_entries:
     INDENT collection_pair_entries DEDENT
     ;
 
+indented_value_node:
+    INDENT value_node DEDENT
+    ;
+
 map_key:
     MAP_KEY[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; }
     | QMAP_KEY[val] { $$.type = '"'; $$.value = $val; $$.anchor = NULL; }
@@ -1050,14 +1057,14 @@ map_key:
     ;
 
 map_entry:
-    map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node %dprec 1
-    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON indented_node %dprec 2
-    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
-    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
-    | QUESTION node COLON node %dprec 2
-    | QUESTION indented_node COLON node %dprec 3
-    | QUESTION node COLON indented_node %dprec 3
-    | QUESTION indented_node COLON indented_node %dprec 4
+    map_key[k] { emit_map_key(&$k); } COLON value_node %dprec 1
+    | map_key[k] { emit_map_key(&$k); } COLON indented_value_node %dprec 2
+    | map_key[k] { emit_map_key(&$k); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    | map_key[k] { emit_map_key(&$k); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
+    | QUESTION node COLON value_node %dprec 2
+    | QUESTION indented_node COLON value_node %dprec 3
+    | QUESTION node COLON indented_value_node %dprec 3
+    | QUESTION indented_node COLON indented_value_node %dprec 4
     | QUESTION node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
     | QUESTION indented_node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
     | MAP_KEY error { RECOVER("Malformed mapping entry"); }
@@ -1075,11 +1082,21 @@ collection_flow_pair_entries:
     ;
 
 flow_map_entry:
+    node
+    | flow_map_entry_pair
+    | error { RECOVER("Malformed flow mapping entry"); }
+    ;
+
+flow_map_entry_pair:
     node COLON node %dprec 3
     | node COLON_EMPTY { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
-    | node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
     | node COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
-    | error { RECOVER("Malformed flow mapping entry"); }
+    | COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } node %dprec 3
+    | COLON_EMPTY { ir_scalar_empty(ir); add_scalar_event("", ':'); ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
+    | QUESTION node COLON node %dprec 4
+    | QUESTION node COLON_EMPTY { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | QUESTION node COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
+    | QUESTION { ir_scalar_empty(ir); add_scalar_event("", ':'); ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
     ;
 
 %%
