@@ -9,10 +9,11 @@ FAILURES_FILE = tests/legacy/reports/TEST_FAILURES.yaml
 
 SRC_MAKE = $(MAKE) -C src \
 	BUILD_ROOT="$(abspath $(BUILD))"
+SRC_DEPS = $(wildcard src/*.c src/*.h src/*.y src/*.l src/Makefile)
 
 all: $(BINTARGET)
 
-$(BINTARGET):
+$(BINTARGET): $(SRC_DEPS)
 	@$(SRC_MAKE) all
 
 directories:

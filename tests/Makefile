@@ -33,7 +33,7 @@ check:
 	@$(MAKE) -C $(ROOT) check
 	@$(MAKE) -C $(ROOT)/tests grammar-loops
 
-grammar-loops:
+grammar-loops: build
 	@$(MAKE) -C $(ROOT)/tests/grammar-loops check $(if $(CASE),CASE=$(CASE),)
 
 grammar-loops-expect:
@@ -59,10 +59,10 @@ runner:
 update-failures:
 	@cd $(ROOT) && python3 $(SCRIPTS)/test_runner.py --update
 
-verify-fast:
+verify-fast: build
 	@cd $(ROOT) && $(SCRIPTS)/verify_suite_fast.sh
 
-verify-full:
+verify-full: build
 	@cd $(ROOT) && $(SCRIPTS)/verify_full_suite.sh
 
 tooling:

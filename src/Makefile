@@ -55,6 +55,8 @@ $(BUILDSRCDIR)/%.lex.c: $(SRC_DIR)/%.l | directories
 
 $(LEX_C_GENERATED): $(TAB_H_GENERATED)
 
+$(LEX_OBJECTS): $(TAB_H_GENERATED)
+
 # Rule for compiling src/*.c to .o
 $(BUILD_OBJDIR)/%.o: $(SRC_DIR)/%.c | directories
 	$(CC) $(COMPILE_CFLAGS) -c $< -o $@
