@@ -3,57 +3,21 @@ SHELL = /bin/sh
 
 # Installation
 BUILD = ./build
-BINDIR = $(BUILD)/bin
-BUILDSRCDIR = $(BUILD)/src
-BUILDINCDIR = $(BUILD)/inc
-BUILD_OBJDIR = $(BUILD)/obj
-VPATH = src:$(BUILDSRCDIR):$(BUILDINCDIR)
-
-# Build
-CC = gcc
-LEX = flex
-YACC = bison
-CFLAGS = -Wall -pedantic -g -I$(BUILDINCDIR) -Isrc
-YFLAGS = -d
-LFLAGS = -w
-
-# Generated files
-# TODO $(wildcard BUILD_OBJDIR/*.o)
-OBJECTS = $(BUILD_OBJDIR)/main.o $(BUILD_OBJDIR)/composition.o $(BUILD_OBJDIR)/scanning.lex.o $(BUILD_OBJDIR)/parsing.tab.o $(BUILD_OBJDIR)/event.lex.o $(BUILD_OBJDIR)/event.tab.o
 BINTARGET = $(BUILD)/bin/pawel-yaml
 
-# Rules
+SRC_MAKE = $(MAKE) -C src \
+	BUILD_ROOT="$(abspath $(BUILD))"
+
 all: $(BINTARGET)
 
+$(BINTARGET):
+	@$(SRC_MAKE) all
+
 directories:
-	@mkdir -p $(BUILD) $(BUILD)/bin $(BUILDSRCDIR) $(BUILDINCDIR) $(BUILD_OBJDIR)
+	@$(SRC_MAKE) directories
 
-# Grammar gen tabs
-$(BUILDSRCDIR)/%.tab.c $(BUILDINCDIR)/%.tab.h: src/%.y directories
-	$(YACC) $(YFLAGS) -o $(BUILDSRCDIR)/$*.tab.c $<
-	@if [ -f $(BUILDSRCDIR)/$*.tab.h ]; then mv $(BUILDSRCDIR)/$*.tab.h $(BUILDINCDIR)/$*.tab.h; fi
-
-# Grammar gen lex
-LEXTARGETS = $(patsubst src/%.l, $(BUILDSRCDIR)/%.lex.c, $(wildcard src/*.l))
-lex: $(LEXTARGETS)
-
-$(BUILDSRCDIR)/%.lex.c: src/%.l directories
-	$(LEX) $(LFLAGS) -o $@ $<
-
-$(BUILDSRCDIR)/scanning.lex.c: $(BUILDINCDIR)/parsing.tab.h
-$(BUILDSRCDIR)/event.lex.c: $(BUILDINCDIR)/event.tab.h
-$(BUILD_OBJDIR)/composition.o: $(BUILDINCDIR)/event.tab.h
-
-# Rule for compiling src/*.c to .o
-$(BUILD_OBJDIR)/%.o: src/%.c directories
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Rule for compiling generated *.c to .o
-$(BUILD_OBJDIR)/%.o: $(BUILDSRCDIR)/%.c directories
-	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-variable -Wno-error=cpp -c $< -o $@
-
-$(BINTARGET): $(OBJECTS) directories
-	$(CC) $(OBJECTS) -o $@
+lex:
+	@$(SRC_MAKE) lex
 
 # Testing
 check: $(BINTARGET)
@@ -103,8 +67,9 @@ fuzz-lexer-replay-strict: $(BINTARGET)
 
 # Cleanup
 clean:
+	@$(SRC_MAKE) clean
 	@mkdir -p $(BUILD)
-	rm -rf $(BINDIR) $(BUILDSRCDIR) $(BUILDINCDIR) $(BUILD_OBJDIR) $(BUILD)/log $(BUILD)/tmp
+	rm -rf $(BUILD)/log $(BUILD)/tmp
 
 .PHONY: all directories check clean lex fuzz-lexer fuzz-lexer-strict fuzz-lexer-replay fuzz-lexer-replay-strict
 .PHONY: setup ensure-test-failures yaml-test-suite
