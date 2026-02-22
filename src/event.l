@@ -1,5 +1,4 @@
 %{
-#include <string.h>
 #include "event.tab.h"
 #define yylval event_yy_lval
 %}
@@ -11,48 +10,58 @@
 
 %%
 
-"+STR"          return E_STR_START;
-"-STR"          return E_STR_END;
-"+DOC"          return E_DOC_START;
-"-DOC"          return E_DOC_END;
-"+SEQ"          return E_SEQ_START;
-"-SEQ"          return E_SEQ_END;
-"+MAP"          return E_MAP_START;
-"-MAP"          return E_MAP_END;
-"---"           return E_DOC_EXPLICIT;
-"..."           return E_DOC_END_EXPLICIT;
-
-"=VAL"          return E_SCALAR;
-"=ALI"          return E_ALIAS;
-
-"&"[^ \t\n\r]+ {
-    yylval.sval = strdup(yytext + 1);
-    return E_ANCHOR;
+"+"("STR"|"DOC"|"SEQ"|"MAP") {
+    yyless(1);
+    return '+';
 }
-
-"<"[^>]+">" {
-    yylval.sval = strdup(yytext + 1);
-    yylval.sval[strlen(yylval.sval)-1] = '\0';
-    return E_TAG;
+"-"("STR"|"DOC"|"SEQ"|"MAP") {
+    yyless(1);
+    return '-';
 }
-
-"!"[a-zA-Z0-9_:/\.\-!%]+ {
-    yylval.sval = strdup(yytext);
-    return E_TAG;
+"="("VAL"|"ALI") {
+    yyless(1);
+    return '=';
 }
-
-"!" {
-    yylval.sval = strdup("!");
-    return E_TAG;
+":"/[^\n\r] {
+    BEGIN(SCALAR_VAL);
+    return ':';
 }
-
+":"/\n {
+    BEGIN(SCALAR_VAL);
+    return ':';
+}
 ":" {
     BEGIN(SCALAR_VAL);
     return ':';
 }
 
+"STR"           return STR;
+"DOC"           return DOC;
+"SEQ"           return SEQ;
+"MAP"           return MAP;
+"VAL"           return VAL;
+"ALI"           return ALI;
+
+"---"           return E_DOC_EXPLICIT;
+"..."           return E_DOC_END_EXPLICIT;
+
+"&"[^ \t\n\r]+ {
+    return E_ANCHOR;
+}
+
+"<"[^>]+">" {
+    return E_TAG;
+}
+
+"!"[a-zA-Z0-9_:/\.\-!%]+ {
+    return E_TAG;
+}
+
+"!" {
+    return E_TAG;
+}
+
 <SCALAR_VAL>[^\n\r]+ {
-    yylval.sval = strdup(yytext);
     BEGIN(0);
     return E_IDENTIFIER;
 }
@@ -83,12 +92,10 @@
 }
 
 "*"[^ \t\n\r]+ {
-    yylval.sval = strdup(yytext + 1);
     return E_IDENTIFIER;
 }
 
-[a-zA-Z0-9_\-\.\/!][a-zA-Z0-9_\-\.\/!:]* {
-    yylval.sval = strdup(yytext);
+[a-zA-Z0-9_\.\/!][a-zA-Z0-9_\-\.\/!:]* {
     return E_IDENTIFIER;
 }
 

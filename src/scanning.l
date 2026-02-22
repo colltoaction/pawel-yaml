@@ -1272,6 +1272,19 @@ PKEY_BODY [^:\n\r]*
 }
 \"([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
     /* Double-quoted map key: "key" : value */
+    if (FLOW_DELIM_SP == 0 && CTX->expecting_value && !CTX->at_line_start) {
+        yylval->string = extract_quoted_key(yytext, '"');
+        if (!yylval->string) {
+            yyerror(yylloc, yyscanner, "memory allocation failed");
+            return 0;
+        }
+        CTX->at_line_start = 0;
+        CTX->expecting_value = 0;
+        CTX->last_was_value = 1;
+        CTX->quoted_value_closed_on_line = 1;
+        return QSCALAR;
+    }
+
     yylval->string = extract_quoted_key(yytext, '"');
     if (!yylval->string) {
         yyerror(yylloc, yyscanner, "memory allocation failed");
@@ -1283,6 +1296,19 @@ PKEY_BODY [^:\n\r]*
 }
 \'(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
     /* Single-quoted map key: 'key' : value */
+    if (FLOW_DELIM_SP == 0 && CTX->expecting_value && !CTX->at_line_start) {
+        yylval->string = extract_quoted_key(yytext, '\'');
+        if (!yylval->string) {
+            yyerror(yylloc, yyscanner, "memory allocation failed");
+            return 0;
+        }
+        CTX->at_line_start = 0;
+        CTX->expecting_value = 0;
+        CTX->last_was_value = 1;
+        CTX->quoted_value_closed_on_line = 1;
+        return SSCALAR;
+    }
+
     yylval->string = extract_quoted_key(yytext, '\'');
     if (!yylval->string) {
         yyerror(yylloc, yyscanner, "memory allocation failed");
@@ -1292,7 +1318,39 @@ PKEY_BODY [^:\n\r]*
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
-"!<"[^>\n\r]+">" { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
+\"([^\\\"\n\r]|\\.)*\n([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
+    if (FLOW_DELIM_SP > 0) {
+        yylval->string = extract_quoted_key(yytext, '"');
+        if (!yylval->string) {
+            yyerror(yylloc, yyscanner, "memory allocation failed");
+            return 0;
+        }
+        CTX->at_line_start = 0;
+        CTX->expecting_value = 0;
+        return MAP_KEY;
+    }
+    yyerror(yylloc, yyscanner, "syntax error, multiline quoted key is not allowed");
+    CTX->semantic_error_count++;
+    CTX->semantic_multiline_qkey_count++;
+    return 0;
+}
+\'(\'\'|\\'|[^'\n\r])*\n(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
+    if (FLOW_DELIM_SP > 0) {
+        yylval->string = extract_quoted_key(yytext, '\'');
+        if (!yylval->string) {
+            yyerror(yylloc, yyscanner, "memory allocation failed");
+            return 0;
+        }
+        CTX->at_line_start = 0;
+        CTX->expecting_value = 0;
+        return MAP_KEY;
+    }
+    yyerror(yylloc, yyscanner, "syntax error, multiline quoted key is not allowed");
+    CTX->semantic_error_count++;
+    CTX->semantic_multiline_qkey_count++;
+    return 0;
+}
+"!<"[^>\n\r]+">" { CTX->at_line_start = 0; yylval->string = strdup(yytext + 1); return TAG; }
 "!"              { CTX->at_line_start = 0; yylval->string = strdup("!"); return TAG; }
 "!!"{NSCAL}+     { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }
 "!"{NSCAL}+"!"{NSCAL}* { CTX->at_line_start = 0; yylval->string = strdup(yytext); return TAG; }

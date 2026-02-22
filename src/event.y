@@ -99,30 +99,26 @@ void event_yy_error(const char *msg);
 %}
 
 %union {
-    char *sval;
     char cval;
+    int ival;
 }
 
-%token E_STR_START   300 "+STR"
-%token E_STR_END     301 "-STR"
-%token E_DOC_START   302 "+DOC"
-%token E_DOC_END     303 "-DOC"
-%token E_SEQ_START   304 "+SEQ"
-%token E_SEQ_END     305 "-SEQ"
-%token E_MAP_START   306 "+MAP"
-%token E_MAP_END     307 "-MAP"
-%token E_SCALAR      308 "=VAL"
-%token E_ALIAS       309 "=ALI"
+%token STR "STR"
+%token DOC "DOC"
+%token SEQ "SEQ"
+%token MAP "MAP"
+%token VAL "VAL"
+%token ALI "ALI"
 
-%token <sval> E_ANCHOR
-%token <sval> E_TAG
+%token E_ANCHOR
+%token E_TAG
 %token E_DOC_EXPLICIT "---"
 %token E_DOC_END_EXPLICIT "..."
-%token <sval> E_QUOTED_STRING E_IDENTIFIER
+%token E_QUOTED_STRING E_IDENTIFIER
 %token <cval> E_STYLE
 
-%type <sval> content
 %type <cval> style_val
+%type <ival> doc_open_marker seq_items seq_item
 
 %define parse.error detailed
 %locations
@@ -135,76 +131,98 @@ int event_lex(void);
 
 %%
 
-stream : "+STR" { push_event(event_create(EVENT_STREAM_START)); }
-         docs 
-         "-STR" { push_event(event_create(EVENT_STREAM_END)); }
-       ;
+stream : stream_open docs stream_close ;
+
+stream_open : '+' "STR" { emit_event(EVENT_STREAM_START); } ;
+
+stream_close : '-' "STR" { emit_event(EVENT_STREAM_END); } ;
 
 docs : %empty
      | docs doc
      ;
 
-doc : doc_start node "-DOC" { push_event(event_create(EVENT_DOCUMENT_END)); }
-    | doc_start node "-DOC" "..." { push_event(event_create(EVENT_DOCUMENT_END)); }
+doc : doc_monoid
     | node
     ;
 
-doc_start: "+DOC"      { push_event(event_doc_new(0)); }
-         | "+DOC" "---" { push_event(event_doc_new(1)); }
-         ;
+doc_monoid : doc_open node doc_close doc_close_marker ;
+
+doc_open : '+' "DOC" doc_open_marker { emit_doc_open($3); } ;
+
+doc_open_marker : %empty { $$ = 0; }
+                | E_DOC_EXPLICIT { $$ = 1; }
+                ;
+
+doc_close : '-' "DOC" { emit_event(EVENT_DOCUMENT_END); } ;
+
+doc_close_marker : %empty
+                 | E_DOC_END_EXPLICIT
+                 ;
 
 node : scalar
      | alias
-     | sequence
-     | mapping
+     | collection
      ;
 
-scalar : "=VAL" style_val content { push_event(event_scalar_new($2, $3)); free($3); }
-       | "=VAL" style_val { push_event(event_scalar_new($2, NULL)); }
-       | "=VAL" E_ANCHOR[a] style_val content { push_event(event_scalar_complex($3, $4, $a, NULL)); free($4); free($a); }
-       | "=VAL" E_ANCHOR[a] style_val { push_event(event_scalar_complex($3, NULL, $a, NULL)); free($a); }
-       | "=VAL" E_TAG[t] style_val content { push_event(event_scalar_complex($3, $4, NULL, $t)); free($4); free($t); }
-       | "=VAL" E_TAG[t] style_val { push_event(event_scalar_complex($3, NULL, NULL, $t)); free($t); }
-       | "=VAL" E_ANCHOR[a] E_TAG[t] style_val content { push_event(event_scalar_complex($4, $5, $a, $t)); free($5); free($a); free($t); }
-       | "=VAL" E_ANCHOR[a] E_TAG[t] style_val { push_event(event_scalar_complex($4, NULL, $a, $t)); free($a); free($t); }
+collection : sequence
+           | mapping
+           ;
+
+scalar : '=' "VAL" style_val content { emit_scalar($3); }
+       | '=' "VAL" style_val { emit_scalar($3); }
+       | '=' "VAL" E_ANCHOR style_val content { emit_scalar($4); }
+       | '=' "VAL" E_ANCHOR style_val { emit_scalar($4); }
+       | '=' "VAL" E_TAG style_val content { emit_scalar($4); }
+       | '=' "VAL" E_TAG style_val { emit_scalar($4); }
+       | '=' "VAL" E_ANCHOR E_TAG style_val content { emit_scalar($5); }
+       | '=' "VAL" E_ANCHOR E_TAG style_val { emit_scalar($5); }
        ;
 
 style_val : E_STYLE ':' { $$ = $1; }
           | E_STYLE     { $$ = $1; }
-          | ':'           { $$ = ':'; }
+          | ':'         { $$ = ':'; }
           ;
 
 content : E_QUOTED_STRING
         | E_IDENTIFIER
         ;
 
-alias : "=ALI" E_IDENTIFIER[target] { push_event(event_alias_new($target)); free($target); }
+alias : '=' "ALI" E_IDENTIFIER { emit_alias(); }
       ;
 
-sequence : seq_start seq_items "-SEQ" { push_event(event_create(EVENT_SEQUENCE_END)); }
+sequence : sequence_open seq_items sequence_close
          ;
 
-seq_start : "+SEQ"                        { push_event(event_collection_new(EVENT_SEQUENCE_START, NULL, NULL)); }
-          | "+SEQ" E_ANCHOR[a]            { push_event(event_collection_new(EVENT_SEQUENCE_START, $a, NULL)); free($a); }
-          | "+SEQ" E_TAG[t]               { push_event(event_collection_new(EVENT_SEQUENCE_START, NULL, $t)); free($t); }
-          | "+SEQ" E_ANCHOR[a] E_TAG[t]   { push_event(event_collection_new(EVENT_SEQUENCE_START, $a, $t)); free($a); free($t); }
-          ;
+sequence_open : '+' "SEQ" collection_props { emit_collection_open(EVENT_SEQUENCE_START); } ;
 
-mapping : map_start map_pairs "-MAP"   { push_event(event_create(EVENT_MAPPING_END)); }
+sequence_close : '-' "SEQ" { emit_event(EVENT_SEQUENCE_END); } ;
+
+mapping : mapping_open map_pairs mapping_close
         ;
 
-map_start : "+MAP"                        { push_event(event_collection_new(EVENT_MAPPING_START, NULL, NULL)); }
-          | "+MAP" E_ANCHOR[a]            { push_event(event_collection_new(EVENT_MAPPING_START, $a, NULL)); free($a); }
-          | "+MAP" E_TAG[t]               { push_event(event_collection_new(EVENT_MAPPING_START, NULL, $t)); free($t); }
-          | "+MAP" E_ANCHOR[a] E_TAG[t]   { push_event(event_collection_new(EVENT_MAPPING_START, $a, $t)); free($a); free($t); }
+mapping_open : '+' "MAP" collection_props { emit_collection_open(EVENT_MAPPING_START); } ;
+
+mapping_close : '-' "MAP" { emit_event(EVENT_MAPPING_END); } ;
+
+collection_props : %empty
+                 | E_ANCHOR
+                 | E_TAG
+                 | E_ANCHOR E_TAG
+                 | E_TAG E_ANCHOR
+                 ;
+
+seq_items : %empty { $$ = 0; }
+          | seq_items seq_item { $$ = $1 + $2; }
           ;
 
-seq_items : %empty
-          | seq_items node
-          ;
+seq_item : node { $$ = 1; }
+         ;
 
 map_pairs : %empty
-          | map_pairs node node
+          | map_pairs map_pair
+          ;
+
+map_pair : node node
           ;
 
 %%
@@ -214,79 +232,72 @@ extern void event__delete_buffer(void *);
 
 EventStream* event_parse_string(const char *input) {
     if (!input) return NULL;
-    
-    current_stream = (EventStream *)malloc(sizeof(EventStream));
-    current_stream->events = NULL;
-    current_stream->count = 0;
-    current_stream->capacity = 10;
-    current_stream->events = (YAMLEvent **)malloc(current_stream->capacity * sizeof(YAMLEvent *));
+
+    g_stream_store.events = g_event_refs;
+    g_stream_store.count = 0;
+    g_stream_store.capacity = EVENT_STREAM_MAX_EVENTS;
+    g_stream_overflow = 0;
+    current_stream = &g_stream_store;
 
     void *buf = event__scan_string(input);
     int res = event_yy_parse();
     event__delete_buffer(buf);
 
-    if (res != 0) {
-        event_stream_free(current_stream);
+    if (res != 0 || g_stream_overflow) {
         current_stream = NULL;
         return NULL;
     }
 
-    EventStream *res_stream = current_stream;
     current_stream = NULL;
-    return res_stream;
+    return &g_stream_store;
 }
 
 void event_stream_free(EventStream *stream) {
-    if (!stream) return;
-    for (int i = 0; i < stream->count; i++) {
-        if (stream->events[i]) {
-            free(stream->events[i]->value);
-            free(stream->events[i]->anchor);
-            free(stream->events[i]->tag);
-            free(stream->events[i]->alias_name);
-            free(stream->events[i]);
-        }
-    }
-    free(stream->events);
-    free(stream);
+    (void)stream;
 }
 
 ValidationResult* rml_parse_event_stream(const EventStream *stream) {
-    ValidationResult *result = (ValidationResult*)malloc(sizeof(ValidationResult));
-    result->is_valid = (stream != NULL);
-    result->error_message = stream ? NULL : strdup("Invalid event stream structure");
-    result->error_line = -1;
-    
+    static ValidationResult result;
+    static char error_message[] = "Invalid event stream structure";
+    static char ir[1024 * 1024];
+
+    result.is_valid = (stream != NULL);
+    result.error_message = stream ? NULL : error_message;
+    result.error_line = -1;
+
     if (stream) {
-        char *ir = (char*)malloc(stream->count * 128 + 1024);
         ir[0] = '\0';
         int pos = 0;
         for (int i = 0; i < stream->count; i++) {
             YAMLEvent *e = stream->events[i];
             switch (e->type) {
-                case EVENT_STREAM_START: pos += sprintf(ir + pos, "+STR\n"); break;
-                case EVENT_STREAM_END: pos += sprintf(ir + pos, "-STR\n"); break;
-                case EVENT_DOCUMENT_START: 
-                    if (e->explicit_start) pos += sprintf(ir + pos, "+DOC ---\n");
-                    else pos += sprintf(ir + pos, "+DOC\n");
+                case EVENT_STREAM_START: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+STR\n"); break;
+                case EVENT_STREAM_END: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "-STR\n"); break;
+                case EVENT_DOCUMENT_START:
+                    if (e->explicit_start) pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+DOC ---\n");
+                    else pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+DOC\n");
                     break;
-                case EVENT_DOCUMENT_END: pos += sprintf(ir + pos, "-DOC\n"); break;
-                case EVENT_SEQUENCE_START: pos += sprintf(ir + pos, "+SEQ\n"); break;
-                case EVENT_SEQUENCE_END: pos += sprintf(ir + pos, "-SEQ\n"); break;
-                case EVENT_MAPPING_START: pos += sprintf(ir + pos, "+MAP\n"); break;
-                case EVENT_MAPPING_END: pos += sprintf(ir + pos, "-MAP\n"); break;
-                case EVENT_SCALAR: 
-                    if (e->quote_style == ':') pos += sprintf(ir + pos, "=VAL :%s\n", e->value ? e->value : "");
-                    else pos += sprintf(ir + pos, "=VAL %c:%s\n", e->quote_style, e->value ? e->value : "");
+                case EVENT_DOCUMENT_END: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "-DOC\n"); break;
+                case EVENT_SEQUENCE_START: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+SEQ\n"); break;
+                case EVENT_SEQUENCE_END: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "-SEQ\n"); break;
+                case EVENT_MAPPING_START: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+MAP\n"); break;
+                case EVENT_MAPPING_END: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "-MAP\n"); break;
+                case EVENT_SCALAR:
+                    if (e->quote_style == ':') pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "=VAL :\n");
+                    else pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "=VAL %c:\n", e->quote_style ? e->quote_style : ':');
                     break;
-                case EVENT_ALIAS: pos += sprintf(ir + pos, "=ALI *%s\n", e->alias_name); break;
+                case EVENT_ALIAS: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "=ALI *\n"); break;
+            }
+            if ((size_t)pos >= sizeof(ir)) {
+                ir[sizeof(ir) - 1] = '\0';
+                break;
             }
         }
-        result->intermediate_representation = ir;
+        result.intermediate_representation = ir;
     } else {
-        result->intermediate_representation = NULL;
+        result.intermediate_representation = NULL;
     }
-    return result;
+    return &result;
 }
 
 void event_yy_error(const char *msg) {

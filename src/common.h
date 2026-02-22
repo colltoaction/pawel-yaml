@@ -108,6 +108,7 @@ typedef struct {
     char type;
     char *value;
     char *anchor;
+    char *tag;
 } ScalarValue;
 
 /* Pipeline stage exports */

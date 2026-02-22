@@ -62,8 +62,8 @@ typedef struct {
 }
 
 %glr-parser
-%expect 66
-%expect-rr 55
+%expect 61
+%expect-rr 63
 
 %{
 #include <stdlib.h>
@@ -635,7 +635,7 @@ static void emit_map_key(const ScalarValue *k) {
         add_alias_event(key);
     } else {
         /* Regular key (plain, quoted, or anchored) */
-        ir_scalar(ir, key, k->type, anchor, NULL);
+        ir_scalar(ir, key, k->type, anchor, k->tag);
         add_scalar_event(key, k->type);
     }
 }
@@ -657,6 +657,7 @@ static ScalarValue parse_anchored_map_key(char *delimited_string) {
     result.type = ':';
     result.anchor = NULL;
     result.value = NULL;
+    result.tag = NULL;
     
     if (!delimited_string) {
         result.value = string_unit();
@@ -722,12 +723,11 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %union {
     char *string;
     int ival;
-    Indented indented;
     NodeProps props;
     ScalarValue scalar;
 }
 
-%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY QMAP_KEY SMAP_KEY ANCHOR_MAP_KEY QPART BPART
+%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY ANCHOR_MAP_KEY QPART BPART
 %token BAD_TAG
 %token <string> CH_RAW CH_ESC_N CH_ESC_T CH_ESC_R CH_ESC_0 CH_ESC_BS CH_ESC_QU CH_ESC_SL
 %token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET BULLET_EOL COLON COLON_EMPTY COLON_IMPLICIT QUESTION
@@ -736,20 +736,20 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 
 %type <props> node_props
 %type <props> empty_props
-%type <indented> indent
-%type <ival> dedent
 %type <ival> doc_start
 %type <ival> doc_end
-%type <scalar> scalar_item indented_scalar_item scalar_payload
+%type <ival> indent
+%type <ival> dedent
+%type <scalar> scalar_item scalar_payload block_content block
+%type <scalar> indented_scalar_item
 %type <scalar> map_key
 %type <string> scalar_parts qscalar qparts qpart bscalar
 
 /* TODO Fix destructor double free in GLR mode + manual free in actions */
 /* Destructors handle cleanup when symbols are discarded by the parser. */
 %destructor { $$ = NULL; } <string>
-%destructor { $$ = indented_dedent($$); } <indented>
 %destructor { $$.anchor = NULL; $$.tag = NULL; } <props>
-%destructor { $$.value = NULL; $$.anchor = NULL; } <scalar>
+%destructor { $$.value = NULL; $$.anchor = NULL; $$.tag = NULL; } <scalar>
 
 %locations
 
@@ -905,15 +905,28 @@ node_with_indent:
     ;
 
 indent:
-    INDENT[level] { $$ = indented_from_level($level); }
+    INDENT
     ;
 
 dedent:
-    DEDENT[level] { $$ = $level; }
+    DEDENT
     ;
 
-indented_node:
-    indent[level] node dedent[level]
+block:
+    INDENT block_content DEDENT { $$ = $2; }
+    ;
+
+block_content:
+    node {
+        $$.type = ':'; $$.value = NULL; $$.anchor = NULL; $$.tag = NULL;
+    }
+    | scalar_item { $$ = $1; }
+    | collection_value_entries {
+        $$.type = ':'; $$.value = NULL; $$.anchor = NULL; $$.tag = NULL;
+    }
+    | collection_pair_entries {
+        $$.type = ':'; $$.value = NULL; $$.anchor = NULL; $$.tag = NULL;
+    }
     ;
 
 node:
@@ -932,18 +945,12 @@ value_node:
     | collection_no_props
     | scalar_node
     | alias_node
-    | ANCHOR[a] indent[l1] TAG[t] indent[l2]
-      { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }[map_open]
-      collection_pair_entries
-      dedent[l2]
+    | ANCHOR[a] TAG[t] { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }
+      block
       map_end
-      dedent[l1]
-    | TAG[t] indent[l1] ANCHOR[a] indent[l2]
-      { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }[map_open]
-      collection_pair_entries
-      dedent[l2]
+    | TAG[t] ANCHOR[a] { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }
+      block
       map_end
-      dedent[l1]
     | error { RECOVER("Recovering at value node boundary"); }
     ;
 
@@ -970,7 +977,7 @@ indented_scalar_item:
 
 scalar_payload:
     scalar_item[s] { $$ = $s; }
-    | indented_scalar_item[s] { $$ = $s; }
+    | block { $$ = $1; }
     ;
 
 qscalar:
@@ -1027,8 +1034,7 @@ collection_with_props:
     ;
 
 value_collection_with_props:
-    value_sequence_with_props
-    | value_mapping_with_props
+    collection_with_props
     ;
 
 sequence_no_props:
@@ -1076,13 +1082,9 @@ sequence_with_props:
 
 value_sequence_with_props:
     node_props[props]
-      indent[level]
-      { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }[seq_open]
-      collection_value_entries
-      dedent[level]
+      { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }
+      block
       seq_end
-      {}[seq_close]
-      %dprec 3
     | node_props[props]
       flow_lbrack
       { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }[flow_seq_open]
@@ -1098,16 +1100,14 @@ collection_value_entries:
     | collection_value_entries seq_entry
     ;
 
-indented_seq_entries:
-    indent[level] collection_value_entries dedent[level]
-    ;
+/* indented_seq_entries replaced by block */
 
 seq_entry:
     BULLET node %dprec 5
-    | BULLET node indented_seq_entries %dprec 6
-    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); } COLON node indented_map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
+    | BULLET node block %dprec 6
+    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); } COLON node block { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
     | BULLET_EOL seq_entry_empty_scalar %dprec 2
-    | BULLET_EOL indented_node %dprec 4
+    | BULLET_EOL block %dprec 4
     | BULLET error { RECOVER("Malformed sequence item"); } %dprec 2
     | BULLET_EOL error { RECOVER("Malformed sequence item"); } %dprec 2
     ;
@@ -1177,12 +1177,9 @@ mapping_with_props:
 
 value_mapping_with_props:
     node_props[props]
-      indent[level]
-      { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }[map_open]
-      collection_pair_entries
-      dedent[level]
+      { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }
+      block
       map_end
-      {}[map_close]
     | node_props[props]
       flow_lbrace
       { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }[flow_map_open]
@@ -1198,35 +1195,27 @@ collection_pair_entries:
     | collection_pair_entries map_entry
     ;
 
-indented_map_entries:
-    indent[level] collection_pair_entries dedent[level]
-    ;
+/* indented_map_entries replaced by block */
 
-indented_value_node:
-    indent[level] value_node dedent[level]
-    ;
+/* indented_value_node replaced by block */
 
 map_key:
-    MAP_KEY[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; }
-    | QMAP_KEY[val] { $$.type = '"'; $$.value = $val; $$.anchor = NULL; }
-    | SMAP_KEY[val] { $$.type = '\''; $$.value = $val; $$.anchor = NULL; }
+    MAP_KEY[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; $$.tag = NULL; }
     | ANCHOR_MAP_KEY[val] { $$ = parse_anchored_map_key($val); }
     ;
 
 map_entry:
     map_key[k] { emit_map_key(&$k); } COLON value_node %dprec 2
-    | map_key[k] { emit_map_key(&$k); } COLON indented_value_node %dprec 1
+    | map_key[k] { emit_map_key(&$k); } COLON block %dprec 1
     | map_key[k] { emit_map_key(&$k); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | map_key[k] { emit_map_key(&$k); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | QUESTION node COLON value_node %dprec 2
-    | QUESTION indented_node COLON value_node %dprec 3
-    | QUESTION node COLON indented_value_node %dprec 3
-    | QUESTION indented_node COLON indented_value_node %dprec 4
+    | QUESTION block COLON value_node %dprec 3
+    | QUESTION node COLON block %dprec 3
+    | QUESTION block COLON block %dprec 4
     | QUESTION node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
-    | QUESTION indented_node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | QUESTION block { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
     | MAP_KEY error { RECOVER("Malformed mapping entry"); }
-    | QMAP_KEY error { RECOVER("Malformed mapping entry"); }
-    | SMAP_KEY error { RECOVER("Malformed mapping entry"); }
     | QUESTION error { RECOVER("Malformed complex mapping entry"); }
     | error { RECOVER("Invalid mapping structure"); }
     ;
