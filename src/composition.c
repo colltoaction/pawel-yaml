@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "common.h"
 #include "event.tab.h"
 
 /* Global argument capture via constructor (keeps main.c untouched) */

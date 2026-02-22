@@ -3,13 +3,17 @@ SHELL = /bin/sh
 ROOT := $(abspath ..)
 SCRIPTS := $(ROOT)/tests/legacy/scripts
 
-.PHONY: help build setup check discover test detect-issues runner update-failures verify-fast verify-full tooling
+.PHONY: help build setup check grammar-loops grammar-loops-expect grammar-loops-expect-all
+.PHONY: discover test detect-issues runner update-failures verify-fast verify-full tooling
 
 help:
 	@echo "Consolidated test entry points"
 	@echo "  make -C tests build"
 	@echo "  make -C tests setup"
 	@echo "  make -C tests check"
+	@echo "  make -C tests grammar-loops [CASE=<case-id>]"
+	@echo "  make -C tests grammar-loops-expect CASE=<case-id>"
+	@echo "  make -C tests grammar-loops-expect-all"
 	@echo "  make -C tests discover"
 	@echo "  make -C tests test TEST=<ID>"
 	@echo "  make -C tests detect-issues TEST='<ID1 ID2>'"
@@ -27,6 +31,17 @@ setup:
 
 check:
 	@$(MAKE) -C $(ROOT) check
+	@$(MAKE) -C $(ROOT)/tests grammar-loops
+
+grammar-loops:
+	@$(MAKE) -C $(ROOT)/tests/grammar-loops check $(if $(CASE),CASE=$(CASE),)
+
+grammar-loops-expect:
+	@test -n "$(CASE)" || { echo "Usage: make -C tests grammar-loops-expect CASE=<case-id>"; exit 1; }
+	@$(MAKE) -C $(ROOT)/tests/grammar-loops expect CASE="$(CASE)"
+
+grammar-loops-expect-all:
+	@$(MAKE) -C $(ROOT)/tests/grammar-loops expect-all
 
 discover:
 	@cd $(ROOT) && $(SCRIPTS)/tdd_harness.sh discover

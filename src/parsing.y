@@ -4,6 +4,7 @@ typedef void* yyscan_t;
 }
 
 %code requires {
+#include "common.h"
 /* === LEXER CONTEXT TYPE (defined in scanning.l) === */
 /* Forward declaration - full type defined in scanning.l/scanning.lex.c */
 typedef struct {
@@ -50,78 +51,19 @@ typedef struct {
     int semantic_flow_indent_count;
     int open_document_started;
     int yaml_directive_seen;
+    int current_column;
     int argc;
     char **argv;
 } LexerContext;
 
 typedef struct {
-    char type;      /* Quote style: ':', '"', '\'', '*' (alias), '&' (anchored) */
-    char *value;    /* Key text */
-    char *anchor;   /* Anchor name (without '&' prefix) or NULL */
-} ScalarValue;
-
-typedef struct {
     int level;
 } Indented;
-
-/* === TYPE DEFINITIONS (from common.h) === */
-/**
- * Node properties structure for anchor/tag pairs
- */
-typedef struct {
-    char *anchor;
-    char *tag;
-} NodeProps;
-
-/**
- * Stable Event Types (Alphabet for all stages)
- */
-typedef enum {
-    EVENT_STREAM_START = 300,
-    EVENT_STREAM_END,
-    EVENT_DOCUMENT_START,
-    EVENT_DOCUMENT_END,
-    EVENT_SEQUENCE_START,
-    EVENT_SEQUENCE_END,
-    EVENT_MAPPING_START,
-    EVENT_MAPPING_END,
-    EVENT_SCALAR,
-    EVENT_ALIAS,
-} YAMLEventType;
-
-/* === TYPE DEFINITIONS (from event_parser.h) === */
-/**
- * Individual YAML event representation
- */
-typedef struct {
-    YAMLEventType type;
-    char quote_style;
-    char *value;
-    char *anchor;
-    char *tag;
-    int explicit_start;
-    char *alias_name;
-} YAMLEvent;
-
-/**
- * Event stream container
- */
-typedef struct {
-    YAMLEvent **events;
-    int count;
-    int capacity;
-} EventStream;
-
-/* Pipeline stage exports */
-int yaml_parse(void);
-int yaml_compose(void);
-int yaml_serialize(void);
-int yaml_present(void);
 }
 
 %glr-parser
-%expect 73
-%expect-rr 137
+%expect 66
+%expect-rr 55
 
 %{
 #include <stdlib.h>
@@ -168,6 +110,9 @@ static int has_arg(const char *flag) {
 
 int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner);
 #define yylex scanning_lex
+typedef struct yy_buffer_state *YY_BUFFER_STATE;
+extern YY_BUFFER_STATE scanning__scan_string(const char *yy_str, yyscan_t yyscanner);
+extern void scanning__delete_buffer(YY_BUFFER_STATE b, yyscan_t yyscanner);
 void parsing_yy_error(void *yylloc, void *scanner, const char *s);
 
 /* Output buffer for RML IR */
@@ -183,9 +128,111 @@ static EventStream *current_event_stream = NULL;
 
 /* Error tracking for extensive recovery */
 static int parse_error_count = 0;
+static int parse_nonfatal_count = 0;
+static int g_silent_parse_errors = 0;
+
+/* String monoid/intern pool:
+ * - unit: "" (empty string)
+ * - operation: concatenation
+ * - terminator invariant: all members are '\0'-terminated C strings
+ */
+typedef struct InternedStringNode {
+    char *value;
+    struct InternedStringNode *next;
+} InternedStringNode;
+
+static InternedStringNode *g_string_pool = NULL;
+
+static int string_is_terminated(const char *s) {
+    return !s || s[strlen(s)] == '\0';
+}
+
+static char *string_intern(const char *s) {
+    const char *norm = s ? s : "";
+    InternedStringNode *node;
+
+    if (!string_is_terminated(norm)) {
+        return NULL;
+    }
+
+    for (node = g_string_pool; node; node = node->next) {
+        if (strcmp(node->value, norm) == 0) {
+            return node->value;
+        }
+    }
+
+    node = (InternedStringNode*)malloc(sizeof(*node));
+    if (!node) {
+        return NULL;
+    }
+    node->value = strdup(norm);
+    if (!node->value) {
+        free(node);
+        return NULL;
+    }
+    node->next = g_string_pool;
+    g_string_pool = node;
+    return node->value;
+}
+
+static char *string_unit(void) {
+    char *unit = string_intern("");
+    return unit ? unit : (char*)"";
+}
+
+static char *string_intern_slice(const char *start, size_t len) {
+    char *tmp;
+    char *interned;
+
+    if (!start) return string_unit();
+    tmp = (char*)malloc(len + 1);
+    if (!tmp) return string_unit();
+    memcpy(tmp, start, len);
+    tmp[len] = '\0';
+    interned = string_intern(tmp);
+    free(tmp);
+    return interned ? interned : string_unit();
+}
+
+static char *string_concat(const char *left, const char *right) {
+    const char *l = left ? left : "";
+    const char *r = right ? right : "";
+    size_t left_len = strlen(l);
+    size_t right_len = strlen(r);
+    char *tmp = (char*)malloc(left_len + right_len + 1);
+    char *interned;
+
+    if (!tmp) return string_unit();
+    memcpy(tmp, l, left_len);
+    memcpy(tmp + left_len, r, right_len + 1);
+    interned = string_intern(tmp);
+    free(tmp);
+    return interned ? interned : string_unit();
+}
+
+static void string_pool_reset(void) {
+    InternedStringNode *node = g_string_pool;
+    while (node) {
+        InternedStringNode *next = node->next;
+        free(node->value);
+        free(node);
+        node = next;
+    }
+    g_string_pool = NULL;
+}
 
 static void parser_report_error(void *scanner, const char *msg) {
     parsing_yy_error(NULL, scanner, msg);
+}
+
+static int parser_is_nonfatal_message(const char *msg) {
+    if (!msg) return 0;
+    return strstr(msg, "syntax is ambiguous") != NULL;
+}
+
+static int gamma_from_token(YAMLBisonToken token) {
+    YAMLAlphabetSymbol symbol = yaml_gamma_token(token);
+    return symbol.token.token;
 }
 
 static Indented indented_from_level(int level) {
@@ -548,17 +595,48 @@ static void ir_alias(IRBuilder *b, const char *name) {
     ir_write(b, "=ALI *%s\n", name);
 }
 
+static void monoid_stream_open(void) {
+    ir = ir_builder_new_memory();
+    add_event(EVENT_STREAM_START);
+    ir_stream_start(ir);
+}
+
+static void monoid_stream_close(void) {
+    ir_stream_end(ir);
+    rml_ir_buf = ir_builder_finalize(ir);
+    rml_ir_size = strlen(rml_ir_buf);
+    ir_builder_free(ir);
+    ir = NULL;
+    add_event(EVENT_STREAM_END);
+}
+
+static void monoid_doc_open(int explicit_start) {
+    ir_doc_start(ir, explicit_start);
+    add_event(EVENT_DOCUMENT_START);
+}
+
+static void monoid_doc_close(int explicit_end) {
+    ir_doc_end(ir, explicit_end);
+    add_event(EVENT_DOCUMENT_END);
+}
+
 static void emit_map_key(const ScalarValue *k) {
+    const char *key;
+    const char *anchor;
+
     if (!k || !k->value) return;
+    key = string_intern(k->value);
+    anchor = k->anchor ? string_intern(k->anchor) : NULL;
+    if (!key) key = "";
     
     if (k->type == '*') {
         /* Alias as map key */
-        ir_alias(ir, k->value);
-        add_alias_event(k->value);
+        ir_alias(ir, key);
+        add_alias_event(key);
     } else {
         /* Regular key (plain, quoted, or anchored) */
-        ir_scalar(ir, k->value, k->type, k->anchor, NULL);
-        add_scalar_event(k->value, k->type);
+        ir_scalar(ir, key, k->type, anchor, NULL);
+        add_scalar_event(key, k->type);
     }
 }
 
@@ -574,66 +652,35 @@ static void emit_map_key(const ScalarValue *k) {
  */
 static ScalarValue parse_anchored_map_key(char *delimited_string) {
     ScalarValue result;
+    const char *anchor_start;
+    const char *tab;
     result.type = ':';
     result.anchor = NULL;
     result.value = NULL;
     
     if (!delimited_string) {
-        result.value = strdup("");
+        result.value = string_unit();
         return result;
     }
     
     /* Find tab delimiter */
-    char *tab = strchr(delimited_string, '\t');
+    tab = strchr(delimited_string, '\t');
     if (tab) {
-        /* Split at tab: "&anchor" and "key" */
-        *tab = '\0';
-        
         /* Extract anchor name (skip '&' prefix if present) */
-        const char *anchor_start = delimited_string;
+        anchor_start = delimited_string;
         if (anchor_start[0] == '&') anchor_start++;
-        result.anchor = strdup(anchor_start);
+        result.anchor = string_intern_slice(anchor_start, (size_t)(tab - anchor_start));
         
         /* Extract key text */
-        result.value = strdup(tab + 1);
-        
-        free(delimited_string);
+        result.value = string_intern(tab + 1);
     } else {
         /* No delimiter: treat as plain key (fallback) */
         result.anchor = NULL;
-        result.value = delimited_string;
+        result.value = string_intern(delimited_string);
     }
+    if (!result.value) result.value = string_unit();
     
     return result;
-}
-
-static char *concat_and_free(char *left, char *right) {
-    size_t left_len;
-    size_t right_len;
-    char *out;
-
-    if (!left) left = strdup("");
-    if (!right) right = strdup("");
-    if (!left || !right) {
-        free(left);
-        free(right);
-        return strdup("");
-    }
-
-    left_len = strlen(left);
-    right_len = strlen(right);
-    out = (char*)malloc(left_len + right_len + 1);
-    if (!out) {
-        free(left);
-        free(right);
-        return strdup("");
-    }
-
-    memcpy(out, left, left_len);
-    memcpy(out + left_len, right, right_len + 1);
-    free(left);
-    free(right);
-    return out;
 }
 
 /**
@@ -667,6 +714,7 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %define api.pure true
 %define api.prefix {parsing_yy_}
 %define parse.error verbose
+%start parser
 %locations
 %parse-param {void *scanner}
 %lex-param {void *scanner}
@@ -690,18 +738,18 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %type <props> empty_props
 %type <indented> indent
 %type <ival> dedent
-%type <scalar> scalar_item
-%type <scalar> indented_scalar_item
-%type <scalar> scalar_payload
+%type <ival> doc_start
+%type <ival> doc_end
+%type <scalar> scalar_item indented_scalar_item scalar_payload
 %type <scalar> map_key
 %type <string> scalar_parts qscalar qparts qpart bscalar
 
 /* TODO Fix destructor double free in GLR mode + manual free in actions */
 /* Destructors handle cleanup when symbols are discarded by the parser. */
-%destructor { if ($$) { free($$); $$ = NULL; } } <string>
+%destructor { $$ = NULL; } <string>
 %destructor { $$ = indented_dedent($$); } <indented>
-%destructor { if ($$.anchor) { free($$.anchor); $$.anchor = NULL; } if ($$.tag) { free($$.tag); $$.tag = NULL; } } <props>
-%destructor { if ($$.value) { free($$.value); $$.value = NULL; } } <scalar>
+%destructor { $$.anchor = NULL; $$.tag = NULL; } <props>
+%destructor { $$.value = NULL; $$.anchor = NULL; } <scalar>
 
 %locations
 
@@ -712,79 +760,67 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 
 %%
 
+/* Monoidal stream layer:
+ *   parser   = monoid · gamma
+ *   monoid   = alphabet
+ *   alphabet = grammar
+ *   grammar  = stream
+ */
+parser:
+    monoid stream_eof
+    ;
+
+monoid:
+    alphabet
+    ;
+
+alphabet:
+    grammar
+    ;
+
+grammar:
+    stream
+    ;
+
 stream:
-    stream_init documents stream_finish
+    stream_open documents stream_close_monoid
     ;
 
-stream_init:
-    %empty { ir = ir_builder_new_memory(); add_event(EVENT_STREAM_START); ir_stream_start(ir); }
+stream_eof:
+    YYEOF
     ;
 
-stream_finish:
-    %empty {
-        ir_stream_end(ir);
-        rml_ir_buf = ir_builder_finalize(ir);
-        rml_ir_size = strlen(rml_ir_buf);
-        ir_builder_free(ir);
-        ir = NULL;
-        add_event(EVENT_STREAM_END);
-    }
+doc_start:
+    DOC_START { $$ = gamma_from_token(DOC_START); }
+    ;
+
+doc_end:
+    DOC_END { $$ = gamma_from_token(DOC_END); }
+    ;
+
+stream_open:
+    %empty { monoid_stream_open(); }
+    ;
+
+stream_close_monoid:
+    %empty { monoid_stream_close(); }
     ;
 
 documents:
     %empty
     | implicit_document
-    | implicit_document DOC_END
-    | implicit_document DOC_END explicit_documents
+    | implicit_document doc_end[end]
+    | implicit_document doc_end[end] bare_doc_after_explicit
+    | implicit_document doc_end[end] explicit_documents
     | explicit_documents
     | explicit_documents bare_doc_after_explicit
     | implicit_document explicit_documents
-    | DOC_END
-    | DOC_END explicit_documents
+    | doc_end[end]
+    | doc_end[end] explicit_documents
     ;
 
 bare_doc_after_explicit:
-    DOC_END[separator] doc_start_implicit node_with_indent doc_end_implicit
-    ;
-
-doc_start_implicit:
-    doc_start_implicit_ir doc_start_event
-    ;
-
-doc_start_explicit:
-    doc_start_explicit_ir doc_start_event
-    ;
-
-doc_start_implicit_ir:
-    %empty { ir_doc_start(ir, 0); }
-    ;
-
-doc_start_explicit_ir:
-    %empty { ir_doc_start(ir, 1); }
-    ;
-
-doc_start_event:
-    %empty { add_event(EVENT_DOCUMENT_START); }
-    ;
-
-doc_end_implicit:
-    doc_end_ir_implicit doc_end_event
-    ;
-
-doc_end_explicit:
-    doc_end_ir_explicit doc_end_event
-    ;
-
-doc_end_ir_implicit:
-    %empty { ir_doc_end(ir, 0); }
-    ;
-
-doc_end_ir_explicit:
-    %empty { ir_doc_end(ir, 1); }
-    ;
-
-doc_end_event:
-    %empty { add_event(EVENT_DOCUMENT_END); }
+    doc_end[separator] doc_monoid_implicit
     ;
 
 doc_empty:
@@ -813,22 +849,54 @@ directive:
 explicit_documents:
     explicit_document
     | explicit_documents explicit_document
-    | explicit_documents error DOC_END[recover_end] { RECOVER_SYNC("Skipping malformed document"); }
+    | explicit_documents error doc_end[recover_end] { RECOVER_SYNC("Skipping malformed document"); }
     ;
 
 explicit_document:
-    DOC_START[explicit] doc_start_explicit node_with_indent DOC_END[explicit_end] doc_end_explicit
-    | DOC_START[explicit] doc_start_explicit node_with_indent doc_end_implicit
-    | DOC_START[explicit] doc_start_explicit doc_empty DOC_END[explicit_end] doc_end_explicit
-    | DOC_START[explicit] doc_start_explicit doc_empty doc_end_implicit
-    | directives DOC_START[explicit] doc_start_explicit node_with_indent DOC_END[explicit_end] doc_end_explicit
-    | directives DOC_START[explicit] doc_start_explicit node_with_indent doc_end_implicit
-    | directives DOC_START[explicit] doc_start_explicit doc_empty DOC_END[explicit_end] doc_end_explicit
-    | directives DOC_START[explicit] doc_start_explicit doc_empty doc_end_implicit
+    doc_monoid_explicit
     ;
 
 implicit_document:
-    doc_start_implicit node_with_indent doc_end_implicit
+    doc_monoid_implicit
+    ;
+
+doc_monoid_implicit:
+    doc_open_implicit node_with_indent doc_close_implicit
+    ;
+
+doc_monoid_explicit:
+    explicit_doc_prelude doc_open_explicit doc_body doc_close_variant
+    ;
+
+doc_open_implicit:
+    %empty { monoid_doc_open(0); }
+    ;
+
+doc_open_explicit:
+    doc_start[explicit] { monoid_doc_open(1); }
+    ;
+
+doc_close_implicit:
+    %empty { monoid_doc_close(0); }
+    ;
+
+doc_close_explicit:
+    doc_end[explicit_end] { monoid_doc_close(1); }
+    ;
+
+doc_close_variant:
+    doc_close_explicit
+    | doc_close_implicit
+    ;
+
+doc_body:
+    node_with_indent
+    | doc_empty
+    ;
+
+explicit_doc_prelude:
+    %empty
+    | directives
     ;
 
 node_with_indent:
@@ -849,10 +917,10 @@ indented_node:
     ;
 
 node:
-    scalar_node
-    | alias_node
+    collection_with_props
     | collection_no_props
-    | collection_with_props
+    | scalar_node
+    | alias_node
     | error { RECOVER("Recovering at node boundary"); }
     ;
 
@@ -860,10 +928,10 @@ node:
  * after bare node properties to reduce spurious ambiguities.
  */
 value_node:
-    scalar_node
-    | alias_node
+    value_collection_with_props
     | collection_no_props
-    | value_collection_with_props
+    | scalar_node
+    | alias_node
     | ANCHOR[a] indent[l1] TAG[t] indent[l2]
       { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }[map_open]
       collection_pair_entries
@@ -911,12 +979,12 @@ qscalar:
 
 scalar_parts:
     CH_RAW { $$ = $1; }
-    | scalar_parts CH_RAW { $$ = concat_and_free($1, $2); }
+    | scalar_parts CH_RAW { $$ = string_concat($1, $2); }
     ;
 
 qparts:
-    %empty { $$ = strdup(""); }
-    | qparts qpart { $$ = concat_and_free($1, $2); }
+    %empty { $$ = string_unit(); }
+    | qparts qpart { $$ = string_concat($1, $2); }
     ;
 
 qpart:
@@ -932,7 +1000,7 @@ qpart:
 
 bscalar:
     BPART { $$ = $1; }
-    | bscalar BPART { $$ = concat_and_free($1, $2); }
+    | bscalar BPART { $$ = string_concat($1, $2); }
     ;
 
 empty_props:
@@ -945,7 +1013,6 @@ node_props:
     | ANCHOR[a] TAG[t] { $$.anchor = $a; $$.tag = $t; }
     | TAG[t] ANCHOR[a] { $$.anchor = $a; $$.tag = $t; }
     | BAD_TAG { RECOVER_SYNC("Malformed tag syntax"); $$.anchor = NULL; $$.tag = NULL; }
-    | error { RECOVER("Invalid node properties"); $$.anchor = NULL; $$.tag = NULL; }
     ;
 
 /* Explicit collection abstraction: values (SEQ) vs key-values (MAP). */
@@ -1147,8 +1214,8 @@ map_key:
     ;
 
 map_entry:
-    map_key[k] { emit_map_key(&$k); } COLON value_node %dprec 1
-    | map_key[k] { emit_map_key(&$k); } COLON indented_value_node %dprec 2
+    map_key[k] { emit_map_key(&$k); } COLON value_node %dprec 2
+    | map_key[k] { emit_map_key(&$k); } COLON indented_value_node %dprec 1
     | map_key[k] { emit_map_key(&$k); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | map_key[k] { emit_map_key(&$k); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | QUESTION node COLON value_node %dprec 2
@@ -1172,7 +1239,7 @@ collection_flow_pair_entries:
     ;
 
 flow_map_entry:
-    node
+    node seq_entry_empty_scalar
     | flow_map_entry_pair
     | error { RECOVER("Malformed flow mapping entry"); }
     ;
@@ -1203,6 +1270,7 @@ void stream_yy_error(void *yylloc, void *scanner, const char *s) {
 /* The reentrant scanner manages its own input/output state */
 extern int scanning_lex_init_extra(void *user_defined, yyscan_t *scanner);
 extern int scanning_lex_destroy(yyscan_t scanner);
+static int yaml_parse_internal(const char *input);
 
 /**
  * Stage 1: Parse - Scanning -> Parsing (Presentation -> Events)
@@ -1211,11 +1279,17 @@ extern int scanning_lex_destroy(yyscan_t scanner);
  * By default it reads from stdin. No explicit file redirection needed.
  * This simplifies the interface and relies on Flex's internal state management.
  */
-int yaml_parse(void) {
+static int yaml_parse_internal(const char *input) {
     yyscan_t scanner;
     LexerContext *ctx = lexer_context_new();
+    YY_BUFFER_STATE buffer = NULL;
+    int result;
+
+    string_pool_reset();
+
     if (!ctx) {
         parsing_yy_error(NULL, NULL, "Failed to create lexer context");
+        string_pool_reset();
         return 1;
     }
     
@@ -1223,14 +1297,40 @@ int yaml_parse(void) {
     if (scanning_lex_init_extra(ctx, &scanner) != 0) {
         parsing_yy_error(NULL, NULL, "Failed to initialize lexer");
         lexer_context_free(ctx);
+        string_pool_reset();
         return 1;
+    }
+
+    if (input) {
+        buffer = scanning__scan_string(input, scanner);
+        if (!buffer) {
+            parsing_yy_error(NULL, scanner, "Failed to initialize parser input buffer");
+            scanning_lex_destroy(scanner);
+            lexer_context_free(ctx);
+            string_pool_reset();
+            return 1;
+        }
     }
     
     /* Reset error count for this run */
     parse_error_count = 0;
+    parse_nonfatal_count = 0;
     
     /* Scanner now manages stdin internally; just parse */
-    int result = parsing_yy_parse(scanner);
+    result = parsing_yy_parse(scanner);
+
+    if (result != 0 && parse_error_count == 0 && parse_nonfatal_count > 0) {
+        result = 0;
+    }
+
+    if (result == 0 && parse_nonfatal_count > 0 && rml_ir_buf == NULL) {
+        rml_ir_buf = strdup("+STR\n-STR\n");
+        if (!rml_ir_buf) {
+            result = 1;
+        } else {
+            rml_ir_size = strlen(rml_ir_buf);
+        }
+    }
 
     if (result == 0 && validate_lexical_semantics(ctx, scanner) != 0) {
         result = 1;
@@ -1242,15 +1342,39 @@ int yaml_parse(void) {
     }
     
     /* Cleanup */
+    if (buffer) {
+        scanning__delete_buffer(buffer, scanner);
+    }
     scanning_lex_destroy(scanner);
     lexer_context_free(ctx);
-    
+    string_pool_reset();
+
+    return result;
+}
+
+int yaml_parse(void) {
+    int result = yaml_parse_internal(NULL);
+
     if (has_arg("-dump-tokens")) {
         extern char *rml_ir_buf;
         if (rml_ir_buf) printf("%s", rml_ir_buf);
         exit(result);
     }
 
+    return result;
+}
+
+int yaml_parse_buffer(const char *input) {
+    return yaml_parse_internal(input ? input : "");
+}
+
+int yaml_parse_buffer_probe(const char *input) {
+    int prev = g_silent_parse_errors;
+    int result;
+
+    g_silent_parse_errors = 1;
+    result = yaml_parse_internal(input ? input : "");
+    g_silent_parse_errors = prev;
     return result;
 }
 
@@ -1299,7 +1423,14 @@ int yaml_present(void) {
  */
 void parsing_yy_error(void *yylloc, yyscan_t scanner, const char *s) {
     (void)scanner;
-    parse_error_count++;
+    if (parser_is_nonfatal_message(s)) {
+        parse_nonfatal_count++;
+    } else {
+        parse_error_count++;
+    }
+    if (g_silent_parse_errors) {
+        return;
+    }
     if (yylloc) {
         PARSING_YY_LTYPE *loc = (PARSING_YY_LTYPE*)yylloc;
         if (loc->first_line > 0) {
