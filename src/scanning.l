@@ -16,6 +16,38 @@ void parsing_yy_error(void *yylloc, yyscan_t scanner, const char *msg);
 /* Lexer context - replaces all global variables */
 #define CTX yyextra
 
+/* Scanner-local flow state (kept out of LexerContext). */
+typedef struct {
+    int implicit_key_candidate;
+    int delim_stack[100];
+    int indent_ref_stack[100];
+    int indent_required_stack[100];
+    int delim_sp;
+} FlowState;
+
+static FlowState g_flow_state;
+static int g_pending_dedent_count = 0;
+
+#define FLOW_IMPLICIT_KEY_CANDIDATE g_flow_state.implicit_key_candidate
+#define FLOW_DELIM_STACK g_flow_state.delim_stack
+#define FLOW_INDENT_REF_STACK g_flow_state.indent_ref_stack
+#define FLOW_INDENT_REQUIRED_STACK g_flow_state.indent_required_stack
+#define FLOW_DELIM_SP g_flow_state.delim_sp
+
+static void flow_state_reset(void) {
+    memset(&g_flow_state, 0, sizeof(g_flow_state));
+    g_pending_dedent_count = 0;
+}
+
+static int return_dedent_count(int dedent_count, YYSTYPE *yylval) {
+    if (dedent_count <= 0) {
+        return 0;
+    }
+    g_pending_dedent_count = dedent_count - 1;
+    yylval->ival = dedent_count;
+    return DEDENT;
+}
+
 /* === INLINED: lexer_context.c - Unified Lexer State Management === */
 
 /**
@@ -30,9 +62,7 @@ LexerContext *lexer_context_new(void) {
     ctx->indent_sp = 0;
     
     /* Initialize flow and value tracking */
-    ctx->flow_level = 0;
     ctx->expecting_value = 0;
-    ctx->pending_dedents = 0;
     
     /* Initialize document state */
     ctx->first_line = 1;
@@ -71,8 +101,7 @@ LexerContext *lexer_context_new(void) {
     ctx->semantic_flow_key_newline_count = 0;
     ctx->semantic_multiline_qkey_count = 0;
     ctx->semantic_inline_key_count = 0;
-    ctx->flow_implicit_key_candidate = 0;
-    ctx->flow_delim_sp = 0;
+    flow_state_reset();
     ctx->semantic_flow_indent_count = 0;
     ctx->open_document_started = 1;
     ctx->yaml_directive_seen = 0;
@@ -113,9 +142,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     
     ctx->indent_stack[0] = 0;
     ctx->indent_sp = 0;
-    ctx->flow_level = 0;
     ctx->expecting_value = 0;
-    ctx->pending_dedents = 0;
     ctx->first_line = 1;
     ctx->last_was_value = 0;
     ctx->at_line_start = 1;
@@ -147,8 +174,7 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->semantic_flow_key_newline_count = 0;
     ctx->semantic_multiline_qkey_count = 0;
     ctx->semantic_inline_key_count = 0;
-    ctx->flow_implicit_key_candidate = 0;
-    ctx->flow_delim_sp = 0;
+    flow_state_reset();
     ctx->semantic_flow_indent_count = 0;
     ctx->open_document_started = 1;
     ctx->yaml_directive_seen = 0;
@@ -210,7 +236,7 @@ static void ctx_pop_indent_context(LexerContext *ctx) {
  */
 /* static int ctx_in_flow_context(const LexerContext *ctx) {
     if (!ctx) return 0;
-    return ctx->flow_level > 0 || 
+    return FLOW_DELIM_SP > 0 ||
            (ctx->indent_context_sp > 0 && 
             ctx->indent_context_stack[ctx->indent_context_sp - 1].is_flow);
 } */
@@ -448,9 +474,10 @@ PKEY_BODY [^:\n\r]*
         BEGIN(INDENT_CHECK);
     }
 
-    /* Handle pending dedents first */
-    if (CTX->pending_dedents > 0) {
-        CTX->pending_dedents--;
+    /* Emit remaining dedents from the latest collapse run. */
+    if (g_pending_dedent_count > 0) {
+        yylval->ival = g_pending_dedent_count;
+        g_pending_dedent_count--;
         return DEDENT;
     }
 
@@ -582,20 +609,21 @@ PKEY_BODY [^:\n\r]*
         if (CTX->indent_sp < 99) {
             CTX->indent_stack[++CTX->indent_sp] = indent;
         }
+        yylval->ival = indent;
         return INDENT;
     } else if (indent < cur) {
+        int dedent_count = 0;
         while (indent < CTX->indent_stack[CTX->indent_sp]) {
             if (CTX->indent_sp > 0) CTX->indent_sp--;
-            CTX->pending_dedents++;
+            dedent_count++;
         }
         if (indent != CTX->indent_stack[CTX->indent_sp]) {
             yyerror(yylloc, yyscanner, "syntax error, invalid dedent level");
             CTX->semantic_error_count++;
             CTX->semantic_indent_mismatch_count++;
         }
-        if (CTX->pending_dedents > 0) {
-            CTX->pending_dedents--;
-            return DEDENT;
+        if (dedent_count > 0) {
+            return return_dedent_count(dedent_count, yylval);
         }
     }
 }
@@ -611,25 +639,36 @@ PKEY_BODY [^:\n\r]*
     CTX->at_line_start = 1;
     int cur = CTX->indent_stack[CTX->indent_sp];
     if (0 < cur) {
+        int dedent_count = 0;
         while (0 < CTX->indent_stack[CTX->indent_sp]) {
             if (CTX->indent_sp > 0) CTX->indent_sp--;
-            CTX->pending_dedents++;
+            dedent_count++;
         }
-        if (CTX->pending_dedents > 0) {
-            CTX->pending_dedents--;
-            return DEDENT;
+        if (dedent_count > 0) {
+            return return_dedent_count(dedent_count, yylval);
         }
     }
 }
 
 <INDENT_CHECK><<EOF>> {
     BEGIN(INITIAL);
-    while (0 < CTX->indent_stack[CTX->indent_sp]) {
-        if (CTX->indent_sp > 0) CTX->indent_sp--;
-        CTX->pending_dedents++;
+    {
+        int dedent_count = 0;
+        while (0 < CTX->indent_stack[CTX->indent_sp]) {
+            if (CTX->indent_sp > 0) CTX->indent_sp--;
+            dedent_count++;
+        }
+        if (dedent_count > 0) {
+            return return_dedent_count(dedent_count, yylval);
+        }
     }
-    if (CTX->pending_dedents > 0) {
-        CTX->pending_dedents--;
+    yyterminate();
+}
+
+<INITIAL><<EOF>> {
+    if (g_pending_dedent_count > 0) {
+        yylval->ival = g_pending_dedent_count;
+        g_pending_dedent_count--;
         return DEDENT;
     }
     yyterminate();
@@ -638,19 +677,19 @@ PKEY_BODY [^:\n\r]*
 \n {
     CTX->quoted_value_closed_on_line = 0;
     /* In flow context, newlines are just whitespace, don't check indentation */
-    if (CTX->flow_delim_sp == 0) {
+    if (FLOW_DELIM_SP == 0) {
         BEGIN(INDENT_CHECK);
     } else {
-        int top = CTX->flow_delim_sp - 1;
+        int top = FLOW_DELIM_SP - 1;
         if (top >= 0 &&
-            (CTX->flow_indent_required_stack[top] || CTX->flow_implicit_key_candidate)) {
+            (FLOW_INDENT_REQUIRED_STACK[top] || FLOW_IMPLICIT_KEY_CANDIDATE)) {
             int look_buf[4096];
             int look_n = 0;
             int indent = 0;
             int first_content = -1;
             int c;
-            int close_ch = (CTX->flow_delim_stack[top] == '{') ? '}' : ']';
-            int baseline = CTX->flow_indent_ref_stack[top];
+            int close_ch = (FLOW_DELIM_STACK[top] == '{') ? '}' : ']';
+            int baseline = FLOW_INDENT_REF_STACK[top];
 
             while (look_n < 4095 && (c = input(yyscanner)) != EOF && c != 0) {
                 look_buf[look_n++] = c;
@@ -687,15 +726,15 @@ PKEY_BODY [^:\n\r]*
                 unput(look_buf[i]);
             }
 
-            if (CTX->flow_implicit_key_candidate &&
+            if (FLOW_IMPLICIT_KEY_CANDIDATE &&
                 first_content == ':' &&
-                CTX->flow_delim_stack[top] == '[') {
+                FLOW_DELIM_STACK[top] == '[') {
                 yyerror(yylloc, yyscanner, "syntax error, implicit flow key followed by newline");
                 CTX->semantic_error_count++;
                 CTX->semantic_flow_key_newline_count++;
             }
 
-            if (CTX->flow_indent_required_stack[top] &&
+            if (FLOW_INDENT_REQUIRED_STACK[top] &&
                 first_content >= 0 &&
                 first_content != close_ch &&
                 indent <= baseline) {
@@ -704,7 +743,7 @@ PKEY_BODY [^:\n\r]*
                 CTX->semantic_flow_indent_count++;
             }
         }
-        CTX->flow_implicit_key_candidate = 0;
+        FLOW_IMPLICIT_KEY_CANDIDATE = 0;
     }
     /* Otherwise skip the newline in flow context */
 }
@@ -776,14 +815,14 @@ PKEY_BODY [^:\n\r]*
     yyless(3);
     CTX->expecting_value = 1;
     CTX->last_was_value = 0;
-    CTX->flow_implicit_key_candidate = 0;
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
     CTX->open_document_started = 0;
     CTX->yaml_directive_seen = 0;
     return DOC_START;
 }
-"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 0; CTX->yaml_directive_seen = 0; return DOC_START; }
-"..."[ \t]*[^ \t\n\r#] { yyerror(yylloc, yyscanner, "content after document-end marker"); CTX->semantic_error_count++; CTX->semantic_doc_end_inline_count++; yyless(3); CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
-"..."            { CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
+"---"            { CTX->expecting_value = 1; CTX->last_was_value = 0; FLOW_IMPLICIT_KEY_CANDIDATE = 0; CTX->open_document_started = 0; CTX->yaml_directive_seen = 0; return DOC_START; }
+"..."[ \t]*[^ \t\n\r#] { yyerror(yylloc, yyscanner, "content after document-end marker"); CTX->semantic_error_count++; CTX->semantic_doc_end_inline_count++; yyless(3); CTX->expecting_value = 1; FLOW_IMPLICIT_KEY_CANDIDATE = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
+"..."            { CTX->expecting_value = 1; FLOW_IMPLICIT_KEY_CANDIDATE = 0; CTX->open_document_started = 1; CTX->yaml_directive_seen = 0; return DOC_END; }
 
 <DIRECTIVE_MODE>{
     [ \t]+          { /* skip space */ }
@@ -797,20 +836,20 @@ PKEY_BODY [^:\n\r]*
 "-"[ \t]*"#"[^\n]*\n {
     CTX->at_line_start = 0;
     CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
-    if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
+    if (FLOW_DELIM_SP == 0) BEGIN(INDENT_CHECK);
     return BULLET_EOL;
 }
 "-"[ \t]*\n {
     CTX->at_line_start = 0;
     CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
-    if (CTX->flow_level == 0) BEGIN(INDENT_CHECK);
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
+    if (FLOW_DELIM_SP == 0) BEGIN(INDENT_CHECK);
     return BULLET_EOL;
 }
-"-"/[ \t\n]      { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return BULLET; }
+"-"/[ \t\n]      { CTX->at_line_start = 0; CTX->expecting_value = 1; FLOW_IMPLICIT_KEY_CANDIDATE = 0; return BULLET; }
 "-"[ \t]*"," {
-    if (CTX->flow_delim_sp > 0) {
+    if (FLOW_DELIM_SP > 0) {
         yyerror(yylloc, yyscanner, "syntax error, bare dash is not a valid flow scalar");
         CTX->semantic_error_count++;
     }
@@ -818,12 +857,12 @@ PKEY_BODY [^:\n\r]*
     yylval->string = strdup("-");
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1;
     BEGIN(PLAIN_SCALAR_CONT);
     return CH_RAW;
 }
 "-"[ \t]*"]" {
-    if (CTX->flow_delim_sp > 0) {
+    if (FLOW_DELIM_SP > 0) {
         yyerror(yylloc, yyscanner, "syntax error, bare dash is not a valid flow scalar");
         CTX->semantic_error_count++;
     }
@@ -831,7 +870,7 @@ PKEY_BODY [^:\n\r]*
     yylval->string = strdup("-");
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1;
     BEGIN(PLAIN_SCALAR_CONT);
     return CH_RAW;
 }
@@ -840,10 +879,10 @@ PKEY_BODY [^:\n\r]*
         CTX->complex_key_pending = 0;
         CTX->at_line_start = 0;
         CTX->expecting_value = 1;
-        CTX->flow_implicit_key_candidate = 0;
+        FLOW_IMPLICIT_KEY_CANDIDATE = 0;
         return COLON;
     }
-    if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value) {
+    if (FLOW_DELIM_SP == 0 && CTX->at_line_start && !CTX->expecting_value) {
         /* Missing block mapping key, e.g. ": value" */
         yylval->string = strdup("");
         CTX->at_line_start = 0;
@@ -853,13 +892,13 @@ PKEY_BODY [^:\n\r]*
     }
     CTX->at_line_start = 0;
     CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
     return COLON;
 }
 ":"/[ \t]*[,}]   {
     CTX->at_line_start = 0;
-    CTX->flow_implicit_key_candidate = 0;
-    if (CTX->flow_level > 0) {
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
+    if (FLOW_DELIM_SP > 0) {
         CTX->expecting_value = 1;
         return COLON_EMPTY;
     }
@@ -872,7 +911,7 @@ PKEY_BODY [^:\n\r]*
     CTX->expecting_value = 1;
     return COLON;
 }
-":"/{VSPACE}     { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return COLON; }
+":"/{VSPACE}     { CTX->at_line_start = 0; CTX->expecting_value = 1; FLOW_IMPLICIT_KEY_CANDIDATE = 0; return COLON; }
 
 
 
@@ -1085,7 +1124,7 @@ PKEY_BODY [^:\n\r]*
         /* Value-position alias ending with ':' keeps the ':' in the alias name. */
         yylval->string = strdup(yytext);
         CTX->expecting_value = 0;
-        if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+        if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1;
         return ALIAS;
     }
 
@@ -1095,11 +1134,11 @@ PKEY_BODY [^:\n\r]*
     CTX->expecting_value = 0;
     return MAP_KEY;
 }
-"*"{ALIAS_CHAR}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1; return ALIAS; }
+"*"{ALIAS_CHAR}+      { CTX->at_line_start = 0; yylval->string = strdup(yytext); CTX->expecting_value = 0; if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1; return ALIAS; }
 "["              {
-    int require_flow_indent = (CTX->flow_delim_sp == 0 && !CTX->at_line_start);
+    int require_flow_indent = (FLOW_DELIM_SP == 0 && !CTX->at_line_start);
     int flow_ref_indent = CTX->indent_stack[CTX->indent_sp];
-    if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
+    if (FLOW_DELIM_SP == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
         int depth = 1;
         int look_buf[4096];
         int look_n = 0;
@@ -1132,14 +1171,13 @@ PKEY_BODY [^:\n\r]*
         }
     }
     CTX->at_line_start = 0;
-    CTX->flow_implicit_key_candidate = 0;
-    if (CTX->flow_delim_sp < 100) {
-        CTX->flow_delim_stack[CTX->flow_delim_sp] = '[';
-        CTX->flow_indent_ref_stack[CTX->flow_delim_sp] = flow_ref_indent;
-        CTX->flow_indent_required_stack[CTX->flow_delim_sp] = require_flow_indent;
-        CTX->flow_delim_sp++;
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
+    if (FLOW_DELIM_SP < 100) {
+        FLOW_DELIM_STACK[FLOW_DELIM_SP] = '[';
+        FLOW_INDENT_REF_STACK[FLOW_DELIM_SP] = flow_ref_indent;
+        FLOW_INDENT_REQUIRED_STACK[FLOW_DELIM_SP] = require_flow_indent;
+        FLOW_DELIM_SP++;
     }
-    CTX->flow_level++;
     {
         int look_buf[1024];
         int look_n = 0;
@@ -1169,19 +1207,18 @@ PKEY_BODY [^:\n\r]*
         CTX->semantic_error_count++;
         CTX->semantic_flow_glue_count++;
     }
-    if (CTX->flow_delim_sp > 0) {
-        CTX->flow_delim_sp--;
+    if (FLOW_DELIM_SP > 0) {
+        FLOW_DELIM_SP--;
     }
     CTX->at_line_start = 0;
-    if (CTX->flow_level > 0) CTX->flow_level--;
     CTX->expecting_value = 0;
-    CTX->flow_implicit_key_candidate = (CTX->flow_delim_sp > 0);
+    FLOW_IMPLICIT_KEY_CANDIDATE = (FLOW_DELIM_SP > 0);
     return RBRACK;
 }
 "{"              {
-    int require_flow_indent = (CTX->flow_delim_sp == 0 && !CTX->at_line_start);
+    int require_flow_indent = (FLOW_DELIM_SP == 0 && !CTX->at_line_start);
     int flow_ref_indent = CTX->indent_stack[CTX->indent_sp];
-    if (CTX->flow_level == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
+    if (FLOW_DELIM_SP == 0 && CTX->at_line_start && !CTX->expecting_value && !CTX->complex_key_pending) {
         int depth = 1;
         int look_buf[4096];
         int look_n = 0;
@@ -1214,14 +1251,13 @@ PKEY_BODY [^:\n\r]*
         }
     }
     CTX->at_line_start = 0;
-    CTX->flow_implicit_key_candidate = 0;
-    if (CTX->flow_delim_sp < 100) {
-        CTX->flow_delim_stack[CTX->flow_delim_sp] = '{';
-        CTX->flow_indent_ref_stack[CTX->flow_delim_sp] = flow_ref_indent;
-        CTX->flow_indent_required_stack[CTX->flow_delim_sp] = require_flow_indent;
-        CTX->flow_delim_sp++;
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
+    if (FLOW_DELIM_SP < 100) {
+        FLOW_DELIM_STACK[FLOW_DELIM_SP] = '{';
+        FLOW_INDENT_REF_STACK[FLOW_DELIM_SP] = flow_ref_indent;
+        FLOW_INDENT_REQUIRED_STACK[FLOW_DELIM_SP] = require_flow_indent;
+        FLOW_DELIM_SP++;
     }
-    CTX->flow_level++;
     CTX->expecting_value = 1;
     return LBRACE;
 }
@@ -1232,61 +1268,60 @@ PKEY_BODY [^:\n\r]*
         CTX->semantic_error_count++;
         CTX->semantic_flow_glue_count++;
     }
-    if (CTX->flow_delim_sp > 0) {
-        CTX->flow_delim_sp--;
+    if (FLOW_DELIM_SP > 0) {
+        FLOW_DELIM_SP--;
     }
     CTX->at_line_start = 0;
-    if (CTX->flow_level > 0) CTX->flow_level--;
     CTX->expecting_value = 0;
-    CTX->flow_implicit_key_candidate = (CTX->flow_delim_sp > 0);
+    FLOW_IMPLICIT_KEY_CANDIDATE = (FLOW_DELIM_SP > 0);
     return RBRACE;
 }
 ":"              { 
-    if (CTX->expecting_value && CTX->flow_level > 0) {
+    if (CTX->expecting_value && FLOW_DELIM_SP > 0) {
          yylval->string = strdup(":");
          CTX->expecting_value = 0;
-         CTX->flow_implicit_key_candidate = 0;
+         FLOW_IMPLICIT_KEY_CANDIDATE = 0;
          BEGIN(PLAIN_SCALAR_CONT);
          return CH_RAW;
-    } else if (CTX->expecting_value && CTX->flow_level == 0) {
+    } else if (CTX->expecting_value && FLOW_DELIM_SP == 0) {
          yylval->string = strdup(":");
-         CTX->flow_implicit_key_candidate = 0;
+         FLOW_IMPLICIT_KEY_CANDIDATE = 0;
          BEGIN(PLAIN_SCALAR_CONT);
          return CH_RAW;
-    } else if (CTX->flow_level > 0) {
+    } else if (FLOW_DELIM_SP > 0) {
          CTX->expecting_value = 1;
-         CTX->flow_implicit_key_candidate = 0;
+         FLOW_IMPLICIT_KEY_CANDIDATE = 0;
          return COLON; 
     } else {
          return ':'; 
     }
 }
 ","/"#" {
-    if (CTX->flow_level > 0) {
+    if (FLOW_DELIM_SP > 0) {
         CTX->semantic_error_count++;
         CTX->semantic_flow_comment_comma_count++;
     }
     CTX->at_line_start = 0;
     CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
     return COMMA;
 }
 ","/[ \t]*"," {
-    if (CTX->flow_level > 0) {
+    if (FLOW_DELIM_SP > 0) {
         CTX->semantic_error_count++;
         CTX->semantic_flow_comma_count++;
     }
     CTX->at_line_start = 0;
     CTX->expecting_value = 1;
-    CTX->flow_implicit_key_candidate = 0;
+    FLOW_IMPLICIT_KEY_CANDIDATE = 0;
     return COMMA;
 }
-","              { CTX->at_line_start = 0; CTX->expecting_value = 1; CTX->flow_implicit_key_candidate = 0; return COMMA; }
+","              { CTX->at_line_start = 0; CTX->expecting_value = 1; FLOW_IMPLICIT_KEY_CANDIDATE = 0; return COMMA; }
 
 \"[^\"]*\"[ ]*: {
     // Extract quoted content
     size_t len = yyleng;
-    if (CTX->flow_level == 0 && (strchr(yytext, '\n') || strchr(yytext, '\r'))) {
+    if (FLOW_DELIM_SP == 0 && (strchr(yytext, '\n') || strchr(yytext, '\r'))) {
         CTX->semantic_error_count++;
         CTX->semantic_multiline_qkey_count++;
     }
@@ -1298,12 +1333,12 @@ PKEY_BODY [^:\n\r]*
     if (len > 1 && yytext[len - 1] == '"') yytext[len - 1] = '\0';
     yylval->string = strdup(yytext + 1);  // Skip opening quote
     
-    if (CTX->flow_level > 0) {
+    if (FLOW_DELIM_SP > 0) {
         // Flow context: return as QSCALAR, put back colon and spaces
         yyless(len);  // Keep only the quoted string part
         CTX->expecting_value = 0;
         CTX->last_was_value = 1;
-        CTX->flow_implicit_key_candidate = 1;
+        FLOW_IMPLICIT_KEY_CANDIDATE = 1;
         return QSCALAR;
     } else {
         // Block context: return as QMAP_KEY, put back only colon
@@ -1316,7 +1351,7 @@ PKEY_BODY [^:\n\r]*
 '[^']*'[ ]*: {
     // Extract quoted content
     size_t len = yyleng;
-    if (CTX->flow_level == 0 && (strchr(yytext, '\n') || strchr(yytext, '\r'))) {
+    if (FLOW_DELIM_SP == 0 && (strchr(yytext, '\n') || strchr(yytext, '\r'))) {
         CTX->semantic_error_count++;
         CTX->semantic_multiline_qkey_count++;
     }
@@ -1328,12 +1363,12 @@ PKEY_BODY [^:\n\r]*
     if (len > 1 && yytext[len - 1] == '\'') yytext[len - 1] = '\0';
     yylval->string = strdup(yytext + 1);  // Skip opening quote
     
-    if (CTX->flow_level > 0) {
+    if (FLOW_DELIM_SP > 0) {
         // Flow context: return as SSCALAR, put back colon and spaces
         yyless(len);  // Keep only the quoted string part
         CTX->expecting_value = 0;
         CTX->last_was_value = 1;
-        CTX->flow_implicit_key_candidate = 1;
+        FLOW_IMPLICIT_KEY_CANDIDATE = 1;
         return SSCALAR;
     } else {
         // Block context: return as SMAP_KEY, put back only colon
@@ -1352,7 +1387,7 @@ PKEY_BODY [^:\n\r]*
         CTX->expecting_value = 0;
         CTX->last_was_value = 1;
         CTX->quoted_value_closed_on_line = 1;
-        if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+        if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1;
         return QSCALAR; 
     }
     
@@ -1414,7 +1449,7 @@ PKEY_BODY [^:\n\r]*
     CTX->expecting_value = 0;
     CTX->last_was_value = 1;
     CTX->quoted_value_closed_on_line = 1;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1;
     return SSCALAR;
 }
 \'(\'\'|[^\'])*\'  { 
@@ -1438,7 +1473,7 @@ PKEY_BODY [^:\n\r]*
     CTX->expecting_value = 0;
     CTX->last_was_value = 1;
     CTX->quoted_value_closed_on_line = 1;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1;
     return SSCALAR;
 }
 "|"([1-9][-+]?|[-+][1-9]?|[-+]|[1-9])?[ \t]*(\n|[ \t]+#.*)      {
@@ -1598,21 +1633,21 @@ PKEY_BODY [^:\n\r]*
 
 [^ \t\n\r\[\]{}!,&*%@|>\`'":]([^ \n\r:]|[ ]|:[^ \t\n\r\xE2])*/[ ]*":"([ \t\n]|{VSPACE}) {
     /* Plain map key: key: value (complex pattern allows colons inside key text) */
-    if (CTX->flow_level == 0 && !CTX->at_line_start && !CTX->expecting_value && CTX->quoted_value_closed_on_line) {
+    if (FLOW_DELIM_SP == 0 && !CTX->at_line_start && !CTX->expecting_value && CTX->quoted_value_closed_on_line) {
         CTX->semantic_error_count++;
         CTX->semantic_inline_key_count++;
     }
-    if (CTX->flow_level > 0) {
+    if (FLOW_DELIM_SP > 0) {
         /* In flow context, parse key text incrementally; avoid swallowing commas/brackets. */
         yyless(1);
         if (yytext[0] == ':') {
             CTX->expecting_value = 1;
-            CTX->flow_implicit_key_candidate = 0;
+            FLOW_IMPLICIT_KEY_CANDIDATE = 0;
             return COLON;
         }
         yylval->string = strdup(yytext);
         CTX->expecting_value = 0;
-        CTX->flow_implicit_key_candidate = 1;
+        FLOW_IMPLICIT_KEY_CANDIDATE = 1;
         BEGIN(PLAIN_SCALAR_CONT);
         return CH_RAW;
     }
@@ -1636,21 +1671,21 @@ PKEY_BODY [^:\n\r]*
     yylval->string = strdup(yytext);
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1;
     BEGIN(PLAIN_SCALAR_CONT);
     return CH_RAW;
 }
 
 ":"[a-zA-Z0-9\-\._]+ {
-    if (CTX->flow_level > 0 && !CTX->expecting_value) {
+    if (FLOW_DELIM_SP > 0 && !CTX->expecting_value) {
         yyless(1);
         CTX->expecting_value = 1;
-        CTX->flow_implicit_key_candidate = 0;
+        FLOW_IMPLICIT_KEY_CANDIDATE = 0;
         return COLON;
     }
     yylval->string = strdup(yytext);
     CTX->expecting_value = 0;
-    if (CTX->flow_delim_sp > 0) CTX->flow_implicit_key_candidate = 1;
+    if (FLOW_DELIM_SP > 0) FLOW_IMPLICIT_KEY_CANDIDATE = 1;
     BEGIN(PLAIN_SCALAR_CONT);
     return CH_RAW;
 }
@@ -1727,7 +1762,7 @@ PKEY_BODY [^:\n\r]*
 }
 
 <PLAIN_SCALAR_CONT>[\{\}\[\],] {
-    if (CTX->flow_level > 0) {
+    if (FLOW_DELIM_SP > 0) {
         /* Flow indicators terminate plain scalars in flow context. */
         yyless(0);
         BEGIN(INITIAL);
@@ -1760,9 +1795,15 @@ PKEY_BODY [^:\n\r]*
 .                { return yytext[0]; }
 
 <<EOF>> {
-    if (CTX->indent_sp > 0) {
-        CTX->indent_sp--;
+    if (g_pending_dedent_count > 0) {
+        yylval->ival = g_pending_dedent_count;
+        g_pending_dedent_count--;
         return DEDENT;
+    }
+    if (CTX->indent_sp > 0) {
+        int dedent_count = CTX->indent_sp;
+        CTX->indent_sp = 0;
+        return return_dedent_count(dedent_count, yylval);
     }
     yyterminate();
 }

@@ -9,9 +9,7 @@ typedef void* yyscan_t;
 typedef struct {
     int indent_stack[100];
     int indent_sp;
-    int flow_level;
     int expecting_value;
-    int pending_dedents;
     int first_line;
     int last_was_value;
     int at_line_start;
@@ -49,11 +47,6 @@ typedef struct {
     int semantic_multiline_qkey_count;
     int semantic_inline_key_count;
     int semantic_doc_end_inline_count;
-    int flow_implicit_key_candidate;
-    int flow_delim_stack[100];
-    int flow_indent_ref_stack[100];
-    int flow_indent_required_stack[100];
-    int flow_delim_sp;
     int semantic_flow_indent_count;
     int open_document_started;
     int yaml_directive_seen;
@@ -66,6 +59,10 @@ typedef struct {
     char *value;    /* Key text */
     char *anchor;   /* Anchor name (without '&' prefix) or NULL */
 } ScalarValue;
+
+typedef struct {
+    int level;
+} Indented;
 
 /* === TYPE DEFINITIONS (from common.h) === */
 /**
@@ -123,8 +120,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 65
-%expect-rr 134
+%expect 73
+%expect-rr 137
 
 %{
 #include <stdlib.h>
@@ -186,8 +183,20 @@ static EventStream *current_event_stream = NULL;
 
 /* Error tracking for extensive recovery */
 static int parse_error_count = 0;
+
 static void parser_report_error(void *scanner, const char *msg) {
     parsing_yy_error(NULL, scanner, msg);
+}
+
+static Indented indented_from_level(int level) {
+    Indented indented;
+    indented.level = level;
+    return indented;
+}
+
+static Indented indented_dedent(Indented indented) {
+    indented.level = 0;
+    return indented;
 }
 
 #define RECOVER(msg) do { parser_report_error(scanner, (msg)); } while(0)
@@ -664,6 +673,8 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 
 %union {
     char *string;
+    int ival;
+    Indented indented;
     NodeProps props;
     ScalarValue scalar;
 }
@@ -672,17 +683,23 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %token BAD_TAG
 %token <string> CH_RAW CH_ESC_N CH_ESC_T CH_ESC_R CH_ESC_0 CH_ESC_BS CH_ESC_QU CH_ESC_SL
 %token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET BULLET_EOL COLON COLON_EMPTY COLON_IMPLICIT QUESTION
-%token INDENT DEDENT LBRACK RBRACK LBRACE RBRACE COMMA
+%token <ival> INDENT DEDENT
+%token LBRACK RBRACK LBRACE RBRACE COMMA
 
 %type <props> node_props
 %type <props> empty_props
+%type <indented> indent
+%type <ival> dedent
 %type <scalar> scalar_item
+%type <scalar> indented_scalar_item
+%type <scalar> scalar_payload
 %type <scalar> map_key
 %type <string> scalar_parts qscalar qparts qpart bscalar
 
 /* TODO Fix destructor double free in GLR mode + manual free in actions */
 /* Destructors handle cleanup when symbols are discarded by the parser. */
 %destructor { if ($$) { free($$); $$ = NULL; } } <string>
+%destructor { $$ = indented_dedent($$); } <indented>
 %destructor { if ($$.anchor) { free($$.anchor); $$.anchor = NULL; } if ($$.tag) { free($$.tag); $$.tag = NULL; } } <props>
 %destructor { if ($$.value) { free($$.value); $$.value = NULL; } } <scalar>
 
@@ -819,15 +836,23 @@ node_with_indent:
     | indented_node
     ;
 
+indent:
+    INDENT[level] { $$ = indented_from_level($level); }
+    ;
+
+dedent:
+    DEDENT[level] { $$ = $level; }
+    ;
+
 indented_node:
-    INDENT node DEDENT
+    indent[level] node dedent[level]
     ;
 
 node:
     scalar_node
     | alias_node
     | collection_no_props
-    | collection_no_props
+    | collection_with_props
     | error { RECOVER("Recovering at node boundary"); }
     ;
 
@@ -840,7 +865,17 @@ value_node:
     | collection_no_props
     | value_collection_with_props
     | ANCHOR[a] indent[l1] TAG[t] indent[l2]
+      { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }[map_open]
+      collection_pair_entries
+      dedent[l2]
+      map_end
+      dedent[l1]
     | TAG[t] indent[l1] ANCHOR[a] indent[l2]
+      { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }[map_open]
+      collection_pair_entries
+      dedent[l2]
+      map_end
+      dedent[l1]
     | error { RECOVER("Recovering at value node boundary"); }
     ;
 
@@ -862,6 +897,8 @@ scalar_item:
     ;
 
 indented_scalar_item:
+    indent[level] scalar_item[s] dedent[level] { $$ = $s; }
+    ;
 
 scalar_payload:
     scalar_item[s] { $$ = $s; }
@@ -937,7 +974,7 @@ flow_sequence_no_props:
     ;
 
 flow_lvl_dec:
-    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level--; }
+    %empty
     ;
 
 seq_start:
@@ -949,20 +986,44 @@ seq_end:
     ;
 
 flow_seq_init:
-    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
+    %empty { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
+    ;
+
+flow_lbrack:
+    LBRACK
+    ;
+
+flow_rbrack:
+    RBRACK
     ;
 
 sequence_with_props:
-    seq_start_with_props collection_value_entries seq_end %dprec 3
-    | indented_seq_with_props seq_end %dprec 3
-    | LBRACK flow_seq_init_with_props collection_flow_value_entries RBRACK seq_end flow_lvl_dec
+    node_props[props]
+      { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }[seq_open]
+      collection_value_entries
+      seq_end
+      {}[seq_close]
+      %dprec 3
+    | value_sequence_with_props
     ;
 
 value_sequence_with_props:
     node_props[props]
+      indent[level]
+      { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }[seq_open]
+      collection_value_entries
+      dedent[level]
+      seq_end
+      {}[seq_close]
+      %dprec 3
     | node_props[props]
-    | node_props[props]
-    | node_props[props]
+      flow_lbrack
+      { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }[flow_seq_open]
+      collection_flow_value_entries
+      flow_rbrack
+      seq_end
+      flow_lvl_dec
+      {}[seq_close]
     ;
 
 collection_value_entries:
@@ -971,7 +1032,7 @@ collection_value_entries:
     ;
 
 indented_seq_entries:
-    INDENT collection_value_entries DEDENT
+    indent[level] collection_value_entries dedent[level]
     ;
 
 seq_entry:
@@ -1011,7 +1072,11 @@ flow_seq_entry:
 
 mapping_no_props:
     map_init collection_pair_entries map_end
-    | LBRACE flow_map_init collection_flow_pair_entries RBRACE map_end flow_lvl_dec
+    | flow_mapping_no_props
+    ;
+
+flow_mapping_no_props:
+    flow_lbrace flow_map_init collection_flow_pair_entries flow_rbrace map_end flow_lvl_dec
     ;
 
 map_init:
@@ -1023,17 +1088,42 @@ map_end:
     ;
 
 flow_map_init:
-    %empty { ((LexerContext*)scanning_get_extra(scanner))->flow_level++; ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
+    %empty { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
+    ;
+
+flow_lbrace:
+    LBRACE
+    ;
+
+flow_rbrace:
+    RBRACE
     ;
 
 mapping_with_props:
     value_mapping_with_props
     | node_props[props]
+      { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }[map_open]
+      collection_pair_entries
+      map_end
+      {}[map_close]
+    ;
+
 value_mapping_with_props:
     node_props[props]
-      indent[lvl]
+      indent[level]
+      { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }[map_open]
+      collection_pair_entries
+      dedent[level]
+      map_end
+      {}[map_close]
     | node_props[props]
-      LBRACE
+      flow_lbrace
+      { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }[flow_map_open]
+      collection_flow_pair_entries
+      flow_rbrace
+      map_end
+      flow_lvl_dec
+      {}[map_close]
     ;
 
 collection_pair_entries:
@@ -1042,11 +1132,11 @@ collection_pair_entries:
     ;
 
 indented_map_entries:
-    INDENT collection_pair_entries DEDENT
+    indent[level] collection_pair_entries dedent[level]
     ;
 
 indented_value_node:
-    INDENT value_node DEDENT
+    indent[level] value_node dedent[level]
     ;
 
 map_key:

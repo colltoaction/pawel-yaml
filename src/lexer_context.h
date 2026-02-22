@@ -8,7 +8,6 @@ typedef struct {
     int indent_stack[100];
     int indent_sp;
     int expecting_value;
-    int pending_dedents;
     int first_line;
     int last_was_value;
     int at_line_start;
