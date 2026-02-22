@@ -1,41 +1,15 @@
-# Exclusions
+# Everything is ignored by default
 *
+
+# Allowlist:
 !.gitignore
-!.agent/
-!.agent/**
 !src/
 !src/**
-!Dockerfile.alpine
 !Makefile
 !README.md
-!TEST_FAILURES.yaml
-!test_yaml_suite.py
-!extract_test_yaml.py
-!extract_test_info.py
+!tests/
+!tests/**
 
-# Preservation
-!build/tmp/
-!build/tmp/**
-!build/log/
-!build/log/**
-!build/lib/
-!build/lib/yaml-test-suite/
-!build/lib/yaml-test-suite/**
-!build/lib/yaml-runtimes/
-!build/lib/yaml-runtimes/**
-!build/lib/yaml-play/
-!build/lib/yaml-play/**
-
-# Temporary files
-tmp_*
-.agent/
-.agent/**
-build/src/
-build/inc/
-build/bin/
-
-# Local clones (redundant since they are in build/lib)
-yaml-play/
-yaml-reference-parser/
-yaml-runtimes/
-yaml-test-suite/
+# Blocklist
+src/legacy
+tests/legacy

@@ -4,7 +4,8 @@ SHELL = /bin/sh
 # Installation
 BUILD = ./build
 BINTARGET = $(BUILD)/bin/pawel-yaml
-DETECT_ISSUES_PY = python3 .agent/detect_issues.py
+DETECT_ISSUES_PY = python3 tests/legacy/scripts/detect_issues.py
+FAILURES_FILE = tests/legacy/reports/TEST_FAILURES.yaml
 
 SRC_MAKE = $(MAKE) -C src \
 	BUILD_ROOT="$(abspath $(BUILD))"
@@ -22,7 +23,7 @@ lex:
 
 # Testing
 check: $(BINTARGET)
-	./$< < test.yaml > /dev/null
+	./$< < tests/legacy/cases/test.yaml > /dev/null
 	@echo "✓ Basic sanity check passed"
 
 detect-issues: $(BINTARGET) yaml-test-suite
@@ -32,8 +33,8 @@ setup: ensure-test-failures yaml-test-suite
 	@echo "✓ Setup complete (harness prerequisites ready)"
 
 ensure-test-failures:
-	@test -f TEST_FAILURES.yaml || { \
-		echo "ERROR: TEST_FAILURES.yaml is missing"; \
+	@test -f $(FAILURES_FILE) || { \
+		echo "ERROR: $(FAILURES_FILE) is missing"; \
 		exit 1; \
 	}
 

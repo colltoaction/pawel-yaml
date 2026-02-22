@@ -18,7 +18,7 @@ This workflow uses high-fidelity event comparison to detect subtle parsing issue
 
    // turbo
    ```bash
-   python3 .agent/detect_issues.py
+   python3 tests/legacy/scripts/detect_issues.py
    ```
 
 2. **Analyze Diffs**
@@ -39,7 +39,7 @@ This workflow uses high-fidelity event comparison to detect subtle parsing issue
 3. **Targeted Debugging**
    Run the detection script for a single test case to focus on a specific failure:
    ```bash
-   python3 .agent/detect_issues.py --test 5WE3
+   python3 tests/legacy/scripts/detect_issues.py --test 5WE3
    ```
 
 4. **Verify Fixes**
