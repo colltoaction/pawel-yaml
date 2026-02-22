@@ -123,8 +123,8 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 70
-%expect-rr 123
+%expect 71
+%expect-rr 124
 
 %{
 #include <stdlib.h>
@@ -966,10 +966,23 @@ seq_entry:
     BULLET node %dprec 5
     | BULLET BULLET { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } node indented_seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 6
     | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node indented_map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
+    | BULLET_EOL seq_entry_empty_scalar %dprec 2
     | BULLET_EOL { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } indented_map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 4
     | BULLET_EOL indented_seq_entries %dprec 3
     | BULLET error { RECOVER("Malformed sequence item"); } %dprec 2
     | BULLET_EOL error { RECOVER("Malformed sequence item"); } %dprec 2
+    ;
+
+seq_entry_empty_scalar:
+    seq_entry_empty_scalar_ir seq_entry_empty_scalar_event
+    ;
+
+seq_entry_empty_scalar_ir:
+    %empty { ir_scalar_empty(ir); }
+    ;
+
+seq_entry_empty_scalar_event:
+    %empty { add_scalar_event("", ':'); }
     ;
 
 collection_flow_value_entries:
