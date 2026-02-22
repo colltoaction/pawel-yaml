@@ -20,6 +20,7 @@
 "+MAP"          return E_MAP_START;
 "-MAP"          return E_MAP_END;
 "---"           return E_DOC_EXPLICIT;
+"..."           return E_DOC_END_EXPLICIT;
 
 "=VAL"          return E_SCALAR;
 "=ALI"          return E_ALIAS;

@@ -12,10 +12,6 @@ int parse(FILE *in, FILE *out);
 int lex(FILE *in, FILE *out);
 }
 
-%glr-parser
-%expect 15
-%expect-rr 14
-
 %{
 #include <stdlib.h>
 #include <string.h>
@@ -125,8 +121,8 @@ static void add_alias_event(const char *name) {
 
 %glr-parser
 
-%expect 140
-%expect-rr 63
+%expect 16
+%expect-rr 28
 
 %locations
 %define parse.error detailed

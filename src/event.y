@@ -162,6 +162,7 @@ void event_yy_error(const char *msg);
 %token <sval> E_ANCHOR
 %token <sval> E_TAG
 %token E_DOC_EXPLICIT "---"
+%token E_DOC_END_EXPLICIT "..."
 %token <sval> E_QUOTED_STRING E_IDENTIFIER
 %token <cval> E_STYLE
 
@@ -189,6 +190,7 @@ docs : %empty
      ;
 
 doc : doc_start node "-DOC" { push_event(event_create(EVENT_DOCUMENT_END)); }
+    | doc_start node "-DOC" "..." { push_event(event_create(EVENT_DOCUMENT_END)); }
     | node
     ;
 

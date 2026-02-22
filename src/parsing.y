@@ -123,7 +123,7 @@ int yaml_present(void);
 }
 
 %glr-parser
-%expect 85
+%expect 70
 %expect-rr 123
 
 %{
@@ -749,28 +749,31 @@ directive:
 explicit_documents:
     explicit_document
     | explicit_documents explicit_document
-    | explicit_documents error DOC_END { RECOVER_SYNC("Skipping malformed document"); }
+    | explicit_documents error DOC_END[recover_end] { RECOVER_SYNC("Skipping malformed document"); }
     ;
 
 explicit_document:
-    DOC_START doc_start node doc_end optional_doc_end
-    | DOC_START doc_start INDENT node DEDENT doc_end optional_doc_end
-    | DOC_START doc_start doc_empty DOC_END doc_end
-    | DOC_START doc_start doc_empty doc_end
-    | directives DOC_START doc_start node doc_end optional_doc_end
-    | directives DOC_START doc_start INDENT node DEDENT doc_end optional_doc_end
-    | directives DOC_START doc_start doc_empty DOC_END doc_end
-    | directives DOC_START doc_start doc_empty doc_end
-    ;
-
-optional_doc_end:
-    %empty
-    | DOC_END
+    DOC_START[explicit] doc_start_explicit node_with_indent DOC_END[explicit_end] doc_end_explicit
+    | DOC_START[explicit] doc_start_explicit node_with_indent doc_end_implicit
+    | DOC_START[explicit] doc_start_explicit doc_empty DOC_END[explicit_end] doc_end_explicit
+    | DOC_START[explicit] doc_start_explicit doc_empty doc_end_implicit
+    | directives DOC_START[explicit] doc_start_explicit node_with_indent DOC_END[explicit_end] doc_end_explicit
+    | directives DOC_START[explicit] doc_start_explicit node_with_indent doc_end_implicit
+    | directives DOC_START[explicit] doc_start_explicit doc_empty DOC_END[explicit_end] doc_end_explicit
+    | directives DOC_START[explicit] doc_start_explicit doc_empty doc_end_implicit
     ;
 
 implicit_document:
-    doc_start node doc_end
-    | doc_start INDENT node DEDENT doc_end
+    doc_start_implicit node_with_indent doc_end_implicit
+    ;
+
+node_with_indent:
+    node
+    | indented_node
+    ;
+
+indented_node:
+    INDENT node DEDENT
     ;
 
 node:
@@ -862,8 +865,12 @@ flow_seq_init:
 
 sequence_with_props:
     seq_start_with_props seq_entries seq_end %dprec 3
-    | INDENT seq_start_with_props seq_entries DEDENT seq_end %dprec 3
+    | indented_seq_with_props seq_end %dprec 3
     | LBRACK flow_seq_init_with_props flow_seq_entries RBRACK seq_end flow_lvl_dec
+    ;
+
+indented_seq_with_props:
+    INDENT seq_start_with_props seq_entries DEDENT
     ;
 
 seq_start_with_props:
@@ -879,12 +886,16 @@ seq_entries:
     | seq_entries seq_entry
     ;
 
+indented_seq_entries:
+    INDENT seq_entries DEDENT
+    ;
+
 seq_entry:
     BULLET node %dprec 5
-    | BULLET BULLET { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } node INDENT seq_entries DEDENT { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 6
-    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node INDENT map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
-    | BULLET_EOL INDENT { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } map_entries DEDENT { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 4
-    | BULLET_EOL INDENT seq_entries DEDENT %dprec 3
+    | BULLET BULLET { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); } node indented_seq_entries { ir_seq_end(ir); add_event(EVENT_SEQUENCE_END); } %dprec 6
+    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node indented_map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
+    | BULLET_EOL { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); } indented_map_entries { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 4
+    | BULLET_EOL indented_seq_entries %dprec 3
     | BULLET error { RECOVER("Malformed sequence item"); } %dprec 2
     | BULLET_EOL error { RECOVER("Malformed sequence item"); } %dprec 2
     ;
@@ -921,8 +932,12 @@ flow_map_init:
 
 mapping_with_props:
     map_start_with_props map_entries map_end
-    | INDENT map_start_with_props map_entries DEDENT map_end
+    | indented_map_with_props map_end
     | LBRACE flow_map_init_with_props flow_map_entries RBRACE map_end flow_lvl_dec
+    ;
+
+indented_map_with_props:
+    INDENT map_start_with_props map_entries DEDENT
     ;
 
 map_start_with_props:
@@ -938,6 +953,10 @@ map_entries:
     | map_entries map_entry
     ;
 
+indented_map_entries:
+    INDENT map_entries DEDENT
+    ;
+
 map_key:
     MAP_KEY[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; }
     | QMAP_KEY[val] { $$.type = '"'; $$.value = $val; $$.anchor = NULL; }
@@ -947,15 +966,15 @@ map_key:
 
 map_entry:
     map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON node %dprec 1
-    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON INDENT node DEDENT %dprec 2
+    | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON indented_node %dprec 2
     | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | map_key[k] { emit_map_key(&$k); free($k.value); free($k.anchor); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | QUESTION node COLON node %dprec 2
-    | QUESTION INDENT node DEDENT COLON node %dprec 3
-    | QUESTION node COLON INDENT node DEDENT %dprec 3
-    | QUESTION INDENT node DEDENT COLON INDENT node DEDENT %dprec 4
+    | QUESTION indented_node COLON node %dprec 3
+    | QUESTION node COLON indented_node %dprec 3
+    | QUESTION indented_node COLON indented_node %dprec 4
     | QUESTION node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
-    | QUESTION INDENT node DEDENT { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
+    | QUESTION indented_node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
     | MAP_KEY error { RECOVER("Malformed mapping entry"); }
     | QMAP_KEY error { RECOVER("Malformed mapping entry"); }
     | SMAP_KEY error { RECOVER("Malformed mapping entry"); }
