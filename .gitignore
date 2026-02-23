@@ -1,0 +1,15 @@
+# Everything is ignored by default
+*
+
+# Allowlist:
+!.gitignore
+!src/
+!src/**
+!Makefile
+!README.md
+!tests/
+!tests/**
+
+# Blocklist
+src/legacy
+tests/legacy
