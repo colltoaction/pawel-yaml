@@ -5,7 +5,7 @@
 
 set -e
 
-LEX=src/scanning.l
+LEX=src/stream.l
 BACKUP=${LEX}.orig
 
 if [ $# -lt 1 ]; then
