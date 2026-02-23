@@ -55,7 +55,7 @@ int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner) {
                 if (g_input_cursor[1] == '\'') { g_input_cursor += 2; continue; }
                 g_in_single_quote = 0;
                 g_input_cursor++;
-                *yylval = val_str(strdup("scalar"));
+                *yylval = val_str("scalar");
                 return SCALAR;
             }
             g_input_cursor++;
@@ -66,7 +66,7 @@ int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner) {
             if (c == '"') {
                 g_in_double_quote = 0;
                 g_input_cursor++;
-                *yylval = val_str(strdup("scalar"));
+                *yylval = val_str("scalar");
                 return SCALAR;
             }
             g_input_cursor++;
@@ -113,8 +113,8 @@ int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner) {
         }
 
         if (c == ',') { g_input_cursor++; return COMMA; }
-        if (c == ':') { g_input_cursor++; *yylval = val_str(strdup(":")); return COLON; }
-        if (c == '-') { g_input_cursor++; *yylval = val_str(strdup("-")); return BULLET; }
+        if (c == ':') { g_input_cursor++; *yylval = val_str(":"); return COLON; }
+        if (c == '-') { g_input_cursor++; *yylval = val_str("-"); return BULLET; }
 
         /* Consume scalar char */
         g_input_cursor++;

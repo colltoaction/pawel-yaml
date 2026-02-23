@@ -5,12 +5,7 @@
 #include "lexer_context.h"
 #include "stream_tokens.h"
 
-typedef union {
-    char *string;
-    int ival;
-    NodeProps props;
-    ScalarValue scalar;
-} YYSTYPE;
+typedef void * YYSTYPE;
 
 typedef struct YYLTYPE {
     int first_line;
