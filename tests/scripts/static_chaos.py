@@ -52,13 +52,14 @@ def get_used_tokens(yacc_file):
 
 def main():
     lex_files = glob.glob('src/*.l')
+    lex_inc_files = glob.glob('src/*.l.inc')
     yacc_files = glob.glob('src/*.y')
 
     print("Static Chaos Analysis: Unused Lexer Rules")
     print("=========================================")
 
     lexer_tokens = set()
-    for lf in lex_files:
+    for lf in lex_files + lex_inc_files:
         if 'scanning.l.orig' in lf: continue
         t = get_returned_tokens(lf)
         print(f"Tokens returned by {lf}: {len(t)}")

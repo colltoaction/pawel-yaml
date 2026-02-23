@@ -34,6 +34,10 @@ extern int scanning_lex_init_extra(void *user_defined, void **scanner);
 extern int scanning_lex_destroy(void *scanner);
 extern YY_BUFFER_STATE scanning__scan_string(const char *yy_str, void *yyscanner);
 extern void scanning__delete_buffer(YY_BUFFER_STATE b, void *yyscanner);
+extern int node_scan_lex_init_extra(void *user_defined, void **scanner);
+extern int node_scan_lex_destroy(void *scanner);
+extern YY_BUFFER_STATE node_scan__scan_string(const char *yy_str, void *yyscanner);
+extern void node_scan__delete_buffer(YY_BUFFER_STATE b, void *yyscanner);
 
 extern LexerContext *lexer_context_new(void);
 extern void lexer_context_free(LexerContext *ctx);
@@ -43,31 +47,27 @@ extern int parse_error_count;
 extern int parse_nonfatal_count;
 extern int g_silent_parse_errors;
 extern int stream_yy_drive_parse(void *scanner);
+extern int node_yy_drive_parse(void *scanner);
 void stream_yy_error(void *yylloc, void *scanner, const char *s);
 
 static YAMLParseFn parser_entrypoint(int parse_only) {
-    (void)parse_only;
-    return stream_yy_drive_parse;
+    return parse_only ? node_yy_drive_parse : stream_yy_drive_parse;
 }
 
 static YAMLLexInitFn lexer_init_entrypoint(int parse_only) {
-    (void)parse_only;
-    return scanning_lex_init_extra;
+    return parse_only ? node_scan_lex_init_extra : scanning_lex_init_extra;
 }
 
 static YAMLLexDestroyFn lexer_destroy_entrypoint(int parse_only) {
-    (void)parse_only;
-    return scanning_lex_destroy;
+    return parse_only ? node_scan_lex_destroy : scanning_lex_destroy;
 }
 
 static YAMLScanStringFn lexer_scan_string_entrypoint(int parse_only) {
-    (void)parse_only;
-    return scanning__scan_string;
+    return parse_only ? node_scan__scan_string : scanning__scan_string;
 }
 
 static YAMLDeleteBufferFn lexer_delete_buffer_entrypoint(int parse_only) {
-    (void)parse_only;
-    return scanning__delete_buffer;
+    return parse_only ? node_scan__delete_buffer : scanning__delete_buffer;
 }
 
 static int parse_alt_no_context(void) {
