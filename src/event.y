@@ -1,5 +1,4 @@
 %code requires {
-#include <stdio.h>
 #include "common.h"
 
 /**
@@ -20,15 +19,6 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream);
 
 %define api.prefix {event_yy_}
 
-%{
-#include <stdio.h>
-#include "event.tab.h"
-
-static EventStream stream_store;
-
-void event_yy_error(const char *msg);
-%}
-
 %token STR "STR"
 %token DOC "DOC"
 %token SEQ "SEQ"
@@ -47,11 +37,12 @@ void event_yy_error(const char *msg);
 %define parse.error detailed
 %locations
 
-%{
+%code {
 int event_lex(void);
+void event_yy_error(const char *msg);
 #define yylex event_lex
 #define yyerror event_yy_error
-%}
+}
 
 %%
 
@@ -183,54 +174,3 @@ tensor_map_pair_implicit : node implicit_scalar ;
 implicit_scalar : %empty ;
 
 %%
-
-extern void *event__scan_string(const char *);
-extern void event__delete_buffer(void *);
-
-EventStream* event_parse_string(const char *input) {
-    if (!input) return NULL;
-
-    g_stream_store.events = g_event_refs;
-    g_stream_store.count = 0;
-    g_stream_store.capacity = EVENT_STREAM_MAX_EVENTS;
-    g_stream_overflow = 0;
-    current_stream = &g_stream_store;
-
-    void *buf = event__scan_string(input);
-    int res = event_yy_parse();
-    event__delete_buffer(buf);
-
-    if (res != 0 || g_stream_overflow) {
-        current_stream = NULL;
-        return NULL;
-    }
-
-    current_stream = NULL;
-    return &g_stream_store;
-}
-
-void event_stream_free(EventStream *stream) {
-    (void)stream;
-}
-
-ValidationResult* rml_parse_event_stream(const EventStream *stream) {
-    static ValidationResult result;
-    static char error_message[] = "Invalid event stream structure";
-    static char ir[1024 * 1024];
-
-    result.is_valid = (stream != NULL);
-    result.error_message = stream ? NULL : error_message;
-    result.error_line = -1;
-
-    if (stream) {
-        ir[0] = '\0';
-        result.intermediate_representation = ir;
-    } else {
-        result.intermediate_representation = NULL;
-    }
-    return &result;
-}
-
-void event_yy_error(const char *msg) {
-    fprintf(stderr, "[EVENT] Error: %s\n", msg ? msg : "syntax error");
-}

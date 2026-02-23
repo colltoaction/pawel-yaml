@@ -5,6 +5,9 @@ SHELL = /bin/sh
 BUILD = ./build
 BINTARGET = $(BUILD)/bin/pawel-yaml
 DETECT_ISSUES_PY = python3 tests/legacy/scripts/detect_issues.py
+DETECT_ISSUES_TIMEOUT ?= 5.0
+DETECT_ISSUES_WALL_TIMEOUT ?= 900
+MAKE_WALL_TIMEOUT ?= 1200
 FAILURES_FILE = tests/legacy/reports/TEST_FAILURES.yaml
 
 SRC_MAKE = $(MAKE) -C src \
@@ -14,13 +17,28 @@ SRC_DEPS = $(wildcard src/*.c src/*.h src/*.y src/*.l src/Makefile)
 all: $(BINTARGET)
 
 $(BINTARGET): $(SRC_DEPS)
-	@$(SRC_MAKE) all
+	@set -e; \
+	if command -v timeout >/dev/null 2>&1; then \
+		timeout --foreground $(MAKE_WALL_TIMEOUT)s $(SRC_MAKE) all; \
+	else \
+		$(SRC_MAKE) all; \
+	fi
 
 directories:
-	@$(SRC_MAKE) directories
+	@set -e; \
+	if command -v timeout >/dev/null 2>&1; then \
+		timeout --foreground $(MAKE_WALL_TIMEOUT)s $(SRC_MAKE) directories; \
+	else \
+		$(SRC_MAKE) directories; \
+	fi
 
 lex:
-	@$(SRC_MAKE) lex
+	@set -e; \
+	if command -v timeout >/dev/null 2>&1; then \
+		timeout --foreground $(MAKE_WALL_TIMEOUT)s $(SRC_MAKE) lex; \
+	else \
+		$(SRC_MAKE) lex; \
+	fi
 
 # Testing
 check: $(BINTARGET)
@@ -28,7 +46,14 @@ check: $(BINTARGET)
 	@echo "✓ Basic sanity check passed"
 
 detect-issues: $(BINTARGET) yaml-test-suite
-	$(DETECT_ISSUES_PY) $(foreach tid,$(TEST),--test $(tid))
+	@echo "Running issue detector; use TEST=<id> to limit scope or pass --timeout to adjust."
+	@set -e; \
+	if command -v timeout >/dev/null 2>&1; then \
+		timeout --foreground $(DETECT_ISSUES_WALL_TIMEOUT)s \
+			$(DETECT_ISSUES_PY) --timeout=$(DETECT_ISSUES_TIMEOUT) --max-total-seconds=$(DETECT_ISSUES_WALL_TIMEOUT) $(foreach tid,$(TEST),--test $(tid)); \
+	else \
+		$(DETECT_ISSUES_PY) --timeout=$(DETECT_ISSUES_TIMEOUT) --max-total-seconds=$(DETECT_ISSUES_WALL_TIMEOUT) $(foreach tid,$(TEST),--test $(tid)); \
+	fi
 
 setup: ensure-test-failures yaml-test-suite
 	@echo "✓ Setup complete (harness prerequisites ready)"
@@ -73,7 +98,12 @@ fuzz-lexer-replay-strict: $(BINTARGET)
 
 # Cleanup
 clean:
-	@$(SRC_MAKE) clean
+	@set -e; \
+	if command -v timeout >/dev/null 2>&1; then \
+		timeout --foreground $(MAKE_WALL_TIMEOUT)s $(SRC_MAKE) clean; \
+	else \
+		$(SRC_MAKE) clean; \
+	fi
 	@mkdir -p $(BUILD)
 	rm -rf $(BUILD)/log $(BUILD)/tmp
 

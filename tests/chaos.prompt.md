@@ -4,12 +4,12 @@ Chaos engineering in this project aims to verify the necessity and health of eve
 
 ## 1. Parser Chaos Analysis
 
-This procedure identifies dead or redundant grammar alternatives in `src/parsing.y`.
+This procedure identifies dead or redundant grammar alternatives in `src/stream.y`.
 
 ### Procedure
 1. **Target Identification**: Choose a specific grammar alternative or rule to test.
 2. **Component Removal**: 
-   - Backup `src/parsing.y`.
+   - Backup `src/stream.y`.
    - Remove the target lines (e.g., using `sed` or manual edit).
 3. **Build Validation**:
    - Run `make -j4`.
@@ -18,7 +18,7 @@ This procedure identifies dead or redundant grammar alternatives in `src/parsing
    - If the build succeeds, run a selection of tests (e.g., `./tests/legacy/scripts/tdd_harness.sh discover | shuf | head -10`).
    - If all tests pass despite the removal, the component is **DEAD CODE** or redundant.
    - If tests fail, the component is **ACTIVE** and necessary for correctness.
-5. **Restoration**: Restore `src/parsing.y` from backup.
+5. **Restoration**: Restore `src/stream.y` from backup.
 
 ## 2. Lexer Chaos Analysis
 

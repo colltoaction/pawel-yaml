@@ -111,12 +111,61 @@ typedef struct {
     char *tag;
 } ScalarValue;
 
+typedef struct {
+    int parse_node;
+    int dump_tokens;
+    int emit_yaml;
+    int ast_dump;
+} YAMLProcessorOptions;
+
+/* Processor alphabet generators:
+ * - C main closure generator
+ * - Bison parser closure generator
+ * - YAML stream/doc monoid markers
+ */
+typedef enum {
+    YAML_PROCESSOR_GAMMA_EXIT_SUCCESS = EXIT_SUCCESS,
+    YAML_PROCESSOR_GAMMA_YYEOF = YYEOF,
+    YAML_PROCESSOR_MONOID_STREAM = EVENT_STREAM_START,
+    YAML_PROCESSOR_MONOID_DOC = EVENT_DOCUMENT_START
+} YAMLProcessorGenerator;
+
+/* Processor-level parser driving helpers (folded from yaml_bison_control.h). */
+typedef int (*YAMLDriveLexFn)(void *, void *, void *);
+typedef int (*YAMLDriveParseFn)(void *);
+typedef void (*YAMLErrorFn)(void *, void *, const char *);
+
 /* Pipeline stage exports */
-int yaml_parse(void);
+int yaml_parse(const YAMLProcessorOptions *options);
 int yaml_parse_buffer(const char *input);
 int yaml_parse_buffer_probe(const char *input);
 int yaml_compose(void);
-int yaml_serialize(void);
+int yaml_serialize(const YAMLProcessorOptions *options);
 int yaml_present(void);
+int yaml_processor_run(const YAMLProcessorOptions *options);
+
+/* Stage driving artifacts (owned runtime buffers). */
+void yaml_runtime_reset_artifacts(void);
+void yaml_runtime_set_serialization_tree(char *owned_text);
+const char *yaml_runtime_serialization_tree(void);
+size_t yaml_runtime_serialization_tree_size(void);
+int yaml_runtime_has_serialization_tree(void);
+void yaml_runtime_set_representation_graph(char *owned_text);
+const char *yaml_runtime_representation_graph(void);
+size_t yaml_runtime_representation_graph_size(void);
+int yaml_runtime_has_representation_graph(void);
+
+int yaml_processor_drive_lex(
+    YAMLDriveLexFn lex_fn,
+    void *yylval_param,
+    void *yyloc_param,
+    void *scanner);
+int yaml_processor_drive_parse(
+    YAMLDriveParseFn parse_fn,
+    void *scanner);
+void yaml_processor_raise_error(
+    YAMLErrorFn error_fn,
+    void *scanner,
+    const char *msg);
 
 #endif /* YAML_COMMON_H */

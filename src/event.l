@@ -44,6 +44,8 @@
 
 "---"           return E_DOC_EXPLICIT;
 "..."           return E_DOC_END_EXPLICIT;
+"[]"            return FLOW_SEQ_MARKER;
+"{}"            return FLOW_MAP_MARKER;
 
 "&"[^ \t\n\r]+ {
     return E_ANCHOR;
