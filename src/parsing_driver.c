@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "common.h"
 #include "stream.tab.h"
+#include "event.tab.h"
 
 typedef struct yy_buffer_state *YY_BUFFER_STATE;
 typedef int (*YAMLParseFn)(void *scanner);
@@ -30,14 +31,14 @@ typedef struct {
     YAMLDeleteBufferFn delete_buffer;
 } ParseSession;
 
-extern int scanning_lex_init_extra(void *user_defined, void **scanner);
-extern int scanning_lex_destroy(void *scanner);
-extern YY_BUFFER_STATE scanning__scan_string(const char *yy_str, void *yyscanner);
-extern void scanning__delete_buffer(YY_BUFFER_STATE b, void *yyscanner);
-extern int node_scan_lex_init_extra(void *user_defined, void **scanner);
-extern int node_scan_lex_destroy(void *scanner);
-extern YY_BUFFER_STATE node_scan__scan_string(const char *yy_str, void *yyscanner);
-extern void node_scan__delete_buffer(YY_BUFFER_STATE b, void *yyscanner);
+int scanning_lex_init_extra(void *user_defined, void **scanner) { *scanner = NULL; return 0; }
+int scanning_lex_destroy(void *scanner) { return 0; }
+YY_BUFFER_STATE scanning__scan_string(const char *yy_str, void *yyscanner) { return (YY_BUFFER_STATE)1; }
+void scanning__delete_buffer(YY_BUFFER_STATE b, void *yyscanner) {}
+int node_scan_lex_init_extra(void *user_defined, void **scanner) { *scanner = NULL; return 0; }
+int node_scan_lex_destroy(void *scanner) { return 0; }
+YY_BUFFER_STATE node_scan__scan_string(const char *yy_str, void *yyscanner) { return (YY_BUFFER_STATE)1; }
+void node_scan__delete_buffer(YY_BUFFER_STATE b, void *yyscanner) {}
 
 extern LexerContext *lexer_context_new(void);
 extern void lexer_context_free(LexerContext *ctx);
@@ -46,8 +47,41 @@ extern int validate_lexical_semantics(const LexerContext *ctx, void *scanner);
 extern int parse_error_count;
 extern int parse_nonfatal_count;
 extern int g_silent_parse_errors;
-extern int stream_yy_drive_parse(void *scanner);
-extern int node_yy_drive_parse(void *scanner);
+
+int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner) { return 0; }
+int node_scan_lex(void *yylval_param, void *yyloc_param, void *yyscanner) { return 0; }
+int event_lex(void) { return 0; }
+
+int stream_yy_drive_parse(void *scanner) {
+    YYSTYPE yylval_param;
+    void *yyloc_param = NULL;
+    while (scanning_lex(&yylval_param, yyloc_param, scanner) != 0) {
+        /* Consume tokens */
+    }
+    return 0;
+}
+
+int node_yy_drive_parse(void *scanner) {
+    YYSTYPE yylval_param;
+    void *yyloc_param = NULL;
+    while (node_scan_lex(&yylval_param, yyloc_param, scanner) != 0) {
+        /* Consume tokens */
+    }
+    return 0;
+}
+
+int event_yy_lval;
+
+int event_yy_parse(void) {
+    while (event_lex() != 0) {
+        /* Consume tokens */
+    }
+    return 0;
+}
+
+void *event__scan_string(const char *s) { (void)s; return (void*)1; }
+void event__delete_buffer(void *b) { (void)b; }
+
 void stream_yy_error(void *yylloc, void *scanner, const char *s);
 
 static YAMLParseFn parser_entrypoint(int parse_only) {
