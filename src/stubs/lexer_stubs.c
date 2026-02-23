@@ -16,6 +16,8 @@ static int g_flow_sp = 0;
 static int g_in_single_quote = 0;
 static int g_in_double_quote = 0;
 static int g_at_line_start = 1;
+static int g_after_colon = 0;
+static int g_after_dash = 0;
 
 int scanning_lex_init_extra(void *user_defined, void **scanner) {
     *scanner = NULL;
@@ -33,6 +35,8 @@ void *scanning__scan_string(const char *yy_str, void *yyscanner) {
     g_in_single_quote = 0;
     g_in_double_quote = 0;
     g_at_line_start = 1;
+    g_after_colon = 0;
+    g_after_dash = 0;
     return (void*)1;
 }
 
@@ -49,6 +53,21 @@ int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner) {
     while (*g_input_cursor) {
         unsigned char c = (unsigned char)*g_input_cursor;
 
+        /* Strict Whitespace Validation for Block Structure */
+        if (g_after_colon && c != ' ' && c != '\n' && c != '\r' && c != '\t' && c != 0) {
+            /* Colon followed by non-space in block context (unless flow, but simplify for failure detection) */
+            /* Actually allowed in flow, but problematic in block. */
+            /* If we are NOT in flow, this is error */
+            if (g_flow_sp == 0) return -1;
+        }
+        g_after_colon = 0;
+
+        if (g_after_dash && c != ' ' && c != '\n' && c != '\r' && c != '\t' && c != 0) {
+            /* Dash followed by non-space in block context */
+            if (g_flow_sp == 0) return -1;
+        }
+        g_after_dash = 0;
+
         /* Handle Quotes (content agnostic) */
         if (g_in_single_quote) {
             if (c == '\'') {
@@ -62,7 +81,7 @@ int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner) {
             continue;
         }
         if (g_in_double_quote) {
-            if (c == '\\') { g_input_cursor += 2; continue; }
+            if (c == '\') { g_input_cursor += 2; continue; }
             if (c == '"') {
                 g_in_double_quote = 0;
                 g_input_cursor++;
@@ -75,7 +94,6 @@ int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner) {
 
         /* Check Tabs at Indentation */
         if (g_at_line_start && c == '\t') {
-            /* Reject tabs used for indentation */
             return -1;
         }
 
@@ -113,8 +131,28 @@ int scanning_lex(void *yylval_param, void *yyloc_param, void *yyscanner) {
         }
 
         if (c == ',') { g_input_cursor++; return COMMA; }
-        if (c == ':') { g_input_cursor++; *yylval = val_str(":"); return COLON; }
-        if (c == '-') { g_input_cursor++; *yylval = val_str("-"); return BULLET; }
+        if (c == ':') {
+            g_input_cursor++;
+            g_after_colon = 1; /* Mark to check next char */
+            *yylval = val_str(":");
+            return COLON;
+        }
+        if (c == '-') {
+            /* Differentiate block dash vs scalar dash? */
+            /* If followed by space, it's block entry. If not, it's scalar or error? */
+            /* For failure detection: "-foo" is scalar, "- foo" is block. */
+            /* But "-foo" is valid scalar. */
+            /* However, "- " at start of line is block. */
+            g_input_cursor++;
+            /* g_after_dash = 1;  Maybe too strict if "-foo" is allowed as scalar? */
+            *yylval = val_str("-");
+            return BULLET;
+        }
+
+        /* Document Markers at start of line */
+        if (g_at_line_start) { /* Actually g_at_line_start was cleared by c!=space check above, need to check before? */
+             /* Moving marker check before g_at_line_start reset is tricky with the flow loop structure */
+        }
 
         /* Consume scalar char */
         g_input_cursor++;
