@@ -19,20 +19,30 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream);
 
 %define api.prefix {event_yy_}
 
+/* Event Structure Tokens */
 %token STR "STR"
 %token DOC "DOC"
 %token SEQ "SEQ"
 %token MAP "MAP"
+
+/* Event Data Tokens */
 %token VAL "VAL"
 %token ALI "ALI"
 
+/* Event Attribute Tokens */
 %token E_ANCHOR
 %token E_TAG
+%token E_STYLE
+
+/* Document Markers */
 %token E_DOC_EXPLICIT "---"
 %token E_DOC_END_EXPLICIT "..."
-%token E_QUOTED_STRING E_IDENTIFIER
+
+/* Flow Markers */
 %token FLOW_SEQ_MARKER FLOW_MAP_MARKER
-%token E_STYLE
+
+/* Content Tokens */
+%token E_QUOTED_STRING E_IDENTIFIER
 
 %define parse.error detailed
 %locations

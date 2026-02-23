@@ -1,25 +1,7 @@
 #ifndef EVENT_TAB_H
 #define EVENT_TAB_H
 
-#include "common.h"
-
-enum {
-    STR = 258,
-    DOC,
-    SEQ,
-    MAP,
-    VAL,
-    ALI,
-    E_ANCHOR,
-    E_TAG,
-    E_DOC_EXPLICIT,
-    E_DOC_END_EXPLICIT,
-    E_QUOTED_STRING,
-    E_IDENTIFIER,
-    FLOW_SEQ_MARKER,
-    FLOW_MAP_MARKER,
-    E_STYLE
-};
+#include "event_tokens.h"
 
 extern int event_yy_lval;
 

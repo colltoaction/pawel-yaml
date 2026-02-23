@@ -98,12 +98,29 @@ static void stream_yy_recover_error(void *scanner, const char *msg) {
     ScalarValue scalar;
 }
 
-%token <string> SCALAR BSCALAR QSCALAR SSCALAR TAG ANCHOR ALIAS MAP_KEY ANCHOR_MAP_KEY QPART BPART
-%token BAD_TAG
-%token <string> CH_RAW CH_ESC_N CH_ESC_T CH_ESC_R CH_ESC_0 CH_ESC_BS CH_ESC_QU CH_ESC_SL
-%token YAML_DIRECTIVE TAG_DIRECTIVE DOC_START DOC_END BULLET BULLET_EOL COLON COLON_EMPTY COLON_IMPLICIT QUESTION
+/* Stream Structure Tokens */
 %token <ival> INDENT DEDENT
+%token DOC_START DOC_END
+
+/* Directives */
+%token YAML_DIRECTIVE TAG_DIRECTIVE
+
+/* Block Structure Tokens */
+%token BULLET BULLET_EOL
+%token COLON COLON_EMPTY COLON_IMPLICIT QUESTION
+
+/* Flow Structure Tokens */
 %token LBRACK RBRACK LBRACE RBRACE COMMA
+
+/* Data Tokens */
+%token <string> SCALAR BSCALAR QSCALAR SSCALAR
+%token TAG ANCHOR ALIAS
+%token MAP_KEY ANCHOR_MAP_KEY
+%token BAD_TAG
+
+/* Scalar Parts (Low Level) */
+%token <string> CH_RAW CH_ESC_N CH_ESC_T CH_ESC_R CH_ESC_0 CH_ESC_BS CH_ESC_QU CH_ESC_SL
+%token QPART BPART
 
 %type <props> node_props
 %type <props> empty_props
