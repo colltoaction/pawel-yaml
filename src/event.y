@@ -98,11 +98,6 @@ static YAMLEvent* event_alias_new(const char *name) {
 void event_yy_error(const char *msg);
 %}
 
-%union {
-    char cval;
-    int ival;
-}
-
 %token STR "STR"
 %token DOC "DOC"
 %token SEQ "SEQ"
@@ -115,10 +110,13 @@ void event_yy_error(const char *msg);
 %token E_DOC_EXPLICIT "---"
 %token E_DOC_END_EXPLICIT "..."
 %token E_QUOTED_STRING E_IDENTIFIER
-%token <cval> E_STYLE
+%token FLOW_SEQ_MARKER FLOW_MAP_MARKER
+%token E_STYLE
 
-%type <cval> style_val
-%type <ival> doc_open_marker seq_items seq_item
+%type style_val doc_open_marker
+%type stream stream_complete stream_open stream_close stream_body docs doc doc_monoid doc_core doc_closed doc_open doc_close doc_close_marker doc_nodes
+%type node collection scalar alias sequence sequence_open sequence_close mapping mapping_open mapping_close
+%type sequence_body mapping_body seq_items seq_item map_pairs map_pair scalar_payload implicit_scalar
 
 %define parse.error detailed
 %locations
@@ -133,53 +131,73 @@ int event_lex(void);
 
 stream : stream_open docs stream_close ;
 
-stream_open : '+' "STR" { emit_event(EVENT_STREAM_START); } ;
+stream_open : '+' "STR" { $$ = word_atom(EVENT_STREAM_START, 0, 0); } ;
 
-stream_close : '-' "STR" { emit_event(EVENT_STREAM_END); } ;
+stream_close : '-' "STR" { $$ = word_atom(EVENT_STREAM_END, 0, 0); } ;
 
-docs : %empty
-     | docs doc
+docs : %empty { $$ = 0; }
+     | docs[left] doc[right] { $$ = word_binary($left, $right); }
      ;
 
-doc : doc_monoid
-    | node
+doc : doc_monoid[value] { $$ = $value; }
+    | node[value] { $$ = $value; }
     ;
 
-doc_monoid : doc_open node doc_close doc_close_marker ;
+doc_monoid : doc_closed[left] doc_close_marker[right] { $$ = word_binary($left, $right); } ;
 
-doc_open : '+' "DOC" doc_open_marker { emit_doc_open($3); } ;
+doc_core : doc_open[left] doc_nodes[right] { $$ = word_binary($left, $right); } ;
+
+doc_closed : doc_core[left] doc_close[right] { $$ = word_binary($left, $right); } ;
+
+doc_nodes : %empty { $$ = 0; }
+          | doc_nodes[left] node[right] { $$ = word_binary($left, $right); }
+          ;
+
+doc_open : '+' "DOC" doc_open_marker[explicit_start] { $$ = word_atom(EVENT_DOCUMENT_START, 0, $explicit_start); } ;
 
 doc_open_marker : %empty { $$ = 0; }
                 | E_DOC_EXPLICIT { $$ = 1; }
                 ;
 
-doc_close : '-' "DOC" { emit_event(EVENT_DOCUMENT_END); } ;
+doc_close : '-' "DOC" { $$ = word_atom(EVENT_DOCUMENT_END, 0, 0); } ;
 
-doc_close_marker : %empty
-                 | E_DOC_END_EXPLICIT
+doc_close_marker : %empty { $$ = 0; }
+                 | E_DOC_END_EXPLICIT { $$ = 0; }
                  ;
 
-node : scalar
-     | alias
-     | collection
+node : scalar[value] { $$ = $value; }
+     | alias[value] { $$ = $value; }
+     | collection[value] { $$ = $value; }
      ;
 
-collection : sequence
-           | mapping
+collection : sequence[value] { $$ = $value; }
+           | mapping[value] { $$ = $value; }
            ;
 
-scalar : '=' "VAL" style_val content { emit_scalar($3); }
-       | '=' "VAL" style_val { emit_scalar($3); }
-       | '=' "VAL" E_ANCHOR style_val content { emit_scalar($4); }
-       | '=' "VAL" E_ANCHOR style_val { emit_scalar($4); }
-       | '=' "VAL" E_TAG style_val content { emit_scalar($4); }
-       | '=' "VAL" E_TAG style_val { emit_scalar($4); }
-       | '=' "VAL" E_ANCHOR E_TAG style_val content { emit_scalar($5); }
-       | '=' "VAL" E_ANCHOR E_TAG style_val { emit_scalar($5); }
+scalar : '=' "VAL" style_val[style] scalar_payload[payload]
+       {
+           int atom = word_atom(EVENT_SCALAR, $style, 0);
+           $$ = word_binary(atom, $payload);
+       }
+       | '=' "VAL" E_ANCHOR style_val[style] scalar_payload[payload]
+       {
+           int atom = word_atom(EVENT_SCALAR, $style, 0);
+           $$ = word_binary(atom, $payload);
+       }
+       | '=' "VAL" E_TAG style_val[style] scalar_payload[payload]
+       {
+           int atom = word_atom(EVENT_SCALAR, $style, 0);
+           $$ = word_binary(atom, $payload);
+       }
+       | '=' "VAL" E_ANCHOR E_TAG style_val[style] scalar_payload[payload]
+       {
+           int atom = word_atom(EVENT_SCALAR, $style, 0);
+           $$ = word_binary(atom, $payload);
+       }
        ;
 
-style_val : E_STYLE ':' { $$ = $1; }
-          | E_STYLE     { $$ = $1; }
+style_val : E_STYLE[style] ':' { $$ = $style; }
+          | E_STYLE[style]     { $$ = $style; }
           | ':'         { $$ = ':'; }
           ;
 
@@ -187,43 +205,58 @@ content : E_QUOTED_STRING
         | E_IDENTIFIER
         ;
 
-alias : '=' "ALI" E_IDENTIFIER { emit_alias(); }
+scalar_payload : %empty { $$ = 0; }
+               | scalar_payload[left] content[right] { $$ = word_binary($left, $right); }
+               ;
+
+alias : '=' "ALI" E_IDENTIFIER { $$ = word_atom(EVENT_ALIAS, 0, 0); }
       ;
 
-sequence : sequence_open seq_items sequence_close
-         ;
+sequence : sequence_body[left] sequence_close[right] { $$ = word_binary($left, $right); } ;
 
-sequence_open : '+' "SEQ" collection_props { emit_collection_open(EVENT_SEQUENCE_START); } ;
+sequence_body : sequence_open[left] seq_items[right] { $$ = word_binary($left, $right); } ;
 
-sequence_close : '-' "SEQ" { emit_event(EVENT_SEQUENCE_END); } ;
+sequence_open : '+' "SEQ" collection_props { $$ = word_atom(EVENT_SEQUENCE_START, 0, 0); } ;
 
-mapping : mapping_open map_pairs mapping_close
-        ;
+sequence_close : '-' "SEQ" { $$ = word_atom(EVENT_SEQUENCE_END, 0, 0); } ;
 
-mapping_open : '+' "MAP" collection_props { emit_collection_open(EVENT_MAPPING_START); } ;
+mapping : mapping_body[left] mapping_close[right] { $$ = word_binary($left, $right); } ;
 
-mapping_close : '-' "MAP" { emit_event(EVENT_MAPPING_END); } ;
+mapping_body : mapping_open[left] map_pairs[right] { $$ = word_binary($left, $right); } ;
+
+mapping_open : '+' "MAP" collection_props { $$ = word_atom(EVENT_MAPPING_START, 0, 0); } ;
+
+mapping_close : '-' "MAP" { $$ = word_atom(EVENT_MAPPING_END, 0, 0); } ;
 
 collection_props : %empty
                  | E_ANCHOR
                  | E_TAG
                  | E_ANCHOR E_TAG
                  | E_TAG E_ANCHOR
+                 | FLOW_SEQ_MARKER
+                 | FLOW_MAP_MARKER
+                 | FLOW_SEQ_MARKER E_ANCHOR
+                 | FLOW_SEQ_MARKER E_TAG
+                 | FLOW_MAP_MARKER E_ANCHOR
+                 | FLOW_MAP_MARKER E_TAG
                  ;
 
 seq_items : %empty { $$ = 0; }
-          | seq_items seq_item { $$ = $1 + $2; }
+          | seq_items[left] seq_item[right] { $$ = word_binary($left, $right); }
           ;
 
-seq_item : node { $$ = 1; }
+seq_item : node[value] { $$ = $value; }
          ;
 
-map_pairs : %empty
-          | map_pairs map_pair
+map_pairs : %empty { $$ = 0; }
+          | map_pairs[left] map_pair[right] { $$ = word_binary($left, $right); }
           ;
 
-map_pair : node node
+map_pair : node[key] node[value] { $$ = word_binary($key, $value); }
+         | node[key] implicit_scalar[value] { $$ = word_binary($key, $value); }
           ;
+
+implicit_scalar : %empty { $$ = word_atom(EVENT_SCALAR, ':', 0); } ;
 
 %%
 

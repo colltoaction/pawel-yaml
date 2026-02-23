@@ -70,23 +70,25 @@
 }
 
 "\"" {
-    yylval.cval = '"';
+    yylval = '"';
+    BEGIN(SCALAR_VAL);
     return E_STYLE;
 }
 
 "\'" {
-    yylval.cval = '\'';
+    yylval = '\'';
+    BEGIN(SCALAR_VAL);
     return E_STYLE;
 }
 
 "|" {
-    yylval.cval = '|';
+    yylval = '|';
     BEGIN(SCALAR_VAL);
     return E_STYLE;
 }
 
 ">" {
-    yylval.cval = '>';
+    yylval = '>';
     BEGIN(SCALAR_VAL);
     return E_STYLE;
 }

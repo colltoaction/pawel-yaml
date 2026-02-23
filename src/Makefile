@@ -12,7 +12,7 @@ SRC_DIR ?= .
 # Toolchain
 CC ?= gcc
 LEX ?= flex
-YACC ?= bison
+YACC := bison
 CFLAGS ?= -Wall -pedantic -g
 YFLAGS ?= -d
 LFLAGS ?= -w

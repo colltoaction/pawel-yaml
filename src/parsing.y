@@ -62,8 +62,8 @@ typedef struct {
 }
 
 %glr-parser
-%expect 61
-%expect-rr 63
+%expect 48
+%expect-rr 60
 
 %{
 #include <stdlib.h>
@@ -526,8 +526,9 @@ static void ir_doc_end(IRBuilder *b, int explicit_end) {
  * Sequence start with optional properties
  * Format: +SEQ [&anchor] [!tag]
  */
-static void ir_seq_start(IRBuilder *b, const char *anchor, const char *tag) {
+static void ir_seq_start(IRBuilder *b, const char *anchor, const char *tag, const char *marker) {
     ir_write(b, "+SEQ");
+    if (marker) ir_write(b, " %s", marker);
     if (anchor) ir_write(b, " &%s", anchor[0] == '&' ? anchor + 1 : anchor);
     ir_write_tag(b, tag);
     ir_write(b, "\n");
@@ -545,8 +546,9 @@ static void ir_seq_end(IRBuilder *b) {
  * Mapping start with optional properties
  * Format: +MAP [&anchor] [!tag]
  */
-static void ir_map_start(IRBuilder *b, const char *anchor, const char *tag) {
+static void ir_map_start(IRBuilder *b, const char *anchor, const char *tag, const char *marker) {
     ir_write(b, "+MAP");
+    if (marker) ir_write(b, " %s", marker);
     if (anchor) ir_write(b, " &%s", anchor[0] == '&' ? anchor + 1 : anchor);
     ir_write_tag(b, tag);
     ir_write(b, "\n");
@@ -568,11 +570,8 @@ static void ir_scalar(IRBuilder *b, const char *value, char style, const char *a
     ir_write_tag(b, tag);
     if (style == ':') {
         ir_write(b, " :%s\n", escaped);
-    } else if (style == '|' || style == '>') {
-        /* Tree format: block style followed immediately by value */
-        ir_write(b, " %c%s\n", style, escaped);
     } else {
-        ir_write(b, " %c :%s\n", style, escaped);
+        ir_write(b, " %c%s\n", style, escaped);
     }
     free(escaped);
 }
@@ -738,10 +737,7 @@ static void ir_prop_both(IRBuilder *b, const char *anchor, const char *tag) {
 %type <props> empty_props
 %type <ival> doc_start
 %type <ival> doc_end
-%type <ival> indent
-%type <ival> dedent
 %type <scalar> scalar_item scalar_payload block_content block
-%type <scalar> indented_scalar_item
 %type <scalar> map_key
 %type <string> scalar_parts qscalar qparts qpart bscalar
 
@@ -901,15 +897,6 @@ explicit_doc_prelude:
 
 node_with_indent:
     node
-    | indented_node
-    ;
-
-indent:
-    INDENT
-    ;
-
-dedent:
-    DEDENT
     ;
 
 block:
@@ -917,15 +904,15 @@ block:
     ;
 
 block_content:
-    node {
-        $$.type = ':'; $$.value = NULL; $$.anchor = NULL; $$.tag = NULL;
-    }
-    | scalar_item { $$ = $1; }
+    scalar_item { $$ = $1; }
     | collection_value_entries {
         $$.type = ':'; $$.value = NULL; $$.anchor = NULL; $$.tag = NULL;
     }
     | collection_pair_entries {
         $$.type = ':'; $$.value = NULL; $$.anchor = NULL; $$.tag = NULL;
+    }
+    | alias_node {
+        $$.type = '*'; $$.value = NULL; $$.anchor = NULL; $$.tag = NULL;
     }
     ;
 
@@ -945,18 +932,18 @@ value_node:
     | collection_no_props
     | scalar_node
     | alias_node
-    | ANCHOR[a] TAG[t] { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }
+    | ANCHOR[a] TAG[t] { ir_map_start(ir, $a, $t, NULL); add_event(EVENT_MAPPING_START); }
       block
       map_end
-    | TAG[t] ANCHOR[a] { ir_map_start(ir, $a, $t); add_event(EVENT_MAPPING_START); }
+    | TAG[t] ANCHOR[a] { ir_map_start(ir, $a, $t, NULL); add_event(EVENT_MAPPING_START); }
       block
       map_end
     | error { RECOVER("Recovering at value node boundary"); }
     ;
 
 scalar_node:
-    empty_props[props] scalar_payload[s] { ir_scalar(ir, $s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type); }
-    | node_props[props] scalar_payload[s] { ir_scalar(ir, $s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type); }
+    empty_props[props] scalar_payload[s] { if ($s.value) { ir_scalar(ir, $s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type); } }
+    | node_props[props] scalar_payload[s] { if ($s.value) { ir_scalar(ir, $s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type); } }
     | node_props[props] { ir_scalar(ir, "", ':', $props.anchor, $props.tag); add_scalar_event("", ':'); }
     ;
 
@@ -971,13 +958,8 @@ scalar_item:
     | bscalar { $$.type = '|'; /* Placeholder type, fix later */ $$.value = $1; }
     ;
 
-indented_scalar_item:
-    indent[level] scalar_item[s] dedent[level] { $$ = $s; }
-    ;
-
 scalar_payload:
     scalar_item[s] { $$ = $s; }
-    | block { $$ = $1; }
     ;
 
 qscalar:
@@ -1051,7 +1033,7 @@ flow_lvl_dec:
     ;
 
 seq_start:
-    %empty { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
+    %empty { ir_seq_start(ir, NULL, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
     ;
 
 seq_end:
@@ -1059,7 +1041,7 @@ seq_end:
     ;
 
 flow_seq_init:
-    %empty { ir_seq_start(ir, NULL, NULL); add_event(EVENT_SEQUENCE_START); }
+    %empty { ir_seq_start(ir, NULL, NULL, "[]"); add_event(EVENT_SEQUENCE_START); }
     ;
 
 flow_lbrack:
@@ -1072,7 +1054,7 @@ flow_rbrack:
 
 sequence_with_props:
     node_props[props]
-      { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }[seq_open]
+      { ir_seq_start(ir, $props.anchor, $props.tag, NULL); add_event(EVENT_SEQUENCE_START); }[seq_open]
       collection_value_entries
       seq_end
       {}[seq_close]
@@ -1082,12 +1064,12 @@ sequence_with_props:
 
 value_sequence_with_props:
     node_props[props]
-      { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }
+      { ir_seq_start(ir, $props.anchor, $props.tag, NULL); add_event(EVENT_SEQUENCE_START); }
       block
       seq_end
     | node_props[props]
       flow_lbrack
-      { ir_seq_start(ir, $props.anchor, $props.tag); add_event(EVENT_SEQUENCE_START); }[flow_seq_open]
+      { ir_seq_start(ir, $props.anchor, $props.tag, "[]"); add_event(EVENT_SEQUENCE_START); }[flow_seq_open]
       collection_flow_value_entries
       flow_rbrack
       seq_end
@@ -1105,7 +1087,7 @@ collection_value_entries:
 seq_entry:
     BULLET node %dprec 5
     | BULLET node block %dprec 6
-    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); } COLON node block { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
+    | BULLET map_key[k] { ir_map_start(ir, NULL, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); } COLON node block { ir_map_end(ir); add_event(EVENT_MAPPING_END); } %dprec 6
     | BULLET_EOL seq_entry_empty_scalar %dprec 2
     | BULLET_EOL block %dprec 4
     | BULLET error { RECOVER("Malformed sequence item"); } %dprec 2
@@ -1147,7 +1129,7 @@ flow_mapping_no_props:
     ;
 
 map_init:
-     %empty { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
+     %empty { ir_map_start(ir, NULL, NULL, NULL); add_event(EVENT_MAPPING_START); }
     ;
 
 map_end:
@@ -1155,7 +1137,7 @@ map_end:
     ;
 
 flow_map_init:
-    %empty { ir_map_start(ir, NULL, NULL); add_event(EVENT_MAPPING_START); }
+    %empty { ir_map_start(ir, NULL, NULL, "{}"); add_event(EVENT_MAPPING_START); }
     ;
 
 flow_lbrace:
@@ -1169,7 +1151,7 @@ flow_rbrace:
 mapping_with_props:
     value_mapping_with_props
     | node_props[props]
-      { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }[map_open]
+      { ir_map_start(ir, $props.anchor, $props.tag, NULL); add_event(EVENT_MAPPING_START); }[map_open]
       collection_pair_entries
       map_end
       {}[map_close]
@@ -1177,12 +1159,12 @@ mapping_with_props:
 
 value_mapping_with_props:
     node_props[props]
-      { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }
+      { ir_map_start(ir, $props.anchor, $props.tag, NULL); add_event(EVENT_MAPPING_START); }
       block
       map_end
     | node_props[props]
       flow_lbrace
-      { ir_map_start(ir, $props.anchor, $props.tag); add_event(EVENT_MAPPING_START); }[flow_map_open]
+      { ir_map_start(ir, $props.anchor, $props.tag, "{}"); add_event(EVENT_MAPPING_START); }[flow_map_open]
       collection_flow_pair_entries
       flow_rbrace
       map_end
@@ -1206,15 +1188,10 @@ map_key:
 
 map_entry:
     map_key[k] { emit_map_key(&$k); } COLON value_node %dprec 2
-    | map_key[k] { emit_map_key(&$k); } COLON block %dprec 1
     | map_key[k] { emit_map_key(&$k); } COLON { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | map_key[k] { emit_map_key(&$k); } COLON_IMPLICIT { ir_scalar_empty(ir); add_scalar_event("", ':'); }
     | QUESTION node COLON value_node %dprec 2
-    | QUESTION block COLON value_node %dprec 3
-    | QUESTION node COLON block %dprec 3
-    | QUESTION block COLON block %dprec 4
     | QUESTION node { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 1
-    | QUESTION block { ir_scalar_empty(ir); add_scalar_event("", ':'); } %dprec 2
     | MAP_KEY error { RECOVER("Malformed mapping entry"); }
     | QUESTION error { RECOVER("Malformed complex mapping entry"); }
     | error { RECOVER("Invalid mapping structure"); }
@@ -1307,19 +1284,6 @@ static int yaml_parse_internal(const char *input) {
     
     /* Scanner now manages stdin internally; just parse */
     result = parsing_yy_parse(scanner);
-
-    if (result != 0 && parse_error_count == 0 && parse_nonfatal_count > 0) {
-        result = 0;
-    }
-
-    if (result == 0 && parse_nonfatal_count > 0 && rml_ir_buf == NULL) {
-        rml_ir_buf = strdup("+STR\n-STR\n");
-        if (!rml_ir_buf) {
-            result = 1;
-        } else {
-            rml_ir_size = strlen(rml_ir_buf);
-        }
-    }
 
     if (result == 0 && validate_lexical_semantics(ctx, scanner) != 0) {
         result = 1;
