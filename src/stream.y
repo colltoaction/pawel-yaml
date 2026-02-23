@@ -9,8 +9,8 @@ typedef void* yyscan_t;
 }
 
 %glr-parser
-%expect 172
-%expect-rr 82
+%expect 227
+%expect-rr 137
 
 %{
 #include <stdlib.h>
@@ -114,13 +114,13 @@ static void stream_yy_recover_error(void *scanner, const char *msg) {
 
 /* Data Tokens */
 %token <string> SCALAR BSCALAR QSCALAR SSCALAR
-%token TAG ANCHOR ALIAS
-%token MAP_KEY ANCHOR_MAP_KEY
+%token <string> TAG ANCHOR ALIAS
+%token <string> MAP_KEY ANCHOR_MAP_KEY
 %token BAD_TAG
 
 /* Scalar Parts (Low Level) */
 %token <string> CH_RAW CH_ESC_N CH_ESC_T CH_ESC_R CH_ESC_0 CH_ESC_BS CH_ESC_QU CH_ESC_SL
-%token QPART BPART
+%token <string> QPART BPART
 
 %type <props> node_props
 %type <props> empty_props
@@ -471,9 +471,10 @@ collection_value_entries:
 /* indented_seq_entries replaced by block */
 
 seq_entry:
-    BULLET node %dprec 5
+    BULLET map_key[k] { ir_map_start(NULL, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); } COLON node block { ir_map_end(); add_event(EVENT_MAPPING_END); } %dprec 8
+    | BULLET map_key[k] { ir_map_start(NULL, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); } COLON node { ir_map_end(); add_event(EVENT_MAPPING_END); } %dprec 7
+    | BULLET node %dprec 5
     | BULLET node block %dprec 6
-    | BULLET map_key[k] { ir_map_start(NULL, NULL, NULL); add_event(EVENT_MAPPING_START); emit_map_key(&$k); } COLON node block { ir_map_end(); add_event(EVENT_MAPPING_END); } %dprec 6
     | BULLET_EOL seq_entry_empty_scalar %dprec 2
     | BULLET_EOL block %dprec 4
     | BULLET error { RECOVER("Malformed sequence item"); } %dprec 2
@@ -569,6 +570,9 @@ collection_pair_entries:
 
 map_key:
     MAP_KEY[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; $$.tag = NULL; }
+    | SCALAR[val] { $$.type = ':'; $$.value = $val; $$.anchor = NULL; $$.tag = NULL; }
+    | QSCALAR[val] { $$.type = '"'; $$.value = $val; $$.anchor = NULL; $$.tag = NULL; }
+    | SSCALAR[val] { $$.type = '\''; $$.value = $val; $$.anchor = NULL; $$.tag = NULL; }
     | ANCHOR_MAP_KEY[val] { $$ = parse_anchored_map_key($val); }
     ;
 
@@ -611,7 +615,10 @@ flow_map_entry:
     ;
 
 flow_map_entry_pair:
-    node COLON node %dprec 3
+    map_key[k] { emit_map_key(&$k); } COLON node %dprec 4
+    | map_key[k] { emit_map_key(&$k); } COLON_EMPTY { ir_scalar_empty(); add_scalar_event("", ':'); } %dprec 3
+    | map_key[k] { emit_map_key(&$k); } COLON { ir_scalar_empty(); add_scalar_event("", ':'); } %dprec 2
+    | node COLON node %dprec 3
     | node COLON_EMPTY { ir_scalar_empty(); add_scalar_event("", ':'); } %dprec 2
     | node COLON { ir_scalar_empty(); add_scalar_event("", ':'); } %dprec 1
     | COLON { ir_scalar_empty(); add_scalar_event("", ':'); } node %dprec 3
