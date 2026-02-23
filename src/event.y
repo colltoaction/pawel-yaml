@@ -1,6 +1,4 @@
 %code requires {
-#include <stdlib.h>
-#include <string.h>
 #include <stdio.h>
 #include "common.h"
 
@@ -23,77 +21,10 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream);
 %define api.prefix {event_yy_}
 
 %{
-#include <stdlib.h>
-#include <string.h>
 #include <stdio.h>
 #include "event.tab.h"
 
-/* Intermediate EventStream being built */
-static EventStream *current_stream = NULL;
-
-/* Helper to add events to the stream during parsing */
-static void push_event(YAMLEvent *e) {
-    if (!current_stream) return;
-    if (current_stream->count >= current_stream->capacity) {
-        current_stream->capacity = current_stream->capacity * 2 + 10;
-        current_stream->events = (YAMLEvent **)realloc(current_stream->events, 
-                                                       current_stream->capacity * sizeof(YAMLEvent *));
-    }
-    current_stream->events[current_stream->count++] = e;
-}
-
-static YAMLEvent* event_create(YAMLEventType type) {
-    YAMLEvent *e = (YAMLEvent *)malloc(sizeof(YAMLEvent));
-    if (!e) return NULL;
-    e->type = type;
-    e->quote_style = '\0';
-    e->value = NULL;
-    e->anchor = NULL;
-    e->tag = NULL;
-    e->explicit_start = 0;
-    e->alias_name = NULL;
-    return e;
-}
-
-static YAMLEvent* event_scalar_new(char style, const char *val) {
-    YAMLEvent *e = event_create(EVENT_SCALAR);
-    if (!e) return NULL;
-    e->quote_style = style;
-    e->value = val ? strdup(val) : NULL;
-    return e;
-}
-
-static YAMLEvent* event_collection_new(YAMLEventType type, const char *anchor, const char *tag) {
-    YAMLEvent *e = event_create(type);
-    if (!e) return NULL;
-    e->anchor = anchor ? strdup(anchor) : NULL;
-    e->tag = tag ? strdup(tag) : NULL;
-    return e;
-}
-
-static YAMLEvent* event_scalar_complex(char style, const char *val, const char *anchor, const char *tag) {
-    YAMLEvent *e = event_create(EVENT_SCALAR);
-    if (!e) return NULL;
-    e->quote_style = style;
-    e->value = val ? strdup(val) : NULL;
-    e->anchor = anchor ? strdup(anchor) : NULL;
-    e->tag = tag ? strdup(tag) : NULL;
-    return e;
-}
-
-static YAMLEvent* event_doc_new(int explicit) {
-    YAMLEvent *e = event_create(EVENT_DOCUMENT_START);
-    if (!e) return NULL;
-    e->explicit_start = explicit;
-    return e;
-}
-
-static YAMLEvent* event_alias_new(const char *name) {
-    YAMLEvent *e = event_create(EVENT_ALIAS);
-    if (!e) return NULL;
-    e->alias_name = name ? strdup(name) : NULL;
-    return e;
-}
+static EventStream stream_store;
 
 void event_yy_error(const char *msg);
 %}
@@ -113,11 +44,6 @@ void event_yy_error(const char *msg);
 %token FLOW_SEQ_MARKER FLOW_MAP_MARKER
 %token E_STYLE
 
-%type style_val doc_open_marker
-%type stream stream_complete stream_open stream_close stream_body docs doc doc_monoid doc_core doc_closed doc_open doc_close doc_close_marker doc_nodes
-%type node collection scalar alias sequence sequence_open sequence_close mapping mapping_open mapping_close
-%type sequence_body mapping_body seq_items seq_item map_pairs map_pair scalar_payload implicit_scalar
-
 %define parse.error detailed
 %locations
 
@@ -131,102 +57,92 @@ int event_lex(void);
 
 stream : stream_open docs stream_close ;
 
-stream_open : '+' "STR" { $$ = word_atom(EVENT_STREAM_START, 0, 0); } ;
+stream_open : '+' "STR" ;
 
-stream_close : '-' "STR" { $$ = word_atom(EVENT_STREAM_END, 0, 0); } ;
+stream_close : '-' "STR" ;
 
-docs : %empty { $$ = 0; }
-     | docs[left] doc[right] { $$ = word_binary($left, $right); }
+docs : %empty
+     | compose_docs
      ;
 
-doc : doc_monoid[value] { $$ = $value; }
-    | node[value] { $$ = $value; }
+compose_docs : docs doc ;
+
+doc : doc_monoid
+    | node
     ;
 
-doc_monoid : doc_closed[left] doc_close_marker[right] { $$ = word_binary($left, $right); } ;
+doc_monoid : doc_closed doc_close_marker ;
 
-doc_core : doc_open[left] doc_nodes[right] { $$ = word_binary($left, $right); } ;
+doc_core : doc_open doc_nodes ;
 
-doc_closed : doc_core[left] doc_close[right] { $$ = word_binary($left, $right); } ;
+doc_closed : doc_core doc_close ;
 
-doc_nodes : %empty { $$ = 0; }
-          | doc_nodes[left] node[right] { $$ = word_binary($left, $right); }
+doc_nodes : %empty
+          | compose_doc_nodes
           ;
 
-doc_open : '+' "DOC" doc_open_marker[explicit_start] { $$ = word_atom(EVENT_DOCUMENT_START, 0, $explicit_start); } ;
+compose_doc_nodes : doc_nodes node ;
 
-doc_open_marker : %empty { $$ = 0; }
-                | E_DOC_EXPLICIT { $$ = 1; }
+doc_open : '+' "DOC" doc_open_marker ;
+
+doc_open_marker : %empty
+                | E_DOC_EXPLICIT
                 ;
 
-doc_close : '-' "DOC" { $$ = word_atom(EVENT_DOCUMENT_END, 0, 0); } ;
+doc_close : '-' "DOC" ;
 
-doc_close_marker : %empty { $$ = 0; }
-                 | E_DOC_END_EXPLICIT { $$ = 0; }
+doc_close_marker : %empty
+                 | E_DOC_END_EXPLICIT
                  ;
 
-node : scalar[value] { $$ = $value; }
-     | alias[value] { $$ = $value; }
-     | collection[value] { $$ = $value; }
+node : scalar
+     | alias
+     | collection
      ;
 
-collection : sequence[value] { $$ = $value; }
-           | mapping[value] { $$ = $value; }
+collection : sequence
+           | mapping
            ;
 
-scalar : '=' "VAL" style_val[style] scalar_payload[payload]
-       {
-           int atom = word_atom(EVENT_SCALAR, $style, 0);
-           $$ = word_binary(atom, $payload);
-       }
-       | '=' "VAL" E_ANCHOR style_val[style] scalar_payload[payload]
-       {
-           int atom = word_atom(EVENT_SCALAR, $style, 0);
-           $$ = word_binary(atom, $payload);
-       }
-       | '=' "VAL" E_TAG style_val[style] scalar_payload[payload]
-       {
-           int atom = word_atom(EVENT_SCALAR, $style, 0);
-           $$ = word_binary(atom, $payload);
-       }
-       | '=' "VAL" E_ANCHOR E_TAG style_val[style] scalar_payload[payload]
-       {
-           int atom = word_atom(EVENT_SCALAR, $style, 0);
-           $$ = word_binary(atom, $payload);
-       }
+scalar : '=' "VAL" style_val scalar_payload
+       | '=' "VAL" E_ANCHOR style_val scalar_payload
+       | '=' "VAL" E_TAG style_val scalar_payload
+       | '=' "VAL" E_ANCHOR E_TAG style_val scalar_payload
        ;
 
-style_val : E_STYLE[style] ':' { $$ = $style; }
-          | E_STYLE[style]     { $$ = $style; }
-          | ':'         { $$ = ':'; }
+style_val : E_STYLE ':'
+          | E_STYLE
+          | ':'
           ;
 
 content : E_QUOTED_STRING
         | E_IDENTIFIER
         ;
 
-scalar_payload : %empty { $$ = 0; }
-               | scalar_payload[left] content[right] { $$ = word_binary($left, $right); }
+scalar_payload : %empty
+               | compose_scalar_payload
                ;
 
-alias : '=' "ALI" E_IDENTIFIER { $$ = word_atom(EVENT_ALIAS, 0, 0); }
+compose_scalar_payload : scalar_payload content ;
+
+alias : '=' "ALI" E_IDENTIFIER
       ;
 
-sequence : sequence_body[left] sequence_close[right] { $$ = word_binary($left, $right); } ;
+sequence : sequence_body sequence_close ;
 
-sequence_body : sequence_open[left] seq_items[right] { $$ = word_binary($left, $right); } ;
+sequence_body : sequence_open seq_items ;
 
-sequence_open : '+' "SEQ" collection_props { $$ = word_atom(EVENT_SEQUENCE_START, 0, 0); } ;
+sequence_open : '+' "SEQ" collection_props ;
 
-sequence_close : '-' "SEQ" { $$ = word_atom(EVENT_SEQUENCE_END, 0, 0); } ;
+sequence_close : '-' "SEQ" ;
 
-mapping : mapping_body[left] mapping_close[right] { $$ = word_binary($left, $right); } ;
+mapping : mapping_body mapping_close ;
 
-mapping_body : mapping_open[left] map_pairs[right] { $$ = word_binary($left, $right); } ;
+mapping_body : mapping_open map_pairs ;
 
-mapping_open : '+' "MAP" collection_props { $$ = word_atom(EVENT_MAPPING_START, 0, 0); } ;
+mapping_open : '+' "MAP" collection_props ;
 
-mapping_close : '-' "MAP" { $$ = word_atom(EVENT_MAPPING_END, 0, 0); } ;
+mapping_close : '-' "MAP" ;
 
 collection_props : %empty
                  | E_ANCHOR
@@ -241,22 +157,30 @@ collection_props : %empty
                  | FLOW_MAP_MARKER E_TAG
                  ;
 
-seq_items : %empty { $$ = 0; }
-          | seq_items[left] seq_item[right] { $$ = word_binary($left, $right); }
+seq_items : %empty
+          | compose_seq_items
           ;
 
-seq_item : node[value] { $$ = $value; }
+compose_seq_items : seq_items seq_item ;
+
+seq_item : node
          ;
 
-map_pairs : %empty { $$ = 0; }
-          | map_pairs[left] map_pair[right] { $$ = word_binary($left, $right); }
+map_pairs : %empty
+          | compose_map_pairs
           ;
 
-map_pair : node[key] node[value] { $$ = word_binary($key, $value); }
-         | node[key] implicit_scalar[value] { $$ = word_binary($key, $value); }
+compose_map_pairs : map_pairs map_pair ;
+
+map_pair : tensor_map_pair
+         | tensor_map_pair_implicit
           ;
 
-implicit_scalar : %empty { $$ = word_atom(EVENT_SCALAR, ':', 0); } ;
+tensor_map_pair : node node ;
+
+tensor_map_pair_implicit : node implicit_scalar ;
+
+implicit_scalar : %empty ;
 
 %%
 
@@ -300,32 +224,6 @@ ValidationResult* rml_parse_event_stream(const EventStream *stream) {
 
     if (stream) {
         ir[0] = '\0';
-        int pos = 0;
-        for (int i = 0; i < stream->count; i++) {
-            YAMLEvent *e = stream->events[i];
-            switch (e->type) {
-                case EVENT_STREAM_START: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+STR\n"); break;
-                case EVENT_STREAM_END: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "-STR\n"); break;
-                case EVENT_DOCUMENT_START:
-                    if (e->explicit_start) pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+DOC ---\n");
-                    else pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+DOC\n");
-                    break;
-                case EVENT_DOCUMENT_END: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "-DOC\n"); break;
-                case EVENT_SEQUENCE_START: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+SEQ\n"); break;
-                case EVENT_SEQUENCE_END: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "-SEQ\n"); break;
-                case EVENT_MAPPING_START: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "+MAP\n"); break;
-                case EVENT_MAPPING_END: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "-MAP\n"); break;
-                case EVENT_SCALAR:
-                    if (e->quote_style == ':') pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "=VAL :\n");
-                    else pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "=VAL %c:\n", e->quote_style ? e->quote_style : ':');
-                    break;
-                case EVENT_ALIAS: pos += snprintf(ir + pos, sizeof(ir) - (size_t)pos, "=ALI *\n"); break;
-            }
-            if ((size_t)pos >= sizeof(ir)) {
-                ir[sizeof(ir) - 1] = '\0';
-                break;
-            }
-        }
         result.intermediate_representation = ir;
     } else {
         result.intermediate_representation = NULL;
