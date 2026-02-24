@@ -69,29 +69,29 @@ return DEDENT;
 static LexerContext *lexer_context_new_internal(void) {
     LexerContext *ctx = (LexerContext*)malloc(sizeof(LexerContext));
     if (!ctx) return NULL;
-
+    
     /* Initialize indentation tracking */
     ctx->indent_stack[0] = 0;
     ctx->indent_sp = 0;
-
+    
     /* Initialize flow and value tracking */
     ctx->expecting_value = 0;
     ctx->yaml_directive_seen = 0;
     ctx->current_column = 0;
-
+    
     /* Initialize document state */
     ctx->first_line = 1;
     ctx->last_was_value = 0;
     ctx->at_line_start = 1;
     ctx->complex_key_pending = 0;
     ctx->pending_colon = COLON_STATE_NONE;
-
+    
     /* Initialize block scalar state */
     ctx->block_scalar.type = '\0';
     ctx->block_scalar.indent = -1;
     ctx->block_scalar.leading_empty_max_indent = 0;
     ctx->block_scalar.first_content_seen = 0;
-
+    
     /* Initialize scalar accumulation buffer */
     ctx->scalar.content = (char*)malloc(1024);
     ctx->scalar.len = 0;
@@ -99,7 +99,7 @@ static LexerContext *lexer_context_new_internal(void) {
     if (ctx->scalar.content) {
         ctx->scalar.content[0] = '\0';
     }
-
+    
     /* Initialize indent context stack */
     ctx->indent_context_sp = 0;
     ctx->scalar_base_indent = 0;
@@ -161,7 +161,7 @@ static void lexer_context_free_internal(LexerContext *ctx) {
  */
 static void lexer_context_reset(LexerContext *ctx) {
     if (!ctx) return;
-
+    
     ctx->indent_stack[0] = 0;
     ctx->indent_sp = 0;
     ctx->expecting_value = 0;
@@ -170,17 +170,17 @@ static void lexer_context_reset(LexerContext *ctx) {
     ctx->at_line_start = 1;
     ctx->complex_key_pending = 0;
     ctx->pending_colon = COLON_STATE_NONE;
-
+    
     ctx->block_scalar.type = '\0';
     ctx->block_scalar.indent = -1;
     ctx->block_scalar.leading_empty_max_indent = 0;
     ctx->block_scalar.first_content_seen = 0;
-
+    
     ctx->scalar.len = 0;
     if (ctx->scalar.content) {
         ctx->scalar.content[0] = '\0';
     }
-
+    
     ctx->indent_context_sp = 0;
     ctx->scalar_base_indent = 0;
     ctx->scalar_type = '\0';
@@ -265,7 +265,7 @@ static void ctx_pop_indent_context(LexerContext *ctx) {
 /* static int ctx_in_flow_context(const LexerContext *ctx) {
     if (!ctx) return 0;
     return FLOW_DELIM_SP > 0 ||
-           (ctx->indent_context_sp > 0 &&
+           (ctx->indent_context_sp > 0 && 
             ctx->indent_context_stack[ctx->indent_context_sp - 1].is_flow);
 } */
 
@@ -286,7 +286,7 @@ static void ctx_pop_indent_context(LexerContext *ctx) {
  */
 static void ctx_try_grow_scalar(LexerContext *ctx, int additional_size) {
     if (!ctx || !ctx->scalar.content) return;
-
+    
     int required = ctx->scalar.len + additional_size + 2;  /* +2 for null terminator and safety */
     if (required >= ctx->scalar.cap) {
         /* Double capacity until sufficient */
@@ -303,10 +303,10 @@ static void ctx_try_grow_scalar(LexerContext *ctx, int additional_size) {
  */
 /* static void ctx_scalar_append(LexerContext *ctx, const char *text, int len) {
     if (!ctx || !text || len <= 0) return;
-
+    
     ctx_try_grow_scalar(ctx, len);
     if (!ctx->scalar.content) return;
-
+    
     memcpy(ctx->scalar.content + ctx->scalar.len, text, len);
     ctx->scalar.len += len;
     ctx->scalar.content[ctx->scalar.len] = '\0';
@@ -318,7 +318,7 @@ static void ctx_try_grow_scalar(LexerContext *ctx, int additional_size) {
  */
 /* static char *ctx_scalar_finalize(LexerContext *ctx) {
     if (!ctx || !ctx->scalar.content) return strdup("");
-
+    
     char *result = strdup(ctx->scalar.content);
     ctx_scalar_init(ctx);
     return result;
@@ -411,23 +411,23 @@ static char *trim_trailing_spaces(char *str) {
  */
 static char *extract_key_after_prefix(const char *text) {
     if (!text) return strdup("");
-
+    
     /* Find first space after prefix */
     const char *space = strchr(text, ' ');
     if (!space) return strdup(text);
-
+    
     /* Skip spaces to get to key text */
     while (*space == ' ') space++;
-
+    
     char *key = strdup(space);
     trim_trailing_spaces(key);
-
+    
     /* Also trim trailing colon if present (from lookahead) */
     size_t len = strlen(key);
     if (len > 0 && key[len - 1] == ':') {
         key[len - 1] = '\0';
     }
-
+    
     return key;
 }
 

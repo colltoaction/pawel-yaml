@@ -2,17 +2,18 @@
 #define LEXER_VALUES_H
 
 #include "common.h"
-#include "stream.tab.h" /* For YYSTYPE definition */
+#include "stream.tab.h"
+
+/* Use the parser semantic type selected by stream.tab.h. */
+typedef STREAM_YY_STYPE LexerValue;
 
 /* Constructor for string-based tokens */
-/* Takes ownership of the string if it was allocated, or duplicates if needed (but currently we are avoiding allocs) */
-/* Ideally this should return YYSTYPE by value */
-YYSTYPE val_str(char *s);
+LexerValue val_str(char *s);
 
 /* Constructor for integer-based tokens (indent/dedent) */
-YYSTYPE val_int(int i);
+LexerValue val_int(int i);
 
 /* Constructor for empty/null values */
-YYSTYPE val_empty(void);
+LexerValue val_empty(void);
 
 #endif
