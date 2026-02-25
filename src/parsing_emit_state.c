@@ -67,11 +67,15 @@ void parsing_emit_append_event(YAMLEvent *evt) {
     g_current_event_stream->events[g_current_event_stream->count++] = evt;
 }
 
-void add_event(YAMLEventType type) {
-    parsing_emit_append_event(new_event(type));
+void add_event(YAMLEventType type, const char *anchor, const char *tag) {
+    YAMLEvent *evt = new_event(type);
+    if (!evt) return;
+    if (anchor) evt->anchor = strdup(anchor);
+    if (tag) evt->tag = strdup(tag);
+    parsing_emit_append_event(evt);
 }
 
-void add_scalar_event(const char *value, char quote_style) {
+void add_scalar_event(const char *value, char quote_style, const char *anchor, const char *tag) {
     YAMLEvent *evt;
 
     if (!value) return;
@@ -79,6 +83,8 @@ void add_scalar_event(const char *value, char quote_style) {
     if (!evt) return;
     evt->quote_style = quote_style;
     evt->value = strdup(value);
+    if (anchor) evt->anchor = strdup(anchor);
+    if (tag) evt->tag = strdup(tag);
     parsing_emit_append_event(evt);
 }
 

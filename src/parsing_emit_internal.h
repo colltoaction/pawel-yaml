@@ -21,8 +21,8 @@ void parsing_emit_free_event(YAMLEvent *evt);
 void parsing_emit_stream_release(EventStream *stream);
 void parsing_emit_append_event(YAMLEvent *evt);
 
-void add_event(YAMLEventType type);
-void add_scalar_event(const char *value, char quote_style);
+void add_event(YAMLEventType type, const char *anchor, const char *tag);
+void add_scalar_event(const char *value, char quote_style, const char *anchor, const char *tag);
 void add_alias_event(const char *name);
 
 void parsing_ir_write(const char *format, ...);

@@ -38,8 +38,6 @@ void monoid_stream_open(void);
 void monoid_stream_close(void);
 void monoid_doc_open(int explicit_start);
 void monoid_doc_close(int explicit_end);
-void add_event(YAMLEventType type);
-void add_scalar_event(const char *value, char quote_style);
 void add_alias_event(const char *name);
 void ir_seq_start(const char *anchor, const char *tag, const char *marker);
 void ir_seq_end(void);
@@ -178,19 +176,19 @@ value_node:
     | collection_no_props
     | scalar_node
     | alias_node
-    | ANCHOR[a] TAG[t] { ir_map_start($a, $t, NULL); add_event(EVENT_MAPPING_START); }
+    | ANCHOR[a] TAG[t] { ir_map_start($a, $t, NULL); add_event(EVENT_MAPPING_START, $a, $t); }
       block
       map_end
-    | TAG[t] ANCHOR[a] { ir_map_start($a, $t, NULL); add_event(EVENT_MAPPING_START); }
+    | TAG[t] ANCHOR[a] { ir_map_start($a, $t, NULL); add_event(EVENT_MAPPING_START, $a, $t); }
       block
       map_end
     | error { RECOVER("Recovering at value node boundary"); }
     ;
 
 scalar_node:
-    empty_props[props] scalar_payload[s] { if ($s.value) { ir_scalar($s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type); } }
-    | node_props[props] scalar_payload[s] { if ($s.value) { ir_scalar($s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type); } }
-    | node_props[props] { ir_scalar("", ':', $props.anchor, $props.tag); add_scalar_event("", ':'); }
+    empty_props[props] scalar_payload[s] { if ($s.value) { ir_scalar($s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type, $props.anchor, $props.tag); } }
+    | node_props[props] scalar_payload[s] { if ($s.value) { ir_scalar($s.value, $s.type, $props.anchor, $props.tag); add_scalar_event($s.value, $s.type, $props.anchor, $props.tag); } }
+    | node_props[props] { ir_scalar("", ':', $props.anchor, $props.tag); add_scalar_event("", ':', $props.anchor, $props.tag); }
     ;
 
 alias_node:
@@ -287,7 +285,7 @@ seq_start_ir:
     ;
 
 seq_open_event:
-    %empty { add_event(EVENT_SEQUENCE_START); }
+    %empty { add_event(EVENT_SEQUENCE_START, NULL, NULL); }
     ;
 
 seq_end:
@@ -299,7 +297,7 @@ seq_end_ir:
     ;
 
 seq_end_event:
-    %empty { add_event(EVENT_SEQUENCE_END); }
+    %empty { add_event(EVENT_SEQUENCE_END, NULL, NULL); }
     ;
 
 flow_seq_init:
@@ -320,8 +318,7 @@ flow_rbrack:
 
 sequence_with_props:
     node_props[props]
-      { ir_seq_start($props.anchor, $props.tag, NULL); }
-      seq_open_event
+      { ir_seq_start($props.anchor, $props.tag, NULL); add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
       collection_value_entries
       seq_end
       %dprec 3
@@ -330,14 +327,12 @@ sequence_with_props:
 
 value_sequence_with_props:
     node_props[props]
-      { ir_seq_start($props.anchor, $props.tag, NULL); }
-      seq_open_event
+      { ir_seq_start($props.anchor, $props.tag, NULL); add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
       block
       seq_end
     | node_props[props]
       flow_lbrack
-      { ir_seq_start($props.anchor, $props.tag, "[]"); }
-      seq_open_event
+      { ir_seq_start($props.anchor, $props.tag, "[]"); add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
       collection_flow_value_entries
       flow_rbrack
       seq_end
@@ -370,7 +365,7 @@ seq_entry_empty_scalar_ir:
     ;
 
 seq_entry_empty_scalar_event:
-    %empty { add_scalar_event("", ':'); }
+    %empty { add_scalar_event("", ':', NULL, NULL); }
     ;
 
 collection_flow_value_entries:
@@ -404,7 +399,7 @@ map_init_ir:
     ;
 
 map_open_event:
-    %empty { add_event(EVENT_MAPPING_START); }
+    %empty { add_event(EVENT_MAPPING_START, NULL, NULL); }
     ;
 
 map_end:
@@ -416,7 +411,7 @@ map_end_ir:
     ;
 
 map_end_event:
-    %empty { add_event(EVENT_MAPPING_END); }
+    %empty { add_event(EVENT_MAPPING_END, NULL, NULL); }
     ;
 
 flow_map_init:
@@ -438,22 +433,19 @@ flow_rbrace:
 mapping_with_props:
     value_mapping_with_props
     | node_props[props]
-      { ir_map_start($props.anchor, $props.tag, NULL); }
-      map_open_event
+      { ir_map_start($props.anchor, $props.tag, NULL); add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
       collection_pair_entries
       map_end
     ;
 
 value_mapping_with_props:
     node_props[props]
-      { ir_map_start($props.anchor, $props.tag, NULL); }
-      map_open_event
+      { ir_map_start($props.anchor, $props.tag, NULL); add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
       block
       map_end
     | node_props[props]
       flow_lbrace
-      { ir_map_start($props.anchor, $props.tag, "{}"); }
-      map_open_event
+      { ir_map_start($props.anchor, $props.tag, "{}"); add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
       collection_flow_pair_entries
       flow_rbrace
       map_end

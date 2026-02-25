@@ -5,7 +5,7 @@ void monoid_stream_open(void) {
     /* CT logic */
     parsing_emit_stream_release(&g_stream_store);
     g_current_event_stream = &g_stream_store;
-    add_event(EVENT_STREAM_START);
+    add_event(EVENT_STREAM_START, NULL, NULL);
 
     yaml_runtime_reset_artifacts();
 
@@ -25,7 +25,7 @@ void monoid_stream_close(void) {
     yaml_runtime_set_serialization_tree(serialization_tree);
 
     /* CT logic */
-    add_event(EVENT_STREAM_END);
+    add_event(EVENT_STREAM_END, NULL, NULL);
 }
 
 void monoid_doc_open(int explicit_start) {
@@ -33,7 +33,7 @@ void monoid_doc_open(int explicit_start) {
     parsing_ir_write(explicit_start ? "+DOC ---\n" : "+DOC\n");
 
     /* CT logic */
-    add_event(EVENT_DOCUMENT_START);
+    add_event(EVENT_DOCUMENT_START, NULL, NULL);
 }
 
 void monoid_doc_close(int explicit_end) {
@@ -41,7 +41,7 @@ void monoid_doc_close(int explicit_end) {
     parsing_ir_write(explicit_end ? "-DOC ...\n" : "-DOC\n");
 
     /* CT logic */
-    add_event(EVENT_DOCUMENT_END);
+    add_event(EVENT_DOCUMENT_END, NULL, NULL);
 }
 
 void monoid_doc_open_implicit(void) {
