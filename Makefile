@@ -1,5 +1,6 @@
-# YAML Compilation Pipeline
-SHELL = /bin/sh
+# YAML Compilation Pipeline (with timeout protection)
+MAKE_WALL_TIMEOUT ?= 1200
+SHELL := $(shell if command -v timeout >/dev/null 2>&1; then echo "timeout --foreground $(MAKE_WALL_TIMEOUT)s /bin/sh"; else echo "/bin/sh"; fi)
 
 # Installation
 BUILD = ./build

@@ -31,6 +31,7 @@ int gamma_from_token(YAMLBisonToken token);
 Indented indented_from_level(int level);
 Indented indented_dedent(Indented indented);
 char *string_unit(void);
+char *string_intern(const char *input);
 char *string_intern_slice(const char *start, size_t len);
 char *string_concat(const char *left, const char *right);
 void string_pool_reset(void);
@@ -176,10 +177,10 @@ value_node:
     | collection_no_props
     | scalar_node
     | alias_node
-    | ANCHOR[a] TAG[t] { ir_map_start($a, $t, NULL); add_event(EVENT_MAPPING_START, $a, $t); }
+    | ANCHOR[a] TAG[t] { ir_map_start($a, $t, NULL); } { add_event(EVENT_MAPPING_START, $a, $t); }
       block
       map_end
-    | TAG[t] ANCHOR[a] { ir_map_start($a, $t, NULL); add_event(EVENT_MAPPING_START, $a, $t); }
+    | TAG[t] ANCHOR[a] { ir_map_start($a, $t, NULL); } { add_event(EVENT_MAPPING_START, $a, $t); }
       block
       map_end
     | error { RECOVER("Recovering at value node boundary"); }
@@ -222,12 +223,12 @@ qparts:
 
 qpart:
     CH_RAW { $$ = $1; }
-    | CH_ESC_N { $$ = strdup("\n"); }
-    | CH_ESC_T { $$ = strdup("\t"); }
-    | CH_ESC_R { $$ = strdup("\r"); }
-    | CH_ESC_BS { $$ = strdup("\\"); }
-    | CH_ESC_QU { $$ = strdup("\""); }
-    | CH_ESC_SL { $$ = strdup("/"); }
+    | CH_ESC_N { $$ = string_intern("\n"); }
+    | CH_ESC_T { $$ = string_intern("\t"); }
+    | CH_ESC_R { $$ = string_intern("\r"); }
+    | CH_ESC_BS { $$ = string_intern("\\"); }
+    | CH_ESC_QU { $$ = string_intern("\""); }
+    | CH_ESC_SL { $$ = string_intern("/"); }
     | CH_ESC_0 { $$ = string_unit(); }
     ;
 
@@ -318,7 +319,8 @@ flow_rbrack:
 
 sequence_with_props:
     node_props[props]
-      { ir_seq_start($props.anchor, $props.tag, NULL); add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
+      { ir_seq_start($props.anchor, $props.tag, NULL); }
+      { add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
       collection_value_entries
       seq_end
       %dprec 3
@@ -327,12 +329,14 @@ sequence_with_props:
 
 value_sequence_with_props:
     node_props[props]
-      { ir_seq_start($props.anchor, $props.tag, NULL); add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
+      { ir_seq_start($props.anchor, $props.tag, NULL); }
+      { add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
       block
       seq_end
     | node_props[props]
       flow_lbrack
-      { ir_seq_start($props.anchor, $props.tag, "[]"); add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
+      { ir_seq_start($props.anchor, $props.tag, "[]"); }
+      { add_event(EVENT_SEQUENCE_START, $props.anchor, $props.tag); }
       collection_flow_value_entries
       flow_rbrack
       seq_end
@@ -357,14 +361,14 @@ seq_entry:
     ;
 
 seq_entry_empty_scalar:
-    seq_entry_empty_scalar_ir seq_entry_empty_scalar_event
+    ir_scalar_empty_mono emit_scalar_empty_mono
     ;
 
-seq_entry_empty_scalar_ir:
+ir_scalar_empty_mono:
     %empty { ir_scalar_empty(); }
     ;
 
-seq_entry_empty_scalar_event:
+emit_scalar_empty_mono:
     %empty { add_scalar_event("", ':', NULL, NULL); }
     ;
 
@@ -433,19 +437,23 @@ flow_rbrace:
 mapping_with_props:
     value_mapping_with_props
     | node_props[props]
-      { ir_map_start($props.anchor, $props.tag, NULL); add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
+      { ir_map_start($props.anchor, $props.tag, NULL); }
+      { add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
       collection_pair_entries
       map_end
     ;
 
-value_mapping_with_props:
-    node_props[props]
-      { ir_map_start($props.anchor, $props.tag, NULL); add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
+mapping_with_props:
+    value_mapping_with_props
+    | node_props[props]
+      { ir_map_start($props.anchor, $props.tag, NULL); }
+      { add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
       block
       map_end
     | node_props[props]
       flow_lbrace
-      { ir_map_start($props.anchor, $props.tag, "{}"); add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
+      { ir_map_start($props.anchor, $props.tag, "{}"); }
+      { add_event(EVENT_MAPPING_START, $props.anchor, $props.tag); }
       collection_flow_pair_entries
       flow_rbrace
       map_end
@@ -506,14 +514,14 @@ flow_map_entry:
 
 flow_map_entry_pair:
     node COLON node %dprec 3
-    | node COLON_EMPTY seq_entry_empty_scalar %dprec 2
-    | node COLON seq_entry_empty_scalar %dprec 1
-    | COLON seq_entry_empty_scalar node %dprec 3
-    | COLON_EMPTY seq_entry_empty_scalar seq_entry_empty_scalar %dprec 1
+    | node COLON_EMPTY ir_scalar_empty_mono emit_scalar_empty_mono %dprec 2
+    | node COLON ir_scalar_empty_mono emit_scalar_empty_mono %dprec 1
+    | COLON ir_scalar_empty_mono emit_scalar_empty_mono node %dprec 3
+    | COLON_EMPTY ir_scalar_empty_mono emit_scalar_empty_mono ir_scalar_empty_mono emit_scalar_empty_mono %dprec 1
     | QUESTION node COLON node %dprec 4
-    | QUESTION node COLON_EMPTY seq_entry_empty_scalar %dprec 2
-    | QUESTION node COLON seq_entry_empty_scalar %dprec 1
-    | QUESTION seq_entry_empty_scalar seq_entry_empty_scalar %dprec 1
+    | QUESTION node COLON_EMPTY ir_scalar_empty_mono emit_scalar_empty_mono %dprec 2
+    | QUESTION node COLON ir_scalar_empty_mono emit_scalar_empty_mono %dprec 1
+    | QUESTION ir_scalar_empty_mono emit_scalar_empty_mono ir_scalar_empty_mono emit_scalar_empty_mono %dprec 1
     ;
 
 %%

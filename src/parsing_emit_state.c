@@ -2,6 +2,8 @@
 #include <string.h>
 #include "parsing_emit_internal.h"
 
+extern char *string_intern(const char *input);
+
 FILE *yyout = NULL;
 
 IRBuilder *g_ir = NULL;
@@ -18,10 +20,7 @@ static YAMLEvent *new_event(YAMLEventType type) {
 
 void parsing_emit_free_event(YAMLEvent *evt) {
     if (!evt) return;
-    free(evt->value);
-    free(evt->anchor);
-    free(evt->tag);
-    free(evt->alias_name);
+    /* Do not free interned strings: value, anchor, tag, alias_name */
     free(evt);
 }
 
@@ -70,8 +69,8 @@ void parsing_emit_append_event(YAMLEvent *evt) {
 void add_event(YAMLEventType type, const char *anchor, const char *tag) {
     YAMLEvent *evt = new_event(type);
     if (!evt) return;
-    if (anchor) evt->anchor = strdup(anchor);
-    if (tag) evt->tag = strdup(tag);
+    if (anchor) evt->anchor = string_intern(anchor);
+    if (tag) evt->tag = string_intern(tag);
     parsing_emit_append_event(evt);
 }
 
@@ -82,9 +81,9 @@ void add_scalar_event(const char *value, char quote_style, const char *anchor, c
     evt = new_event(EVENT_SCALAR);
     if (!evt) return;
     evt->quote_style = quote_style;
-    evt->value = strdup(value);
-    if (anchor) evt->anchor = strdup(anchor);
-    if (tag) evt->tag = strdup(tag);
+    evt->value = string_intern(value);
+    if (anchor) evt->anchor = string_intern(anchor);
+    if (tag) evt->tag = string_intern(tag);
     parsing_emit_append_event(evt);
 }
 
@@ -94,6 +93,6 @@ void add_alias_event(const char *name) {
     if (!name) return;
     evt = new_event(EVENT_ALIAS);
     if (!evt) return;
-    evt->alias_name = strdup(name);
+    evt->alias_name = string_intern(name);
     parsing_emit_append_event(evt);
 }

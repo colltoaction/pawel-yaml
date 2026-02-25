@@ -4,6 +4,11 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
+extern char *string_intern(const char *input);
+extern char *string_unit(void);
+static char *extract_quoted_key(const char *text, char quote);
+static char *trim_trailing_spaces(char *s);
+
 /* LexerContext type is provided by lexer_context.h via stream.tab.h */
 
 #define YYSTYPE STREAM_YY_STYPE
@@ -517,6 +522,10 @@ VEND \xE2\x88\x8E
 TAG_TOKEN ("!<"[^>\n\r]+">"|"!!"{NSCAL}+|"!"{NSCAL}+"!"{NSCAL}*|"!"{NSCAL}+)
 PKEY_HEAD [^ \t\n\r\[\]{}!,&*%@|>\`'"]
 PKEY_BODY [^:\n\r]*
+DQUOTED_CONTENT ([^\\\"\n\r]|\\.)*
+SQUOTED_CONTENT (\'\'|\\'|[^'\n\r])*
+PROP_PART ([&]{ANCHOR_CHAR}+|{TAG_TOKEN})
+PROP_LEAD {PROP_PART}([ \t]+{PROP_PART})?
 
 %%
 
@@ -1002,427 +1011,88 @@ return CH_RAW;
     CTX->expecting_value = 1;
 return COLON;
 }
-"&"{ANCHOR_CHAR}+[ \t]+{TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Anchored+tagged key: &anchor !!tag key: value -> "&anchor\tkey" */
+{PROP_LEAD}[ \t]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Anchored/Tagged plain key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-
-    char *text = strdup(yytext);
-    char *anchor = text;
-    char *space = strchr(text, ' ');
-    char *tag = NULL;
-    char *rest = NULL;
-    char *packed = NULL;
-    size_t packed_len = 0;
-
-    if (space) {
-        *space = '\0'; /* anchor part */
-        rest = space + 1;
-        while (*rest == ' ' || *rest == '\t') rest++;
-        if (*rest == '!') {
-            tag = rest;
-            while (*rest && *rest != ' ' && *rest != '\t') rest++;
-            if (*rest) {
-                *rest = '\0';
-                rest++;
-            }
-            while (*rest == ' ' || *rest == '\t') rest++;
-        }
-        trim_trailing_spaces(rest);
-
-        packed_len = strlen(anchor) + 2 + (tag ? strlen(tag) + 1 : 0) + strlen(rest) + 1;
-        packed = (char*)malloc(packed_len);
-        if (packed) {
-            if (tag) {
-                snprintf(packed, packed_len, "%s\t%s\t%s", anchor, tag, rest);
-            } else {
-                snprintf(packed, packed_len, "%s\t%s", anchor, rest);
-            }
-        }
-    } else {
-        packed = text;
-        text = NULL;
-    }
-    if (text) free(text);
-    yylval->string = packed;
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ \t]+{TAG_TOKEN}[ ]+\"([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored+tagged+double-quoted key: &anchor !!tag "key": value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-
     char *text = strdup(yytext);
     char *space = strpbrk(text, " \t");
-    char *rest = NULL;
-    char *key = NULL;
-    char *packed = NULL;
-    size_t packed_len = 0;
-
-    if (!space) {
-        yylval->string = text;
-return MAP_KEY;
+    if (space) {
+        *space = '\t';
+        trim_trailing_spaces(space + 1);
     }
-
-    *space = '\0'; /* anchor part */
-    rest = space + 1;
-    while (*rest == ' ' || *rest == '\t') rest++;
-    if (*rest == '!') {
-        while (*rest && *rest != ' ' && *rest != '\t') rest++;
-        while (*rest == ' ' || *rest == '\t') rest++;
-    }
-    key = extract_quoted_key(rest, '"');
-    if (!key) {
-        free(text);
-        yyerror(yylloc, yyscanner, "memory allocation failed");
-        return 0;
-    }
-
-    packed_len = strlen(text) + 1 + strlen(key) + 1;
-    packed = (char*)malloc(packed_len);
-    if (!packed) {
-        free(key);
-        free(text);
-        yyerror(yylloc, yyscanner, "memory allocation failed");
-        return 0;
-    }
-    snprintf(packed, packed_len, "%s\t%s", text, key);
-    free(key);
-    free(text);
-    yylval->string = packed;
-return ANCHOR_MAP_KEY;
+    yylval->string = text;
+    return ANCHOR_MAP_KEY;
 }
-"&"{ANCHOR_CHAR}+[ \t]+{TAG_TOKEN}[ ]+\'(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored+tagged+single-quoted key: &anchor !!tag 'key': value */
+
+{PROP_LEAD}[ \t]+\"{DQUOTED_CONTENT}\"/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Anchored/Tagged double-quoted key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-
     char *text = strdup(yytext);
     char *space = strpbrk(text, " \t");
-    char *rest = NULL;
-    char *key = NULL;
-    char *packed = NULL;
-    size_t packed_len = 0;
-
-    if (!space) {
-        yylval->string = text;
-return MAP_KEY;
-    }
-
-    *space = '\0'; /* anchor part */
-    rest = space + 1;
-    while (*rest == ' ' || *rest == '\t') rest++;
-    if (*rest == '!') {
-        while (*rest && *rest != ' ' && *rest != '\t') rest++;
-        while (*rest == ' ' || *rest == '\t') rest++;
-    }
-    key = extract_quoted_key(rest, '\'');
-    if (!key) {
-        free(text);
-        yyerror(yylloc, yyscanner, "memory allocation failed");
-        return 0;
-    }
-
-    packed_len = strlen(text) + 1 + strlen(key) + 1;
-    packed = (char*)malloc(packed_len);
-    if (!packed) {
-        free(key);
-        free(text);
-        yyerror(yylloc, yyscanner, "memory allocation failed");
-        return 0;
-    }
-    snprintf(packed, packed_len, "%s\t%s", text, key);
-    free(key);
-    free(text);
-    yylval->string = packed;
-return ANCHOR_MAP_KEY;
-}
-{TAG_TOKEN}[ ]+"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Tagged+anchored key: !!tag &anchor key: value -> "&anchor\tkey" */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-
-    char *text = strdup(yytext);
-    char *tag = text;
-    char *anchor = strchr(text, '&');
-    char *space = anchor ? strchr(anchor, ' ') : NULL;
-    char *rest = NULL;
-    char *packed = NULL;
-    size_t packed_len = 0;
-
-    if (anchor && space) {
-        *anchor = '\0'; /* tag part ends before & */
-        trim_trailing_spaces(tag);
-        *space = '\0'; /* anchor part ends at space */
-        rest = space + 1;
-        while (*rest == ' ' || *rest == '\t') rest++;
-        trim_trailing_spaces(rest);
-
-        packed_len = strlen(tag) + 1 + strlen(anchor + 1) + 1 + strlen(rest) + 1;
-        packed = (char*)malloc(packed_len);
-        if (packed) {
-            snprintf(packed, packed_len, "%s\t&%s\t%s", tag, anchor + 1, rest);
-        }
-    } else {
-        packed = text;
-        text = NULL;
-    }
-    if (text) free(text);
-    yylval->string = packed;
-return ANCHOR_MAP_KEY;
-}
-{TAG_TOKEN}[ ]+"&"{ANCHOR_CHAR}+[ \t]+\"([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Tagged+anchored+double-quoted key: !!tag &anchor "key": value */
-    char *text = strdup(yytext);
-    char *tag = text;
-    char *anchor = strchr(text, '&');
-    char *space = anchor ? strpbrk(anchor, " \t") : NULL;
-    char *rest = NULL;
-    char *key = NULL;
-    char *packed = NULL;
-    size_t packed_len = 0;
-
-    if (anchor && space) {
-        *anchor = '\0'; /* tag part */
-        trim_trailing_spaces(tag);
-        *space = '\0'; /* anchor part */
-        rest = space + 1;
-        while (*rest == ' ' || *rest == '\t') rest++;
-        key = extract_quoted_key(rest, '"');
-        if (key) {
-            packed_len = strlen(tag) + 1 + strlen(anchor + 1) + 1 + strlen(key) + 1;
-            packed = (char*)malloc(packed_len);
-            if (packed) {
-                snprintf(packed, packed_len, "%s\t&%s\t%s", tag, anchor + 1, key);
-            }
-            free(key);
-        }
-    } else {
-        packed = text;
-        text = NULL;
-    }
-    if (text) free(text);
-    yylval->string = packed;
-return ANCHOR_MAP_KEY;
-}
-{TAG_TOKEN}[ ]+"&"{ANCHOR_CHAR}+[ \t]+\'(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Tagged+anchored+single-quoted key: !!tag &anchor 'key': value */
-{TAG_TOKEN}[ ]+"&"{ANCHOR_CHAR}+[ \t]+\'(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Tagged+anchored+single-quoted key: !!tag &anchor 'key': value */
-    char *text = strdup(yytext);
-    char *tag = text;
-    char *anchor = strchr(text, '&');
-    char *space = anchor ? strpbrk(anchor, " \t") : NULL;
-    char *rest = NULL;
-    char *key = NULL;
-    char *packed = NULL;
-    size_t packed_len = 0;
-
-    if (anchor && space) {
-        *anchor = '\0'; /* tag part */
-        trim_trailing_spaces(tag);
-        *space = '\0'; /* anchor part */
-        rest = space + 1;
-        while (*rest == ' ' || *rest == '\t') rest++;
-        key = extract_quoted_key(rest, '\'');
-        if (key) {
-            packed_len = strlen(tag) + 1 + strlen(anchor + 1) + 1 + strlen(key) + 1;
-            packed = (char*)malloc(packed_len);
-            if (packed) {
-                snprintf(packed, packed_len, "%s\t&%s\t%s", tag, anchor + 1, key);
-            }
-            free(key);
-        }
-    } else {
-        packed = text;
-        text = NULL;
-    }
-    if (text) free(text);
-    yylval->string = packed;
-return ANCHOR_MAP_KEY;
-}
-{TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Tagged map key: !!str key: value -> "!!tag\tkey" */
-    char *text = strdup(yytext);
-    char *space = strchr(text, ' ');
-    char *packed = NULL;
     if (space) {
         *space = '\t';
-        trim_trailing_spaces(space + 1);
-        packed = strdup(text);
-    } else {
-        packed = strdup(text);
-    }
-    free(text);
-    yylval->string = packed;
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-return ANCHOR_MAP_KEY;
-}
-\"([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Double-quoted map key: "key" : value */
-    if (FLOW_DELIM_SP == 0 && CTX->expecting_value && !CTX->at_line_start) {
-        yylval->string = extract_quoted_key(yytext, '"');
-        if (!yylval->string) {
-            yyerror(yylloc, yyscanner, "memory allocation failed");
-            return 0;
-        }
-        CTX->at_line_start = 0;
-        CTX->expecting_value = 0;
-        CTX->last_was_value = 1;
-        CTX->quoted_value_closed_on_line = 1;
-return QSCALAR;
-    }
-
-    yylval->string = extract_quoted_key(yytext, '"');
-    if (!yylval->string) {
-        yyerror(yylloc, yyscanner, "memory allocation failed");
-        return 0;
-    }
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-return MAP_KEY;
-}
-\'(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Single-quoted map key: 'key' : value */
-    if (FLOW_DELIM_SP == 0 && CTX->expecting_value && !CTX->at_line_start) {
-        yylval->string = extract_quoted_key(yytext, '\'');
-        if (!yylval->string) {
-            yyerror(yylloc, yyscanner, "memory allocation failed");
-            return 0;
-        }
-        CTX->at_line_start = 0;
-        CTX->expecting_value = 0;
-        CTX->last_was_value = 1;
-        CTX->quoted_value_closed_on_line = 1;
-return SSCALAR;
-    }
-
-    yylval->string = extract_quoted_key(yytext, '\'');
-    if (!yylval->string) {
-        yyerror(yylloc, yyscanner, "memory allocation failed");
-        return 0;
-    }
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-return MAP_KEY;
-}
-\"([^\\\"\n\r]|\\.)*\n([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    if (FLOW_DELIM_SP > 0) {
-        yylval->string = extract_quoted_key(yytext, '"');
-        if (!yylval->string) {
-            yyerror(yylloc, yyscanner, "memory allocation failed");
-            return 0;
-        }
-        CTX->at_line_start = 0;
-        CTX->expecting_value = 0;
-return MAP_KEY;
-    }
-    yyerror(yylloc, yyscanner, "syntax error, multiline quoted key is not allowed");
-    CTX->semantic_error_count++;
-    CTX->semantic_multiline_qkey_count++;
-    return 0;
-}
-\'(\'\'|\\'|[^'\n\r])*\n(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    if (FLOW_DELIM_SP > 0) {
-        yylval->string = extract_quoted_key(yytext, '\'');
-        if (!yylval->string) {
-            yyerror(yylloc, yyscanner, "memory allocation failed");
-            return 0;
-        }
-        CTX->at_line_start = 0;
-        CTX->expecting_value = 0;
-return MAP_KEY;
-    }
-    yyerror(yylloc, yyscanner, "syntax error, multiline quoted key is not allowed");
-    CTX->semantic_error_count++;
-    CTX->semantic_multiline_qkey_count++;
-    return 0;
-}
-"&"{ANCHOR_CHAR}+[ \t]+\"[^\\"\n\r]*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored double-quoted map key: &anchor "key": value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-
-    char *text = strdup(yytext);
-    char *sep = strpbrk(text, " \t");
-    if (sep) {
-        char *key = sep + 1;
-        *sep = '\t';
+        char *key = space + 1;
         while (*key == ' ' || *key == '\t') key++;
-        trim_trailing_spaces(key);
-        size_t klen = strlen(key);
-        if (klen >= 2 && key[0] == '"' && key[klen - 1] == '"') {
-            memmove(key, key + 1, klen - 2);
-            key[klen - 2] = '\0';
+        char *unquoted = extract_quoted_key(key, '"');
+        if (unquoted) {
+            size_t plen = space - text;
+            char *packed = (char*)malloc(plen + 1 + strlen(unquoted) + 1);
+            if (packed) {
+                memcpy(packed, text, plen);
+                packed[plen] = '\t';
+                strcpy(packed + plen + 1, unquoted);
+                free(text);
+                text = packed;
+            }
+            free(unquoted);
         }
     }
     yylval->string = text;
-return ANCHOR_MAP_KEY;
+    return ANCHOR_MAP_KEY;
 }
-"&"{ANCHOR_CHAR}+[ \t]+'[^'\n\r]*'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored single-quoted map key: &anchor 'key': value */
+
+{PROP_LEAD}[ \t]+\'{SQUOTED_CONTENT}\'/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Anchored/Tagged single-quoted key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-
     char *text = strdup(yytext);
-    char *sep = strpbrk(text, " \t");
-    if (sep) {
-        char *key = sep + 1;
-        *sep = '\t';
+    char *space = strpbrk(text, " \t");
+    if (space) {
+        *space = '\t';
+        char *key = space + 1;
         while (*key == ' ' || *key == '\t') key++;
-        trim_trailing_spaces(key);
-        size_t klen = strlen(key);
-        if (klen >= 2 && key[0] == '\'' && key[klen - 1] == '\'') {
-            memmove(key, key + 1, klen - 2);
-            key[klen - 2] = '\0';
+        char *unquoted = extract_quoted_key(key, '\'');
+        if (unquoted) {
+            size_t plen = space - text;
+            char *packed = (char*)malloc(plen + 1 + strlen(unquoted) + 1);
+            if (packed) {
+                memcpy(packed, text, plen);
+                packed[plen] = '\t';
+                strcpy(packed + plen + 1, unquoted);
+                free(text);
+                text = packed;
+            }
+            free(unquoted);
         }
     }
     yylval->string = text;
-return ANCHOR_MAP_KEY;
+    return ANCHOR_MAP_KEY;
 }
-"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Anchored map key: &anchor key: value (returns tab-delimited "&anchor\tkey") */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    
-    /* Split on first space: "&anchor key" -> "&anchor\tkey" */
-    char *text = strdup(yytext);
-    char *space = strchr(text, ' ');
-    if (space) {
-        *space = '\t';  /* Tab delimiter separates anchor from key */
-        trim_trailing_spaces(space + 1);  /* Trim key part only */
-    }
-    yylval->string = text;
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ \t]+\[[^\]\n\r]*\][ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored flow-sequence key: &anchor [ ... ]: value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
 
+{PROP_LEAD}[ \t]+(\[|\{)[^\]\}\n\r]*(\]|\})/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Anchored/Tagged flow collection key */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
     char *text = strdup(yytext);
-    char *space = strchr(text, ' ');
+    char *space = strpbrk(text, " \t");
     if (space) {
         *space = '\t';
         trim_trailing_spaces(space + 1);
     }
     yylval->string = text;
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ \t]+\{[^\}\n\r]*\}[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored flow-mapping key: &anchor { ... }: value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-
-    char *text = strdup(yytext);
-    char *space = strchr(text, ' ');
-    if (space) {
-        *space = '\t';
-        trim_trailing_spaces(space + 1);
-    }
-    yylval->string = text;
-return ANCHOR_MAP_KEY;
+    return ANCHOR_MAP_KEY;
 }
 "&"{ANCHOR_CHAR}+[ \t]+"-"/[ \t\n] {
     int anchor_len = 0;
@@ -1445,7 +1115,7 @@ return ANCHOR_MAP_KEY;
 
     yyless(anchor_len);
     CTX->at_line_start = 0;
-return ANCHOR;
+    return ANCHOR;
 }
 "*"{ALIAS_CHAR}+[ ]+/":"([ \t\n]|{VSPACE}) {
     /* Alias map key with explicit separating whitespace before ':' */
@@ -1941,13 +1611,13 @@ return MAP_KEY;
 
 "&"{ANCHOR_CHAR}+ {
     CTX->at_line_start = 0;
-    yylval->string = strdup(yytext);
+    yylval->string = string_intern(yytext);
     return ANCHOR;
 }
 
 {TAG_TOKEN} {
     CTX->at_line_start = 0;
-    yylval->string = strdup(yytext);
+    yylval->string = string_intern(yytext);
     return TAG;
 }
 
