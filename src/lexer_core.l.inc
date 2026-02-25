@@ -119,7 +119,7 @@
         if (CTX->indent_sp < 99) {
             CTX->indent_stack[++CTX->indent_sp] = indent;
         }
-        yylval->ival = indent;
+        *yylval = val_int(indent);
 return INDENT;
     } else if (indent < cur) {
         int dedent_count = 0;
@@ -136,7 +136,7 @@ return INDENT;
 
         CTX->indent_sp = target_sp;
         if (dedent_count > 0) {
-            yylval->ival = dedent_count;
+            *yylval = val_int(dedent_count);
             return return_dedent_count(CTX, dedent_count, yylval);
         }
     }
@@ -181,7 +181,7 @@ return INDENT;
 
 <INITIAL><<EOF>> {
     if (PENDING_DEDENT_COUNT > 0) {
-        yylval->ival = PENDING_DEDENT_COUNT;
+        *yylval = val_int(PENDING_DEDENT_COUNT);
         PENDING_DEDENT_COUNT--;
 return DEDENT;
     }
@@ -267,7 +267,7 @@ return DEDENT;
 
 "%"/[ \t:] {
     if (FLOW_DELIM_SP > 0) {
-        yylval->string = NULL; /* was strdup("%") */
+        *yylval = val_str(NULL); /* was strdup("%") */
         CTX->at_line_start = 0;
         CTX->expecting_value = 0;
         flow_key_state_set(CTX, FLOW_KEY_CANDIDATE);
@@ -288,7 +288,7 @@ return TAG_DIRECTIVE;
 }
 "%YAML"[ ]?"1"[.,][0-9][ \t]+[^#\n][^\n]* {
     if (!CTX->open_document_started) {
-        yylval->string = NULL; /* was strdup(yytext) */
+        *yylval = val_str(NULL); /* was strdup(yytext) */
         CTX->at_line_start = 0;
         CTX->last_was_value = 1;
         BEGIN(PLAIN_SCALAR_CONT);
@@ -309,7 +309,7 @@ return YAML_DIRECTIVE;
 }
 "%YAML"[ ]?"1"[.,][0-9]"#"[^\n]* {
     if (!CTX->open_document_started) {
-        yylval->string = NULL; /* was strdup(yytext) */
+        *yylval = val_str(NULL); /* was strdup(yytext) */
         CTX->at_line_start = 0;
         CTX->last_was_value = 1;
         BEGIN(PLAIN_SCALAR_CONT);
@@ -330,7 +330,7 @@ return YAML_DIRECTIVE;
 }
 "%YAML"[ ]?"1"[.,][0-9][ \t]*(#[^\n]*)?  {
     if (!CTX->open_document_started) {
-        yylval->string = NULL; /* was strdup(yytext) */
+        *yylval = val_str(NULL); /* was strdup(yytext) */
         CTX->at_line_start = 0;
         CTX->last_was_value = 1;
         BEGIN(PLAIN_SCALAR_CONT);
@@ -357,7 +357,7 @@ return YAML_DIRECTIVE;
     }
     /* Unknown directive - skip */
 }
-"---"[ \t]+"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
+"---"[ \t]+{PROP_LEAD}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
     yyerror(yylloc, yyscanner, "syntax error, anchored mapping key is not allowed on document-start line");
     CTX->semantic_error_count++;
     yyless(3);
@@ -424,7 +424,7 @@ return BULLET;
         CTX->semantic_error_count++;
     }
     yyless(1);
-    yylval->string = NULL; /* was strdup("-") */
+    *yylval = val_str(NULL); /* was strdup("-") */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     if (FLOW_DELIM_SP > 0) flow_key_state_set(CTX, FLOW_KEY_CANDIDATE);
@@ -437,7 +437,7 @@ return CH_RAW;
         CTX->semantic_error_count++;
     }
     yyless(1);
-    yylval->string = NULL; /* was strdup("-") */
+    *yylval = val_str(NULL); /* was strdup("-") */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     if (FLOW_DELIM_SP > 0) flow_key_state_set(CTX, FLOW_KEY_CANDIDATE);
@@ -455,7 +455,7 @@ return COLON;
     }
     if (FLOW_DELIM_SP == 0 && (CTX->at_line_start || CTX->expecting_value)) {
         /* Missing block mapping key, e.g. ": value" */
-        yylval->string = NULL; /* was strdup("") */
+        *yylval = val_str(NULL); /* was strdup("") */
         CTX->at_line_start = 0;
         CTX->expecting_value = 0;
         yyless(0); /* Rescan ':' as the actual separator token */
@@ -474,7 +474,7 @@ return COLON;
 return COLON_EMPTY;
     }
     if (CTX->expecting_value) {
-        yylval->string = NULL; /* was strdup(":") */
+        *yylval = val_str(NULL); /* was strdup(":") */
         CTX->expecting_value = 0;
         BEGIN(PLAIN_SCALAR_CONT);
 return CH_RAW;
@@ -482,146 +482,57 @@ return CH_RAW;
     CTX->expecting_value = 1;
 return COLON;
 }
-"&"{ANCHOR_CHAR}+[ \t]+{TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Anchored+tagged key: &anchor !!tag key: value -> "&anchor\tkey" */
+{PROP_LEAD}[ \t]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
+    /* Prop-prefixed key: &a key, !!t key, &a !!t key, !!t &a key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-    /* Skipped extraction logic */
-    yylval->string = NULL;
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ \t]+{TAG_TOKEN}[ ]+\"([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored+tagged+double-quoted key: &anchor !!tag "key": value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    yylval->string = NULL;
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ \t]+{TAG_TOKEN}[ ]+\'(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored+tagged+single-quoted key: &anchor !!tag 'key': value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    yylval->string = NULL;
-return ANCHOR_MAP_KEY;
-}
-{TAG_TOKEN}[ ]+"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Tagged+anchored key: !!tag &anchor key: value -> "&anchor\tkey" */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    yylval->string = NULL;
-return ANCHOR_MAP_KEY;
-}
-{TAG_TOKEN}[ ]+"&"{ANCHOR_CHAR}+[ \t]+\"([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Tagged+anchored+double-quoted key: !!tag &anchor "key": value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    yylval->string = NULL;
-return ANCHOR_MAP_KEY;
-}
-{TAG_TOKEN}[ ]+"&"{ANCHOR_CHAR}+[ \t]+\'(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Tagged+anchored+single-quoted key: !!tag &anchor 'key': value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    yylval->string = NULL;
-return ANCHOR_MAP_KEY;
-}
-{TAG_TOKEN}[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Tagged map key: !!str key: value (tag prefix is discarded, only key text returned) */
-    yylval->string = NULL; /* was extract_key_after_prefix(yytext) */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-return MAP_KEY;
-}
-\"([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Double-quoted map key: "key" : value */
-    if (FLOW_DELIM_SP == 0 && CTX->expecting_value && !CTX->at_line_start) {
-        yylval->string = NULL; /* was extract_quoted_key(yytext, '"') */
-        CTX->at_line_start = 0;
-        CTX->expecting_value = 0;
-        CTX->last_was_value = 1;
-        CTX->quoted_value_closed_on_line = 1;
-return QSCALAR;
+    *yylval = val_str(NULL);
+    /* Check if anchor is present to decide token type */
+    if (strchr(yytext, '&')) {
+        return ANCHOR_MAP_KEY;
     }
-
-    yylval->string = NULL; /* was extract_quoted_key(yytext, '"') */
+    /* If only tag is present, it's just a MAP_KEY (tag discarded in this lexer) */
+    return MAP_KEY;
+}
+{PROP_LEAD}[ \t]+\"{DQUOTED_CONTENT}\"[ ]*/":"([ \t\n]|{VSPACE}) {
+    /* Prop-prefixed double-quoted key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-return MAP_KEY;
-}
-\'(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Single-quoted map key: 'key' : value */
-    if (FLOW_DELIM_SP == 0 && CTX->expecting_value && !CTX->at_line_start) {
-        yylval->string = NULL; /* was extract_quoted_key(yytext, '\'') */
-        CTX->at_line_start = 0;
-        CTX->expecting_value = 0;
-        CTX->last_was_value = 1;
-        CTX->quoted_value_closed_on_line = 1;
-return SSCALAR;
+    *yylval = val_str(NULL);
+    if (strchr(yytext, '&')) {
+        return ANCHOR_MAP_KEY;
     }
-
-    yylval->string = NULL; /* was extract_quoted_key(yytext, '\'') */
+    return MAP_KEY;
+}
+{PROP_LEAD}[ \t]+\'{SQUOTED_CONTENT}\'[ ]*/":"([ \t\n]|{VSPACE}) {
+    /* Prop-prefixed single-quoted key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
-return MAP_KEY;
-}
-\"([^\\\"\n\r]|\\.)*\n([^\\\"\n\r]|\\.)*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    if (FLOW_DELIM_SP > 0) {
-        yylval->string = NULL; /* was extract_quoted_key(yytext, '"') */
-        CTX->at_line_start = 0;
-        CTX->expecting_value = 0;
-return MAP_KEY;
+    *yylval = val_str(NULL);
+    if (strchr(yytext, '&')) {
+        return ANCHOR_MAP_KEY;
     }
-    yyerror(yylloc, yyscanner, "syntax error, multiline quoted key is not allowed");
-    CTX->semantic_error_count++;
-    CTX->semantic_multiline_qkey_count++;
-    return 0;
+    return MAP_KEY;
 }
-\'(\'\'|\\'|[^'\n\r])*\n(\'\'|\\'|[^'\n\r])*\'[ ]*/":"([ \t\n]|{VSPACE}) {
-    if (FLOW_DELIM_SP > 0) {
-        yylval->string = NULL; /* was extract_quoted_key(yytext, '\'') */
-        CTX->at_line_start = 0;
-        CTX->expecting_value = 0;
-return MAP_KEY;
+{PROP_LEAD}[ \t]+\[[^\]\n\r]*\][ ]*/":"([ \t\n]|{VSPACE}) {
+    /* Prop-prefixed flow-sequence key: &a [], !!t [], &a !!t [] */
+    CTX->at_line_start = 0;
+    CTX->expecting_value = 0;
+    *yylval = val_str(NULL);
+    if (strchr(yytext, '&')) {
+        return ANCHOR_MAP_KEY;
     }
-    yyerror(yylloc, yyscanner, "syntax error, multiline quoted key is not allowed");
-    CTX->semantic_error_count++;
-    CTX->semantic_multiline_qkey_count++;
-    return 0;
+    return MAP_KEY;
 }
-"&"{ANCHOR_CHAR}+[ \t]+\"[^\\"\n\r]*\"[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored double-quoted map key: &anchor "key": value */
+{PROP_LEAD}[ \t]+\{[^\}\n\r]*\}[ ]*/":"([ \t\n]|{VSPACE}) {
+    /* Prop-prefixed flow-mapping key */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     *yylval = val_str(NULL);
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ \t]+'[^'\n\r]*'[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored single-quoted map key: &anchor 'key': value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    *yylval = val_str(NULL);
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ ]+{PKEY_HEAD}{PKEY_BODY}/[ ]*":"([ \t\n]|{VSPACE}) {
-    /* Anchored map key: &anchor key: value (returns tab-delimited "&anchor\tkey") */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    *yylval = val_str(NULL);
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ \t]+\[[^\]\n\r]*\][ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored flow-sequence key: &anchor [ ... ]: value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    *yylval = val_str(NULL);
-return ANCHOR_MAP_KEY;
-}
-"&"{ANCHOR_CHAR}+[ \t]+\{[^\}\n\r]*\}[ ]*/":"([ \t\n]|{VSPACE}) {
-    /* Anchored flow-mapping key: &anchor { ... }: value */
-    CTX->at_line_start = 0;
-    CTX->expecting_value = 0;
-    *yylval = val_str(NULL);
-return ANCHOR_MAP_KEY;
+    if (strchr(yytext, '&')) {
+        return ANCHOR_MAP_KEY;
+    }
+    return MAP_KEY;
 }
 "&"{ANCHOR_CHAR}+[ \t]+"-"/[ \t\n] {
     int anchor_len = 0;
@@ -634,7 +545,7 @@ return ANCHOR_MAP_KEY;
         anchor_len++;
     }
 
-    yylval->string = NULL;
+    *yylval = val_str(NULL);
 
     yyless(anchor_len);
     CTX->at_line_start = 0;
@@ -643,7 +554,7 @@ return ANCHOR;
 "*"{ALIAS_CHAR}+[ ]+/":"([ \t\n]|{VSPACE}) {
     /* Alias map key with explicit separating whitespace before ':' */
     CTX->at_line_start = 0;
-    yylval->string = NULL;
+    *yylval = val_str(NULL);
     CTX->expecting_value = 0;
 return MAP_KEY;
 }
@@ -652,7 +563,7 @@ return MAP_KEY;
 
     if (CTX->expecting_value) {
         /* Value-position alias ending with ':' keeps the ':' in the alias name. */
-        yylval->string = NULL;
+        *yylval = val_str(NULL);
         CTX->expecting_value = 0;
         if (FLOW_DELIM_SP > 0) flow_key_state_set(CTX, FLOW_KEY_CANDIDATE);
 return ALIAS;
@@ -660,7 +571,7 @@ return ALIAS;
 
     /* Key-position alias: split before ':' and let parser consume ':' token. */
     yyless(yyleng - 1);
-    yylval->string = NULL;
+    *yylval = val_str(NULL);
     CTX->expecting_value = 0;
 return MAP_KEY;
 }
@@ -712,13 +623,13 @@ return RBRACE;
 }
 ":"              {
     if (CTX->expecting_value && FLOW_DELIM_SP > 0) {
-         yylval->string = NULL; /* was strdup(":") */
+         *yylval = val_str(NULL); /* was strdup(":") */
          CTX->expecting_value = 0;
          flow_key_state_set(CTX, FLOW_KEY_NONE);
          BEGIN(PLAIN_SCALAR_CONT);
 return CH_RAW;
     } else if (CTX->expecting_value && FLOW_DELIM_SP == 0) {
-         yylval->string = NULL; /* was strdup(":") */
+         *yylval = val_str(NULL); /* was strdup(":") */
          flow_key_state_set(CTX, FLOW_KEY_NONE);
          BEGIN(PLAIN_SCALAR_CONT);
 return CH_RAW;
@@ -771,23 +682,23 @@ return QSCALAR;
     }
 
     \\n {
-        yylval->string = NULL; /* was strdup("\\n") */
+        *yylval = val_str(NULL); /* was strdup("\\n") */
 return CH_ESC_N;
     }
     \\t {
-        yylval->string = NULL; /* was strdup("\\t") */
+        *yylval = val_str(NULL); /* was strdup("\\t") */
 return CH_ESC_T;
     }
     \\r {
-        yylval->string = NULL; /* was strdup("\\r") */
+        *yylval = val_str(NULL); /* was strdup("\\r") */
 return CH_ESC_R;
     }
     \\\\ {
-        yylval->string = NULL; /* was strdup("\\\\") */
+        *yylval = val_str(NULL); /* was strdup("\\\\") */
 return CH_ESC_BS;
     }
     \\\" {
-        yylval->string = NULL; /* was strdup("\\\"") */
+        *yylval = val_str(NULL); /* was strdup("\\\"") */
 return CH_ESC_QU;
     }
     \\\' {
@@ -796,7 +707,7 @@ return CH_ESC_QU;
         return 0;
     }
     \\\/ {
-        yylval->string = NULL; /* was strdup("\\/") */
+        *yylval = val_str(NULL); /* was strdup("\\/") */
 return CH_ESC_SL;
     }
     \\. {
@@ -805,15 +716,15 @@ return CH_ESC_SL;
             BEGIN(INITIAL);
             return 0;
         }
-        yylval->string = NULL; /* was strdup(yytext) */
+        *yylval = val_str(NULL); /* was strdup(yytext) */
 return CH_RAW;
     }
     \\0 {
-        yylval->string = NULL; /* was strdup("\\0") */
+        *yylval = val_str(NULL); /* was strdup("\\0") */
 return CH_ESC_0;
     }
     [^\\\"\n]+ {
-        yylval->string = NULL; /* was strdup(yytext) */
+        *yylval = val_str(NULL); /* was strdup(yytext) */
 return CH_RAW;
     }
     \n("---"|"...")([ \t]|#|\r?\n) {
@@ -822,7 +733,7 @@ return CH_RAW;
         return 0;
     }
     \n {
-        yylval->string = NULL; /* was strdup("\n") */
+        *yylval = val_str(NULL); /* was strdup("\n") */
 return CH_RAW;
     }
 
@@ -832,20 +743,20 @@ return CH_RAW;
         return 0;
     }
 }
-\'(\'\'|[^\'])*\n("---"|"...")([ \t]|#|\r?\n)(\'\'|[^\'])*\'  {
+\'{SQUOTED_CONTENT}\n("---"|"...")([ \t]|#|\r?\n){SQUOTED_CONTENT}\'  {
     yyerror(yylloc, yyscanner, "syntax error, document marker inside single-quoted string");
     CTX->semantic_error_count++;
 
-    yylval->string = NULL;
+    *yylval = val_str(NULL);
     CTX->expecting_value = 0;
     CTX->last_was_value = 1;
     CTX->quoted_value_closed_on_line = 1;
     if (FLOW_DELIM_SP > 0) flow_key_state_set(CTX, FLOW_KEY_CANDIDATE);
 return SSCALAR;
 }
-\'(\'\'|[^\'])*\'  {
+\'{SQUOTED_CONTENT}\'  {
     /* Single-quoted string */
-    yylval->string = NULL;
+    *yylval = val_str(NULL);
     CTX->expecting_value = 0;
     CTX->last_was_value = 1;
     CTX->quoted_value_closed_on_line = 1;
@@ -901,7 +812,7 @@ return SSCALAR;
         indent > CTX->block_scalar.leading_empty_max_indent) {
         CTX->block_scalar.leading_empty_max_indent = indent;
     }
-    yylval->string = NULL; /* was strdup("\n") */
+    *yylval = val_str(NULL); /* was strdup("\n") */
 return BPART;
 }
 
@@ -986,7 +897,7 @@ return BPART;
 
     if (effective_indent >= CTX->block_scalar.indent) {
         /* This is content line */
-        yylval->string = NULL; /* was strdup */
+        *yylval = val_str(NULL); /* was strdup */
 return BPART;
     } else {
         /* End of block scalar - line is less indented */
@@ -1029,7 +940,7 @@ return BPART;
             CTX->block_scalar.indent = 0;
         }
         CTX->block_scalar.first_content_seen = 1;
-        yylval->string = NULL; /* was strdup */
+        *yylval = val_str(NULL); /* was strdup */
 return BPART;
     }
 
@@ -1059,7 +970,7 @@ return BPART;
             flow_key_state_set(CTX, FLOW_KEY_NONE);
 return COLON;
         }
-        yylval->string = NULL; /* was strdup(yytext) */
+        *yylval = val_str(NULL); /* was strdup(yytext) */
         CTX->expecting_value = 0;
         flow_key_state_set(CTX, FLOW_KEY_CANDIDATE);
         BEGIN(PLAIN_SCALAR_CONT);
@@ -1073,7 +984,7 @@ return CH_RAW;
         CTX->expecting_value = 1;
 return BULLET;
     }
-    yylval->string = NULL; /* was strdup(yytext) */
+    *yylval = val_str(NULL); /* was strdup(yytext) */
     /* trim_trailing_spaces(yylval->string); */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
@@ -1082,7 +993,7 @@ return MAP_KEY;
 }
 
 [^ \t\n\r\[\]{}!,&*%@|>\`'"] {
-    yylval->string = NULL; /* was strdup(yytext) */
+    *yylval = val_str(NULL); /* was strdup(yytext) */
     CTX->at_line_start = 0;
     CTX->expecting_value = 0;
     if (FLOW_DELIM_SP > 0) flow_key_state_set(CTX, FLOW_KEY_CANDIDATE);
@@ -1097,7 +1008,7 @@ return CH_RAW;
         flow_key_state_set(CTX, FLOW_KEY_NONE);
 return COLON;
     }
-    yylval->string = NULL; /* was strdup(yytext) */
+    *yylval = val_str(NULL); /* was strdup(yytext) */
     CTX->expecting_value = 0;
     if (FLOW_DELIM_SP > 0) flow_key_state_set(CTX, FLOW_KEY_CANDIDATE);
     BEGIN(PLAIN_SCALAR_CONT);
@@ -1116,7 +1027,7 @@ return CH_RAW;
         yyless(0);
         BEGIN(INITIAL);
     } else {
-        yylval->string = NULL; /* was strdup(":") */
+        *yylval = val_str(NULL); /* was strdup(":") */
 return CH_RAW;
     }
 }
@@ -1143,7 +1054,7 @@ return CH_RAW;
         yyless(0);
         BEGIN(INITIAL);
     } else {
-    yylval->string = NULL; /* was allocated newline + content */
+    *yylval = val_str(NULL); /* was allocated newline + content */
 return CH_RAW;
     }
 }
@@ -1156,7 +1067,7 @@ return CH_RAW;
         yyless(0);
         BEGIN(INITIAL);
     } else {
-    yylval->string = NULL; /* was allocated space + content */
+    *yylval = val_str(NULL); /* was allocated space + content */
 return CH_RAW;
     }
 }
@@ -1168,17 +1079,17 @@ return CH_RAW;
 }
 
 <PLAIN_SCALAR_CONT>[ \t]+ {
-    yylval->string = NULL; /* was strdup(yytext) */
+    *yylval = val_str(NULL); /* was strdup(yytext) */
 return CH_RAW;
 }
 
 <PLAIN_SCALAR_CONT>[^:\n\r\t,\[\]{} ]+ {
-    yylval->string = NULL; /* was strdup(yytext) */
+    *yylval = val_str(NULL); /* was strdup(yytext) */
 return CH_RAW;
 }
 
 <PLAIN_SCALAR_CONT>":" {
-    yylval->string = NULL; /* was strdup(":") */
+    *yylval = val_str(NULL); /* was strdup(":") */
 return CH_RAW;
 }
 
@@ -1194,7 +1105,7 @@ return CH_RAW;
         yyless(0);
         BEGIN(INITIAL);
     } else {
-        yylval->string = NULL; /* was strdup(yytext) */
+        *yylval = val_str(NULL); /* was strdup(yytext) */
 return CH_RAW;
     }
 }
@@ -1223,7 +1134,7 @@ return CH_RAW;
 
 <<EOF>> {
     if (PENDING_DEDENT_COUNT > 0) {
-        yylval->ival = PENDING_DEDENT_COUNT;
+        *yylval = val_int(PENDING_DEDENT_COUNT);
         PENDING_DEDENT_COUNT--;
 return DEDENT;
     }

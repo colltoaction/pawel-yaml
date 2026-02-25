@@ -518,5 +518,7 @@ VEND \xE2\x88\x8E
 TAG_TOKEN ("!<"[^>\n\r]+">"|"!!"{NSCAL}+|"!"{NSCAL}+"!"{NSCAL}*|"!"{NSCAL}+)
 PKEY_HEAD [^ \t\n\r\[\]{}!,&*%@|>\`'"]
 PKEY_BODY [^:\n\r]*
-
-%%
+DQUOTED_CONTENT ([^\\\"\n\r]|\\.)*
+SQUOTED_CONTENT (\'\'|\\'|[^'\n\r])*
+PROP_PART ({TAG_TOKEN}|[&]{ANCHOR_CHAR}+)
+PROP_LEAD {PROP_PART}([ \t]+{PROP_PART})?
